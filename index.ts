@@ -4,10 +4,228 @@ import { calculate, Pokemon, Move, SPECIES, MOVES, ITEMS, ABILITIES, NATURES } f
 import { z } from "zod";
 // @ts-ignore
 import PS from 'pokemon-showdown';
+import { Dex } from '@pkmn/dex';
+import { Generations } from '@pkmn/data';
+import { Classifier, Parser } from '@pkmn/stats';
 
 const { Teams, TeamValidator } = (PS as any).default || PS;
+const gens = new Generations(Dex as any);
 
 const server = new McpServer({ name: "smogon-calc", version: "1.0.0" });
+
+// Classify a team's playstyle and attributes
+server.tool(
+  "classify_team",
+  {
+    team: z.string().describe("Team in Showdown text format"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+    format: z.string().optional().default("gen9vgc2025regg").describe("Format ID (e.g., gen9vgc2025regg)"),
+  },
+  async ({ team, gen, format }) => {
+    try {
+      const importedTeam = Teams.import(team);
+      if (!importedTeam) {
+        return { content: [{ type: "text", text: "Invalid team format." }] };
+      }
+      const generation = gens.get(gen as any);
+      const canonicalTeam = Parser.canonicalizeTeam(generation as any, format as any, importedTeam as any);
+      const result = Classifier.classifyTeam(generation as any, canonicalTeam as any);
+      
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          bias: result.bias,
+          stalliness: result.stalliness,
+          tags: Array.from(result.tags),
+        }, null, 2) }],
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: "Error: " + e.message }] };
+    }
+  }
+);
+
+// Get Smogon usage statistics for a format
+server.tool(
+  "get_usage_stats",
+  {
+    format: z.string().describe("Format ID (e.g., gen9vgc2025regg)"),
+    month: z.string().optional().describe("Month in YYYY-MM format (default: latest available)"),
+  },
+  async ({ format, month }) => {
+    try {
+      // If month is not provided, we try to guess the latest one.
+      // For simplicity, we'll try the current and previous months.
+      const now = new Date();
+      const monthsToTry = month ? [month] : [];
+      if (!month) {
+        for (let i = 0; i < 3; i++) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          monthsToTry.push(d.toISOString().slice(0, 7));
+        }
+      }
+
+      for (const m of monthsToTry) {
+        // We'll try to fetch the weighted usage stats (.txt format is easier to read directly)
+        // Usually, VGC formats use -1760 or -0 weight.
+        const url = `https://www.smogon.com/stats/${m}/${format}-1760.txt`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const text = await response.text();
+          // We only return the top 20 for brevity
+          const lines = text.split('\n').slice(0, 25).join('\n');
+          return { content: [{ type: "text", text: `Usage stats for ${format} in ${m}:\n\n${lines}` }] };
+        }
+        
+        // Try without the rating suffix if 1760 fails
+        const urlAlt = `https://www.smogon.com/stats/${m}/${format}-0.txt`;
+        const responseAlt = await fetch(urlAlt);
+        if (responseAlt.ok) {
+           const text = await responseAlt.text();
+           const lines = text.split('\n').slice(0, 25).join('\n');
+           return { content: [{ type: "text", text: `Usage stats for ${format} in ${m}:\n\n${lines}` }] };
+        }
+      }
+
+      return { content: [{ type: "text", text: `Could not find usage stats for ${format} in recent months.` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: "Error fetching stats: " + e.message }] };
+    }
+  }
+);
+
+// Get detailed moveset and usage statistics for a specific Pokémon
+server.tool(
+  "get_pokemon_usage",
+  {
+    pokemon: z.string().describe("Pokémon name (e.g., Iron Hands)"),
+    format: z.string().optional().default("gen9vgc2025regg").describe("Format ID (e.g., gen9vgc2025regg)"),
+    month: z.string().optional().describe("Month in YYYY-MM format (default: latest available)"),
+  },
+  async ({ pokemon, format, month }) => {
+    try {
+      const now = new Date();
+      const monthsToTry = month ? [month] : [];
+      if (!month) {
+        for (let i = 0; i < 3; i++) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          monthsToTry.push(d.toISOString().slice(0, 7));
+        }
+      }
+
+      for (const m of monthsToTry) {
+        const separator = ' +----------------------------------------+ ';
+        // Fetch moveset stats (detailed)
+        const url = `https://www.smogon.com/stats/${m}/moveset/${format}-1760.txt`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const text = await response.text();
+          
+          // Smogon moveset blocks are formatted with specific padding.
+          // Headers look like:
+          //  +----------------------------------------+ 
+          //  | Pokemon Name                           | 
+          //  +----------------------------------------+ 
+          
+          const lines = text.split('\n');
+          let startIdx = -1;
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i] || '';
+            // Headers look like " | Calyrex-Shadow                         | "
+            if (line.includes('| ' + pokemon + ' ') && !line.includes('%')) {
+               // Check for separators around it
+               if (lines[i-1]?.includes('+--') && lines[i+1]?.includes('+--')) {
+                  startIdx = i - 1;
+                  // Handle potential double separator at start
+                  if (lines[i-2]?.includes('+--')) startIdx = i - 2;
+                  break;
+               }
+            }
+          }
+
+          if (startIdx !== -1) {
+            let endIdx = -1;
+            // The block ends at the start of the NEXT pokemon header
+            // A true pokemon header is followed by "Raw count"
+            for (let j = startIdx + 5; j < lines.length; j++) {
+               const line = lines[j] || '';
+               if (line.includes('| ') && !line.includes('%')) {
+                  if (lines[j-1]?.includes('+---') && lines[j+1]?.includes('+---')) {
+                     // Check if it's followed by "Raw count" or "Avg. weight"
+                     const nextDetail = lines[j+2] || '';
+                     if (nextDetail.includes('Raw count') || nextDetail.includes('Avg. weight')) {
+                        endIdx = j - 1;
+                        if (lines[j-2]?.includes('+---')) endIdx = j - 2;
+                        break;
+                     }
+                  }
+               }
+            }
+            const blockText = lines.slice(startIdx, endIdx !== -1 ? endIdx : lines.length).join('\n');
+            return { content: [{ type: "text", text: `Detailed stats for ${pokemon} in ${format} (${m}):\n${blockText}` }] };
+          }
+        }
+
+        // Try without the 1760 rating
+        const urlAlt = `https://www.smogon.com/stats/${m}/moveset/${format}-0.txt`;
+        const responseAlt = await fetch(urlAlt);
+        if (responseAlt.ok) {
+           const text = await responseAlt.text();
+           const blocks = text.split(separator);
+           const targetBlock = blocks.find(block => {
+             const lines = block.trim().split('\n');
+             if (lines.length > 0) {
+               const nameLine = lines[0]?.trim() || '';
+               return nameLine.replace(/\|/g, '').trim().toLowerCase() === pokemon.toLowerCase();
+             }
+             return false;
+           });
+
+           if (targetBlock) {
+             return { content: [{ type: "text", text: `Detailed stats for ${pokemon} in ${format} (${m}):\n${separator}${targetBlock}${separator}` }] };
+           }
+        }
+      }
+
+      return { content: [{ type: "text", text: `Could not find detailed stats for ${pokemon} in ${format} in recent months.` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: "Error fetching Pokémon stats: " + e.message }] };
+    }
+  }
+);
+
+// Get type effectiveness multiplier
+server.tool(
+  "get_type_effectiveness",
+  {
+    attackType: z.string().describe("The type of the move being used (e.g., Fire)"),
+    defenderTypes: z.array(z.string()).describe("The type(s) of the defending Pokémon (e.g., ['Water', 'Ground'])"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+  },
+  async ({ attackType, defenderTypes, gen }) => {
+    try {
+      const generation = gens.get(gen as any);
+      const moveType = generation.types.get(attackType);
+      if (!moveType) return { content: [{ type: "text", text: `Invalid attack type: ${attackType}` }] };
+
+      let multiplier = 1;
+      for (const defTypeStr of defenderTypes) {
+        const defType = generation.types.get(defTypeStr);
+        if (!defType) return { content: [{ type: "text", text: `Invalid defender type: ${defTypeStr}` }] };
+        
+        // In @pkmn/data, effectiveness is a map of defender types to their effectiveness
+        // 0 = immune, 1 = neutral, 2 = super effective, 0.5 = resisted
+        const eff = (moveType.effectiveness as any)[defType.id];
+        multiplier *= (eff === undefined ? 1 : eff);
+      }
+
+      return {
+        content: [{ type: "text", text: `Effectiveness of ${attackType} against ${defenderTypes.join('/')}: ${multiplier}x` }],
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: "Error calculating effectiveness: " + e.message }] };
+    }
+  }
+);
 
 // Validate a single Pokémon set
 server.tool(
