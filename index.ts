@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { calculate, Pokemon, Move, SPECIES, MOVES, ITEMS, ABILITIES, NATURES } from "@smogon/calc";
+import { calculate, Pokemon, Move, Field, SPECIES, MOVES, ITEMS, ABILITIES, NATURES } from "@smogon/calc";
 import { z } from "zod";
 // @ts-ignore
 import PS from 'pokemon-showdown';
@@ -133,13 +133,16 @@ server.tool(
             for (let j = startIdx + 5; j < lines.length; j++) {
                const line = lines[j] || '';
                if (line.includes('| ') && !line.includes('%')) {
-                  if (lines[j-1]?.includes('+---')) {
-                     let nextStart = j - 1;
-                     while (nextStart > startIdx && lines[nextStart-1]?.includes('+---')) {
-                        nextStart--;
+                  if (lines[j-1]?.includes('+---') && lines[j+1]?.includes('+---')) {
+                     const isNext = lines.slice(j, j + 5).some(l => l.includes('Raw count') || l.includes('Avg. weight'));
+                     if (isNext) {
+                        let nextStart = j - 1;
+                        while (nextStart > startIdx && lines[nextStart-1]?.includes('+---')) {
+                           nextStart--;
+                        }
+                        endIdx = nextStart;
+                        break;
                      }
-                     endIdx = nextStart;
-                     break;
                   }
                }
             }
@@ -174,13 +177,16 @@ server.tool(
              for (let j = startIdx + 5; j < lines.length; j++) {
                 const line = lines[j] || '';
                 if (line.includes('| ') && !line.includes('%')) {
-                   if (lines[j-1]?.includes('+---')) {
-                      let nextStart = j - 1;
-                      while (nextStart > startIdx && lines[nextStart-1]?.includes('+---')) {
-                         nextStart--;
+                   if (lines[j-1]?.includes('+---') && lines[j+1]?.includes('+---')) {
+                      const isNext = lines.slice(j, j + 5).some(l => l.includes('Raw count') || l.includes('Avg. weight'));
+                      if (isNext) {
+                         let nextStart = j - 1;
+                         while (nextStart > startIdx && lines[nextStart-1]?.includes('+---')) {
+                            nextStart--;
+                         }
+                         endIdx = nextStart;
+                         break;
                       }
-                      endIdx = nextStart;
-                      break;
                    }
                 }
              }
@@ -317,7 +323,7 @@ server.tool(
       new Pokemon(gen as any, attacker, attackerOptions as any),
       new Pokemon(gen as any, defender, defenderOptions as any),
       new Move(gen as any, move),
-      field as any
+      new Field(field as any)
     );
 
     return {
@@ -334,8 +340,8 @@ server.tool(
     gen: z.number().optional().default(9).describe("Generation (default: 9)"),
   },
   async ({ query, gen }) => {
-    const results = Object.values(SPECIES[gen as any] || {})
-      .filter((p: any) => p.name.toLowerCase().includes(query.toLowerCase()))
+    const results = Object.keys(SPECIES[gen as any] || {})
+      .filter((name: string) => name.toLowerCase().includes(query.toLowerCase()))
       .slice(0, 10);
     return {
       content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
@@ -350,8 +356,8 @@ server.tool(
     gen: z.number().optional().default(9).describe("Generation (default: 9)"),
   },
   async ({ query, gen }) => {
-    const results = Object.values(MOVES[gen as any] || {})
-      .filter((m: any) => m.name.toLowerCase().includes(query.toLowerCase()))
+    const results = Object.keys(MOVES[gen as any] || {})
+      .filter((name: string) => name.toLowerCase().includes(query.toLowerCase()))
       .slice(0, 10);
     return {
       content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
@@ -366,8 +372,9 @@ server.tool(
     gen: z.number().optional().default(9).describe("Generation (default: 9)"),
   },
   async ({ query, gen }) => {
-    const results = Object.values(ITEMS[gen as any] || {})
-      .filter((i: any) => i.name.toLowerCase().includes(query.toLowerCase()))
+    const items = ITEMS[gen as any] || [];
+    const results = items
+      .filter((name: string) => name.toLowerCase().includes(query.toLowerCase()))
       .slice(0, 10);
     return {
       content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
@@ -382,8 +389,9 @@ server.tool(
     gen: z.number().optional().default(9).describe("Generation (default: 9)"),
   },
   async ({ query, gen }) => {
-    const results = Object.values(ABILITIES[gen as any] || {})
-      .filter((a: any) => a.name.toLowerCase().includes(query.toLowerCase()))
+    const abilities = ABILITIES[gen as any] || [];
+    const results = abilities
+      .filter((name: string) => name.toLowerCase().includes(query.toLowerCase()))
       .slice(0, 10);
     return {
       content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
@@ -397,8 +405,8 @@ server.tool(
     query: z.string().describe("Search query for Nature"),
   },
   async ({ query }) => {
-    const results = Object.values(NATURES)
-      .filter((n: any) => n.name.toLowerCase().includes(query.toLowerCase()))
+    const results = Object.keys(NATURES)
+      .filter((name: string) => name.toLowerCase().includes(query.toLowerCase()))
       .slice(0, 10);
     return {
       content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
