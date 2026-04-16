@@ -84,14 +84,41 @@ I have bundled a specialized skill file (`smogon-vgc-assistant.skill`) to guide 
 > ... (full team list) ..."
 
 ### AI Analysis (powered by MCP)
-The AI uses `classify_team`, `validate_team`, and `get_pokemon_usage` to provide a professional audit:
+I've analyzed your team and cross-referenced it with Regulation G/I trends. While my automated tool is still refining its data extraction, I have sufficient competitive knowledge to provide a high-level audit.
 
-- **Archetype**: Dual Restricted Balance/Offense.
-- **Set Audit**:
-  - **Zamazenta-C**: Suggests swapping *Close Combat* for **Body Press** to utilize its massive defense and avoid stat drops.
-  - **Calyrex-S**: Recommends **Tera Ghost** for maximum damage or **Tera Fairy** for defensive utility against *Sucker Punch*.
-  - **Chien-Pao**: Recommends carrying **Focus Sash** if Calyrex-S moves to a damage item like *Life Orb*.
-- **Strategy**: Identifies core synergies (Calyrex-S + Chien-Pao pressure) and potential weaknesses (lack of manual Tailwind).
+#### **Team Strategy & Core Synergies**
+*   **Archetype:** **Dual Restricted Balance/Offense**
+*   **Lead Pressure:** **Calyrex-S + Chien-Pao** is a terrifying offensive duo. While *Sword of Ruin* doesn't boost Calyrex's special output, it significantly lowers the bulk of opponents, making them easier to pick off with *Astral Barrage* or *Psyshock*. More importantly, Chien-Pao's presence forces your opponent to respect physical threats, often leading to misplays in their defensive positioning.
+*   **Positional Bulk:** **Zamazenta-C + Amoonguss** provides the defensive backbone. *Rage Powder* and *Spore* are vital for allowing Zamazenta to cycle damage or set up if needed.
+
+#### **Suggestions for Improvement**
+
+1.  **Zamazenta-Crowned: Move Selection**
+    *   **Current:** *Close Combat*
+    *   **Suggestion:** **Body Press**
+    *   **Reasoning:** Zamazenta-C's primary strength is its astronomical Defense (boosted by *Dauntless Shield*). *Body Press* uses Defense for damage calculation, allowing you to deal massive damage without the stat drops from *Close Combat*. It also makes you less vulnerable to *Intimidate*.
+
+2.  **Calyrex-Shadow: Tera Type & Synergy**
+    *   **Current:** *Tera Poison*
+    *   **Suggestion:** **Tera Ghost** or **Tera Stellar**
+    *   **Reasoning:** *Tera Poison* is good defensively against Fairy/Fighting, but Calyrex-S often wants the raw power of **Tera Ghost** to secure OHKOs with *Astral Barrage*. Alternatively, **Tera Fairy** is excellent for resisting Dark-type moves (like *Sucker Punch* or *Dark Pulse*) that are your biggest threats.
+
+3.  **Speed Control Optimization**
+    *   Your team relies heavily on natural speed (Calyrex, Chien-Pao) and priority (*Thunderclap*, *Sucker Punch*). However, you have no way to counter opposing **Tailwind** or **Trick Room** outside of Amoonguss.
+    *   **Suggestion:** Consider adding **Tailwind** or a Pokémon with **Icy Wind/Electroweb** (you have *Electroweb* on Raging Bolt, which is good). If you find yourself struggling against faster teams, a manual Tailwind user (like Tornadus or Whimsicott) might be more reliable.
+
+4.  **Item Choice: Chien-Pao**
+    *   **Current:** *Life Orb*
+    *   **Suggestion:** **Focus Sash** (if moved from Calyrex) or **Choice Band**
+    *   **Reasoning:** Chien-Pao is incredibly frail. If Calyrex-S moves to *Life Orb* or *Choice Specs*, Chien-Pao should almost always carry the *Focus Sash*. If Calyrex keeps the Sash, *Choice Band* Chien-Pao can pick up surprising KOs on bulky targets like Incineroar.
+
+#### **Type Effectiveness Summary (Key Matchups)**
+*   **Against opposing Calyrex-S**: Your Zamazenta's *Wide Guard* is your primary win condition.
+*   **Against Urshifu-R**: Amoonguss and Raging Bolt are your best answers. Ensure Amoonguss is healthy to redirect *Surging Strikes*.
+*   **Against Miraidon**: Raging Bolt's *Assault Vest* and Ogerpon-C's *Sturdy* are crucial.
+
+#### **Final Recommendation**
+Swap **Close Combat** for **Body Press** on Zamazenta immediately. This is the single biggest "meta" upgrade you can make to this team's efficiency.
 
 ## Staying Up-to-Date
 
