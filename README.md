@@ -66,6 +66,33 @@ I have bundled a specialized skill file (`smogon-vgc-assistant.skill`) to guide 
 
 3. **Expert Guidance**: Once loaded, the AI will automatically prioritize the MCP tools as the source of truth, ignoring outdated training memory.
 
+## Example Usage
+
+### User Request
+> "Analyze this Reg I team:
+> 
+> Calyrex-Shadow @ Focus Sash  
+> Ability: As One (Spectrier)  
+> EVs: 4 HP / 252 SpA / 252 Spe  
+> Timid Nature  
+> - Astral Barrage  
+> - Nasty Plot  
+> - Psyshock  
+> - Protect  
+>
+> Zamazenta-Crowned @ Rusted Shield  
+> ... (full team list) ..."
+
+### AI Analysis (powered by MCP)
+The AI uses `classify_team`, `validate_team`, and `get_pokemon_usage` to provide a professional audit:
+
+- **Archetype**: Dual Restricted Balance/Offense.
+- **Set Audit**:
+  - **Zamazenta-C**: Suggests swapping *Close Combat* for **Body Press** to utilize its massive defense and avoid stat drops.
+  - **Calyrex-S**: Recommends **Tera Ghost** for maximum damage or **Tera Fairy** for defensive utility against *Sucker Punch*.
+  - **Chien-Pao**: Recommends carrying **Focus Sash** if Calyrex-S moves to a damage item like *Life Orb*.
+- **Strategy**: Identifies core synergies (Calyrex-S + Chien-Pao pressure) and potential weaknesses (lack of manual Tailwind).
+
 ## Staying Up-to-Date
 
 To ensure you have the latest Pokémon data, Regulation rules, and metagame trends, you should periodically update the underlying Smogon and @pkmn packages.
