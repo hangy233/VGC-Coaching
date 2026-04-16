@@ -73,15 +73,72 @@ I have bundled a specialized skill file (`smogon-vgc-assistant.skill`) to guide 
 > 
 > Calyrex-Shadow @ Focus Sash  
 > Ability: As One (Spectrier)  
+> Level: 50  
+> Tera Type: Poison  
 > EVs: 4 HP / 252 SpA / 252 Spe  
 > Timid Nature  
+> IVs: 0 Atk  
 > - Astral Barrage  
 > - Nasty Plot  
 > - Psyshock  
 > - Protect  
->
+> 
 > Zamazenta-Crowned @ Rusted Shield  
-> ... (full team list) ..."
+> Ability: Dauntless Shield  
+> Level: 50  
+> Tera Type: Fire  
+> EVs: 252 HP / 4 Atk / 84 Def / 36 SpD / 132 Spe  
+> Jolly Nature  
+> - Close Combat  
+> - Iron Head  
+> - Wide Guard  
+> - Protect  
+> 
+> Chien-Pao @ Life Orb  
+> Ability: Sword of Ruin  
+> Level: 50  
+> Tera Type: Ghost  
+> EVs: 4 HP / 252 Atk / 252 Spe  
+> Jolly Nature  
+> - Ice Spinner  
+> - Sucker Punch  
+> - Sacred Sword  
+> - Protect  
+> 
+> Raging Bolt @ Assault Vest  
+> Ability: Protosynthesis  
+> Level: 50  
+> Tera Type: Fairy  
+> EVs: 244 HP / 76 Def / 180 SpA / 4 SpD / 4 Spe  
+> Modest Nature  
+> IVs: 20 Atk  
+> - Thunderclap  
+> - Draco Meteor  
+> - Thunderbolt  
+> - Electroweb  
+> 
+> Amoonguss @ Sitrus Berry  
+> Ability: Regenerator  
+> Level: 50  
+> Tera Type: Water  
+> EVs: 252 HP / 164 Def / 92 SpD  
+> Sassy Nature  
+> IVs: 0 Atk / 0 Spe  
+> - Spore  
+> - Rage Powder  
+> - Pollen Puff  
+> - Protect  
+> 
+> Ogerpon-Cornerstone @ Cornerstone Mask  
+> Ability: Sturdy  
+> Level: 50  
+> Tera Type: Rock  
+> EVs: 4 HP / 252 Atk / 252 Spe  
+> Jolly Nature  
+> - Ivy Cudgel  
+> - Horn Leech  
+> - Encore  
+> - Spiky Shield"
 
 ### AI Analysis (powered by MCP)
 I've analyzed your team and cross-referenced it with Regulation G/I trends. While my automated tool is still refining its data extraction, I have sufficient competitive knowledge to provide a high-level audit.
