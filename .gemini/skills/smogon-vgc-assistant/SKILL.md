@@ -17,7 +17,8 @@ This skill provides expert guidance for Pokémon VGC analysis using the integrat
 ### 2. Strict Regulation & Type Adherence
 1. **Format Identification**: Before analyzing, confirm the exact Showdown format ID (e.g., `gen9vgc2025regg` for Reg G, `gen9vgc2026regi` for Reg I). Check `cache/REG.txt` if it exists.
 2. **No Substitutions**: Do not use data or rules from a different regulation unless the specified one is unavailable AND you explicitly inform the user.
-3. **Type Effectiveness**: **ALWAYS** verify damage multipliers using `get_type_effectiveness` or a verified type chart. Do not assume effectiveness (e.g., Normal/Fighting vs Ghost).
+3. **Never Estimate Damage**: **ALWAYS** use the `calculate_damage` tool for every assessment. Do not rely on "estimates" or internal memory for damage ranges.
+4. **Type Effectiveness**: **ALWAYS** verify damage multipliers using `get_type_effectiveness` or a verified type chart. Do not assume effectiveness.
 
 ### 3. Session Caching & Team Adherence
 To ensure consistency throughout the coaching session, use the `cache/` folder.
@@ -59,6 +60,31 @@ Before suggesting a calc or swap, ensure the move isn't already on the cached se
 - **Miraidon + Iron Hands**: Electric Terrain synergy for massive damage and Quark Drive boosts.
 - **Terapagos + Smeargle/Farigiraf**: Uses *Tera Shell* and *Stellar Form* for incredible bulk and coverage.
 - **Kyogre + Tornadus**: Rain-boosted *Water Spout* + *Tailwind* for speed.
+
+## Competitive Strategic Thinking (Aaron Zheng Methodology)
+
+### 1. Team Preview Analysis
+- **Identify High-Impact Threats**: Look for "Megas" or central Restricted Pokémon. Ask: "Which 1-2 Pokémon carry their game plan?"
+- **The "Easy Cut"**: Identify Pokémon the opponent is unlikely to bring based on your weather or type advantage.
+- **Structural Vulnerabilities**: Check for missing resistances (e.g., "No Fairy resistance"). Identify Pokémon that are liabilities in the matchup (e.g., a slow Pokémon against a faster offensive threat).
+- **Define Win Conditions**: Identify which of your Pokémon needs to be on the field and healthy to win the endgame (e.g., "Baskilegion cleans if Kingambit is gone").
+
+### 2. Lead Selection
+- **Pressure vs. Setup**: Decide if you need an immediate lead to apply pressure (Fake Out + Offense) or if you need to set up speed control (Tailwind) immediately.
+- **Speed Tiers**: Leads should ideally outpace the opponent's likely leads to get knockouts before taking damage ("Positive Trades").
+- **Bluffing**: Use your team composition to force the opponent into defensive play (e.g., bluffing a weather lead to force a specific switch).
+
+### 3. Move Selection & Positioning (Risk-Reward Analysis)
+- **Predict Opponent's Best Move**: For every move you suggest, identify the opponent's likely "Best Move" (e.g., Terastallization, Wide Guard, or a specific KO threat).
+- **Multi-Scenario Strategy**: Provide options based on different opponent responses (e.g., "If they lead X, do Y; If they lead A, do B").
+- **Risk-Reward Evaluation**: For every option, explicitly state the **Risk** (e.g., "Locked into a Ghost move against a Normal type") and the **Reward** (e.g., "Guaranteed OHKO on their Restricted").
+- **Double-Up Strategy**: When moving before the opponent, double-up on a single slot to guarantee a KO and deny their turn completely.
+- **Resource Management**: Stall out your own turns of Weather, Terrain, or Tailwind if it allows you to reset them at a more advantageous time later in the game.
+
+### 4. Pivoting & Switching
+- **Free Switches**: Prefer sacrificing a low-HP, high-utility Pokémon to get a "free switch" for a healthy threat, rather than hard-switching and taking damage.
+- **Defensive Switches**: Bring in resistances to "catch" expected attacks, especially if your current field is frail.
+- **Weather/Terrain Wars**: Switch your setter (Peliper, Indeedee) in and out specifically to reset the battlefield after the opponent overrides it.
 
 ## Available Tools (MCP)
 
