@@ -11,7 +11,7 @@ import { Classifier, Parser } from '@pkmn/stats';
 const { Teams, TeamValidator } = (PS as any).default || PS;
 const gens = new Generations(Dex as any);
 
-const server = new McpServer({ name: "smogon-calc", version: "1.0.0" });
+const server = new McpServer({ name: "smogon-vgc", version: "1.0.0" });
 
 // Classify a team's playstyle and attributes
 server.tool(
@@ -53,8 +53,6 @@ server.tool(
   },
   async ({ format, month }) => {
     try {
-      // If month is not provided, we try to guess the latest one.
-      // For simplicity, we'll try the current and previous months.
       const now = new Date();
       const monthsToTry = month ? [month] : [];
       if (!month) {
@@ -65,18 +63,14 @@ server.tool(
       }
 
       for (const m of monthsToTry) {
-        // We'll try to fetch the weighted usage stats (.txt format is easier to read directly)
-        // Usually, VGC formats use -1760 or -0 weight.
         const url = `https://www.smogon.com/stats/${m}/${format}-1760.txt`;
         const response = await fetch(url);
         if (response.ok) {
           const text = await response.text();
-          // We only return the top 20 for brevity
           const lines = text.split('\n').slice(0, 25).join('\n');
           return { content: [{ type: "text", text: `Usage stats for ${format} in ${m}:\n\n${lines}` }] };
         }
         
-        // Try without the rating suffix if 1760 fails
         const urlAlt = `https://www.smogon.com/stats/${m}/${format}-0.txt`;
         const responseAlt = await fetch(urlAlt);
         if (responseAlt.ok) {
@@ -113,30 +107,22 @@ server.tool(
       }
 
       for (const m of monthsToTry) {
-        const separator = ' +----------------------------------------+ ';
-        // Fetch moveset stats (detailed)
         const url = `https://www.smogon.com/stats/${m}/moveset/${format}-1760.txt`;
         const response = await fetch(url);
         if (response.ok) {
           const text = await response.text();
-          
-          // Smogon moveset blocks are formatted with specific padding.
-          // Headers look like:
-          //  +----------------------------------------+ 
-          //  | Pokemon Name                           | 
-          //  +----------------------------------------+ 
-          
           const lines = text.split('\n');
+          
           let startIdx = -1;
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i] || '';
-            // Headers look like " | Calyrex-Shadow                         | "
             if (line.includes('| ' + pokemon + ' ') && !line.includes('%')) {
-               // Check for separators around it
-               if (lines[i-1]?.includes('+--') && lines[i+1]?.includes('+--')) {
-                  startIdx = i - 1;
-                  // Handle potential double separator at start
-                  if (lines[i-2]?.includes('+--')) startIdx = i - 2;
+               if (lines[i-1]?.includes('+---')) {
+                  let head = i - 1;
+                  while (head > 0 && lines[head-1]?.includes('+---')) {
+                     head--;
+                  }
+                  startIdx = head;
                   break;
                }
             }
@@ -144,19 +130,16 @@ server.tool(
 
           if (startIdx !== -1) {
             let endIdx = -1;
-            // The block ends at the start of the NEXT pokemon header
-            // A true pokemon header is followed by "Raw count"
             for (let j = startIdx + 5; j < lines.length; j++) {
                const line = lines[j] || '';
                if (line.includes('| ') && !line.includes('%')) {
-                  if (lines[j-1]?.includes('+---') && lines[j+1]?.includes('+---')) {
-                     // Check if it's followed by "Raw count" or "Avg. weight"
-                     const nextDetail = lines[j+2] || '';
-                     if (nextDetail.includes('Raw count') || nextDetail.includes('Avg. weight')) {
-                        endIdx = j - 1;
-                        if (lines[j-2]?.includes('+---')) endIdx = j - 2;
-                        break;
+                  if (lines[j-1]?.includes('+---')) {
+                     let nextStart = j - 1;
+                     while (nextStart > startIdx && lines[nextStart-1]?.includes('+---')) {
+                        nextStart--;
                      }
+                     endIdx = nextStart;
+                     break;
                   }
                }
             }
@@ -165,23 +148,44 @@ server.tool(
           }
         }
 
-        // Try without the 1760 rating
         const urlAlt = `https://www.smogon.com/stats/${m}/moveset/${format}-0.txt`;
         const responseAlt = await fetch(urlAlt);
         if (responseAlt.ok) {
            const text = await responseAlt.text();
-           const blocks = text.split(separator);
-           const targetBlock = blocks.find(block => {
-             const lines = block.trim().split('\n');
-             if (lines.length > 0) {
-               const nameLine = lines[0]?.trim() || '';
-               return nameLine.replace(/\|/g, '').trim().toLowerCase() === pokemon.toLowerCase();
+           const lines = text.split('\n');
+           
+           let startIdx = -1;
+           for (let i = 0; i < lines.length; i++) {
+             const line = lines[i] || '';
+             if (line.includes('| ' + pokemon + ' ') && !line.includes('%')) {
+                if (lines[i-1]?.includes('+---')) {
+                   let head = i - 1;
+                   while (head > 0 && lines[head-1]?.includes('+---')) {
+                      head--;
+                   }
+                   startIdx = head;
+                   break;
+                }
              }
-             return false;
-           });
+           }
 
-           if (targetBlock) {
-             return { content: [{ type: "text", text: `Detailed stats for ${pokemon} in ${format} (${m}):\n${separator}${targetBlock}${separator}` }] };
+           if (startIdx !== -1) {
+             let endIdx = -1;
+             for (let j = startIdx + 5; j < lines.length; j++) {
+                const line = lines[j] || '';
+                if (line.includes('| ') && !line.includes('%')) {
+                   if (lines[j-1]?.includes('+---')) {
+                      let nextStart = j - 1;
+                      while (nextStart > startIdx && lines[nextStart-1]?.includes('+---')) {
+                         nextStart--;
+                      }
+                      endIdx = nextStart;
+                      break;
+                   }
+                }
+             }
+             const blockText = lines.slice(startIdx, endIdx !== -1 ? endIdx : lines.length).join('\n');
+             return { content: [{ type: "text", text: `Detailed stats for ${pokemon} in ${format} (${m}):\n${blockText}` }] };
            }
         }
       }
@@ -211,9 +215,6 @@ server.tool(
       for (const defTypeStr of defenderTypes) {
         const defType = generation.types.get(defTypeStr);
         if (!defType) return { content: [{ type: "text", text: `Invalid defender type: ${defTypeStr}` }] };
-        
-        // In @pkmn/data, effectiveness keys are capitalized (e.g., 'Fire', 'Water')
-        // 0 = immune, 1 = neutral, 2 = super effective, 0.5 = resisted
         const eff = (moveType.effectiveness as any)[defType.name];
         multiplier *= (eff === undefined ? 1 : eff);
       }
@@ -316,131 +317,117 @@ server.tool(
       new Pokemon(gen as any, attacker, attackerOptions as any),
       new Pokemon(gen as any, defender, defenderOptions as any),
       new Move(gen as any, move),
-      field ? new (await import("@smogon/calc")).Field(field as any) : undefined
+      field as any
     );
+
     return {
       content: [{ type: "text", text: result.fullDesc() }],
     };
   }
 );
 
-// Search Pokemon
+// Define search tools
 server.tool(
-    "search_pokemon",
-    {
-        query: z.string().describe("Search query for Pokemon"),
-        gen: z.number().optional().default(9).describe("Generation (default: 9)"),
-    },
-    async ({ query, gen }) => {
-        const genData = SPECIES[gen as number];
-        if (!genData) {
-            return {
-                content: [{ type: "text", text: `Invalid generation: ${gen}` }],
-            };
-        }
-        const matches = Object.keys(genData).filter(name => name.toLowerCase().includes(query.toLowerCase()));
-        return {
-            content: [{ type: "text", text: matches.join(", ") }],
-        };
-    }
+  "search_pokemon",
+  {
+    query: z.string().describe("Search query for Pokemon"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+  },
+  async ({ query, gen }) => {
+    const results = Object.values(SPECIES[gen as any] || {})
+      .filter((p: any) => p.name.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 10);
+    return {
+      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+    };
+  }
 );
 
-// Search Moves
 server.tool(
-    "search_move",
-    {
-        query: z.string().describe("Search query for Move"),
-        gen: z.number().optional().default(9).describe("Generation (default: 9)"),
-    },
-    async ({ query, gen }) => {
-        const genData = MOVES[gen as number];
-        if (!genData) {
-            return {
-                content: [{ type: "text", text: `Invalid generation: ${gen}` }],
-            };
-        }
-        const matches = Object.keys(genData).filter(name => name.toLowerCase().includes(query.toLowerCase()));
-        return {
-            content: [{ type: "text", text: matches.join(", ") }],
-        };
-    }
+  "search_move",
+  {
+    query: z.string().describe("Search query for Move"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+  },
+  async ({ query, gen }) => {
+    const results = Object.values(MOVES[gen as any] || {})
+      .filter((m: any) => m.name.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 10);
+    return {
+      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+    };
+  }
 );
 
-// Search Items
 server.tool(
-    "search_item",
-    {
-        query: z.string().describe("Search query for Item"),
-        gen: z.number().optional().default(9).describe("Generation (default: 9)"),
-    },
-    async ({ query, gen }) => {
-        const genData = ITEMS[gen as number];
-        if (!genData) {
-            return {
-                content: [{ type: "text", text: `Invalid generation: ${gen}` }],
-            };
-        }
-        const matches = Object.keys(genData).filter(name => name.toLowerCase().includes(query.toLowerCase()));
-        return {
-            content: [{ type: "text", text: matches.join(", ") }],
-        };
-    }
+  "search_item",
+  {
+    query: z.string().describe("Search query for Item"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+  },
+  async ({ query, gen }) => {
+    const results = Object.values(ITEMS[gen as any] || {})
+      .filter((i: any) => i.name.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 10);
+    return {
+      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+    };
+  }
 );
 
-// Search Abilities
 server.tool(
-    "search_ability",
-    {
-        query: z.string().describe("Search query for Ability"),
-        gen: z.number().optional().default(9).describe("Generation (default: 9)"),
-    },
-    async ({ query, gen }) => {
-        const genData = ABILITIES[gen as number];
-        if (!genData) {
-            return {
-                content: [{ type: "text", text: `Invalid generation: ${gen}` }],
-            };
-        }
-        const matches = Object.keys(genData).filter(name => name.toLowerCase().includes(query.toLowerCase()));
-        return {
-            content: [{ type: "text", text: matches.join(", ") }],
-        };
-    }
+  "search_ability",
+  {
+    query: z.string().describe("Search query for Ability"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+  },
+  async ({ query, gen }) => {
+    const results = Object.values(ABILITIES[gen as any] || {})
+      .filter((a: any) => a.name.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 10);
+    return {
+      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+    };
+  }
 );
 
-// Search Natures
 server.tool(
-    "search_nature",
-    {
-        query: z.string().describe("Search query for Nature"),
-    },
-    async ({ query }) => {
-        const matches = Object.keys(NATURES).filter(name => name.toLowerCase().includes(query.toLowerCase()));
-        return {
-            content: [{ type: "text", text: matches.join(", ") }],
-        };
-    }
+  "search_nature",
+  {
+    query: z.string().describe("Search query for Nature"),
+  },
+  async ({ query }) => {
+    const results = Object.values(NATURES)
+      .filter((n: any) => n.name.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, 10);
+    return {
+      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+    };
+  }
 );
 
-// Get Pokemon Info
+// Get Pokémon details
 server.tool(
-    "get_pokemon",
-    {
-        name: z.string().describe("Pokemon name"),
-        gen: z.number().optional().default(9).describe("Generation (default: 9)"),
-    },
-    async ({ name, gen }) => {
-        const pokemon = new Pokemon(gen as any, name);
-        return {
-            content: [{ type: "text", text: JSON.stringify({
-                name: pokemon.name,
-                types: pokemon.types,
-                baseStats: pokemon.stats,
-                ability: pokemon.ability,
-                weight: pokemon.weightkg,
-            }, null, 2) }],
-        };
+  "get_pokemon",
+  {
+    name: z.string().describe("Pokemon name"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+  },
+  async ({ name, gen }) => {
+    const pokemon = (SPECIES[gen as any] as any)?.[name];
+    if (!pokemon) {
+        return { content: [{ type: "text", text: "Pokemon not found." }] };
     }
+    return {
+        content: [{ type: "text", text: JSON.stringify({
+            name: pokemon.name,
+            types: pokemon.types,
+            bs: pokemon.bs,
+            ability: pokemon.ability,
+            weight: pokemon.weightkg,
+        }, null, 2) }],
+    };
+  }
 );
 
 // Start the server

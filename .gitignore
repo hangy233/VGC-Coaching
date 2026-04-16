@@ -2,6 +2,9 @@
 node_modules/
 dist/
 
+# Cache
+cache/
+
 # System
 .DS_Store
 Thumbs.db

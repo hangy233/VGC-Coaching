@@ -5,38 +5,39 @@ description: Comprehensive Pokémon VGC assistant for team validation, damage ca
 
 # Smogon VGC Assistant
 
-This skill provides expert guidance for Pokémon VGC analysis using the integrated MCP tools. It enforces the use of live data over training memory for competitive accuracy.
+This skill provides expert guidance for Pokémon VGC analysis using the integrated MCP tools. It enforces the use of live data and strict adherence to session-specific parameters.
 
 ## Core Mandates
 
 ### 1. Live Data Only
-**NEVER** rely on internal training memory for Pokémon stats, moves, abilities, or metagame trends. Competitive Pokémon changes frequently (new regulations, bans, tier shifts).
+**NEVER** rely on internal training memory for Pokémon stats, moves, abilities, or metagame trends.
 1. **Source of Truth**: Always use the provided MCP tools (`get_usage_stats`, `get_pokemon_usage`, `validate_team`, etc.) as your primary source.
 2. **Fallback**: Use web search (Smogon, Victory Road, Pikalytics) if MCP tools lack specific data.
 
-### 2. Strict Regulation Adherence
-**ALWAYS** strictly follow the Pokémon VGC Regulation specified by the user (e.g., Regulation G, Regulation I).
-1. **Format Identification**: Before analyzing or validating, confirm the exact Showdown format ID for the specified regulation (e.g., `gen9vgc2025regg` for Reg G, `gen9vgc2026regi` for Reg I).
-2. **No Substitutions**: Do not use data or rules from a different regulation unless the specified one is unavailable AND you explicitly inform the user of the substitution.
+### 2. Strict Regulation & Type Adherence
+1. **Format Identification**: Before analyzing, confirm the exact Showdown format ID (e.g., `gen9vgc2025regg` for Reg G, `gen9vgc2026regi` for Reg I). Check `cache/REG.txt` if it exists.
+2. **No Substitutions**: Do not use data or rules from a different regulation unless the specified one is unavailable AND you explicitly inform the user.
+3. **Type Effectiveness**: **ALWAYS** verify damage multipliers using `get_type_effectiveness` or a verified type chart. Do not assume effectiveness (e.g., Normal/Fighting vs Ghost).
 
+### 3. Session Caching & Team Adherence
+To ensure consistency throughout the coaching session, use the `cache/` folder.
+1. **Refer to Cache**: **ALWAYS** check `cache/TEAM.txt` and `cache/REG.txt` before making suggestions or running tools.
+2. **Ask Before Update**: If you identify a necessary change to the team or regulation, **ASK THE USER** before updating the files in the `cache/` folder.
+3. **Sync**: Keep the cache updated with the user's latest decisions after receiving approval.
+4. **Cleanup**: Explicitly delete the `cache/` folder at the end of the session or when the user requests a reset.
 
-## Available Tools (MCP)
+## Workflows
 
-| Tool | Purpose | Parameters |
-| :--- | :--- | :--- |
-| `classify_team` | Analyzes team playstyle/archetype. | `team` (text), `gen`, `format` |
-| `validate_team` | Checks team legality for a format. | `team` (text), `format` |
-| `validate_pokemon` | Checks set legality for a format. | `pokemon` (text), `format` |
-| `get_usage_stats` | Fetches format-wide usage rankings. | `format`, `month` (optional) |
-| `get_pokemon_usage` | Fetches detailed stats for one Pokémon. | `pokemon`, `format`, `month` |
-| `get_type_effectiveness`| Calculates damage multiplier. | `attackType`, `defenderTypes` (array) |
-| `calculate_damage` | Performs detailed damage calc. | `attacker`, `defender`, `move`, `field` |
-| `get_pokemon` | Gets base stats, types, and weight. | `name`, `gen` |
-| `search_pokemon` | Searches for Pokémon by name. | `query`, `gen` |
-| `search_move` | Searches for moves by name. | `query`, `gen` |
-| `search_item` | Searches for items by name. | `query`, `gen` |
-| `search_ability` | Searches for abilities by name. | `query`, `gen` |
-| `search_nature` | Searches for natures by name. | `query` |
+### 1. Team Audit Workflow
+1. **Identify**: Check `cache/TEAM.txt`. If missing, ask for the team list.
+2. **Regulation**: Check `cache/REG.txt`. If missing, ask for the Regulation.
+3. **Classify**: Use `classify_team` to see the archetype.
+4. **Legal Check**: Use `validate_team` with the cached regulation.
+5. **Audit**: Run `get_pokemon_usage` for members to verify meta viability.
+6. **Suggest**: Provide improvements based ONLY on the current cached state.
+
+### 2. Move-by-Move Verification
+Before suggesting a calc or swap, ensure the move isn't already on the cached set. Check move popularity in the specific format via `get_pokemon_usage`.
 
 ## VGC Fundamentals & Strategies
 
@@ -59,13 +60,20 @@ This skill provides expert guidance for Pokémon VGC analysis using the integrat
 - **Terapagos + Smeargle/Farigiraf**: Uses *Tera Shell* and *Stellar Form* for incredible bulk and coverage.
 - **Kyogre + Tornadus**: Rain-boosted *Water Spout* + *Tailwind* for speed.
 
-## Workflows
+## Available Tools (MCP)
 
-### 1. Team Audit Workflow
-1. **Classify**: `classify_team` to see the archetype.
-2. **Legal Check**: `validate_team`.
-3. **Usage Check**: `get_pokemon_usage` for each member to see if items/moves are "standard" or "tech".
-4. **Weakness Check**: Use `get_type_effectiveness` to identify common type weaknesses in the team's defensive core.
-
-### 2. Move-by-Move Verification
-Before suggesting a calc, check if the move is actually common for that Pokémon in the format using `get_pokemon_usage`. Don't calc for `Hydro Pump` if the Pokémon 100% runs `Scald`.
+| Tool | Purpose | Parameters |
+| :--- | :--- | :--- |
+| `classify_team` | Analyzes team playstyle/archetype. | `team` (text), `gen`, `format` |
+| `validate_team` | Checks team legality for a format. | `team` (text), `format` |
+| `validate_pokemon` | Checks set legality for a format. | `pokemon` (text), `format` |
+| `get_usage_stats` | Fetches format-wide usage rankings. | `format`, `month` (optional) |
+| `get_pokemon_usage` | Fetches detailed stats for one Pokémon. | `pokemon`, `format`, `month` |
+| `get_type_effectiveness`| Calculates damage multiplier. | `attackType`, `defenderTypes` (array) |
+| `calculate_damage` | Performs detailed damage calc. | `attacker`, `defender`, `move`, `field` |
+| `get_pokemon` | Gets base stats, types, and weight. | `name`, `gen` |
+| `search_pokemon` | Searches for Pokémon by name. | `query`, `gen` |
+| `search_move` | Searches for moves by name. | `query`, `gen` |
+| `search_item` | Searches for items by name. | `query`, `gen` |
+| `search_ability` | Searches for abilities by name. | `query`, `gen` |
+| `search_nature` | Searches for natures by name. | `query` |
