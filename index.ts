@@ -212,9 +212,9 @@ server.tool(
         const defType = generation.types.get(defTypeStr);
         if (!defType) return { content: [{ type: "text", text: `Invalid defender type: ${defTypeStr}` }] };
         
-        // In @pkmn/data, effectiveness is a map of defender types to their effectiveness
+        // In @pkmn/data, effectiveness keys are capitalized (e.g., 'Fire', 'Water')
         // 0 = immune, 1 = neutral, 2 = super effective, 0.5 = resisted
-        const eff = (moveType.effectiveness as any)[defType.id];
+        const eff = (moveType.effectiveness as any)[defType.name];
         multiplier *= (eff === undefined ? 1 : eff);
       }
 
