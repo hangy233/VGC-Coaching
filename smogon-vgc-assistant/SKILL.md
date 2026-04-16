@@ -7,11 +7,18 @@ description: Comprehensive Pokémon VGC assistant for team validation, damage ca
 
 This skill provides expert guidance for Pokémon VGC analysis using the integrated MCP tools. It enforces the use of live data over training memory for competitive accuracy.
 
-## Core Mandate: Live Data Only
+## Core Mandates
 
+### 1. Live Data Only
 **NEVER** rely on internal training memory for Pokémon stats, moves, abilities, or metagame trends. Competitive Pokémon changes frequently (new regulations, bans, tier shifts).
-1. **Source of Truth**: Always use the provided MCP tools as your primary source.
+1. **Source of Truth**: Always use the provided MCP tools (`get_usage_stats`, `get_pokemon_usage`, `validate_team`, etc.) as your primary source.
 2. **Fallback**: Use web search (Smogon, Victory Road, Pikalytics) if MCP tools lack specific data.
+
+### 2. Strict Regulation Adherence
+**ALWAYS** strictly follow the Pokémon VGC Regulation specified by the user (e.g., Regulation G, Regulation I).
+1. **Format Identification**: Before analyzing or validating, confirm the exact Showdown format ID for the specified regulation (e.g., `gen9vgc2025regg` for Reg G, `gen9vgc2026regi` for Reg I).
+2. **No Substitutions**: Do not use data or rules from a different regulation unless the specified one is unavailable AND you explicitly inform the user of the substitution.
+
 
 ## Available Tools (MCP)
 
