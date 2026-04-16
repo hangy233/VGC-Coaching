@@ -294,9 +294,10 @@ server.tool(
       ability: z.string().optional().describe("Attacker ability"),
       item: z.string().optional().describe("Attacker item"),
       nature: z.string().optional().describe("Attacker nature"),
-      evs: z.any().optional().describe("Attacker EVs (e.g., { at: 252, sp: 252 })"),
       ivs: z.any().optional().describe("Attacker IVs"),
+      evs: z.any().optional().describe("Attacker EVs (e.g., { at: 252, sp: 252 })"),
       boosts: z.any().optional().describe("Attacker boosts (e.g., { at: 1 })"),
+      teraType: z.string().optional().describe("Attacker Tera Type"),
     }).optional(),
     defender: z.string().describe("Defender species name (e.g., Froslass-Mega)"),
     defenderOptions: z.object({
@@ -304,9 +305,10 @@ server.tool(
       ability: z.string().optional().describe("Defender ability"),
       item: z.string().optional().describe("Defender item"),
       nature: z.string().optional().describe("Defender nature"),
-      evs: z.any().optional().describe("Defender EVs"),
       ivs: z.any().optional().describe("Defender IVs"),
+      evs: z.any().optional().describe("Defender EVs"),
       boosts: z.any().optional().describe("Defender boosts"),
+      teraType: z.string().optional().describe("Defender Tera Type"),
     }).optional(),
     move: z.string().describe("Move name (e.g., Shadow Claw)"),
     field: z.object({
