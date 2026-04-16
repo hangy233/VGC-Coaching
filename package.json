@@ -7,7 +7,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "update-data": "npm install pokemon-showdown@latest @pkmn/dex@latest @pkmn/data@latest @pkmn/stats@latest @smogon/calc@latest && npm run build"
   },
   "keywords": [],
   "author": "",

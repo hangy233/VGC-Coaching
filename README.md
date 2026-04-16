@@ -73,6 +73,12 @@ To ensure you have the latest Pokémon data, Regulation rules, and metagame tren
 ### Updating Logic & Data
 The core Pokémon logic (new species, moves, and format rules like Regulation I) is provided by `pokemon-showdown` and `@pkmn/dex`.
 
+To update everything at once and rebuild the project:
+```bash
+npm run update-data
+```
+
+Alternatively, you can update packages manually:
 ```bash
 # Update core logic packages
 npm install pokemon-showdown@latest @pkmn/dex@latest @pkmn/data@latest @smogon/calc@latest
