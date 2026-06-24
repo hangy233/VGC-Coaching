@@ -15,10 +15,16 @@ This skill provides expert guidance for Pokémon VGC analysis using the integrat
 2. **Fallback**: Use web search (Smogon, Victory Road, Pikalytics) if MCP tools lack specific data.
 
 ### 2. Strict Regulation & Type Adherence
-1. **Format Identification**: Before analyzing, confirm the exact Showdown format ID (e.g., `gen9vgc2025regg` for Reg G, `gen9vgc2026regi` for Reg I). Check `cache/REG.txt` if it exists.
+1. **Format Identification**: Before analyzing, confirm the exact Showdown format ID (e.g., `gen9championsvgc2026regmb` for Reg M-B). Check `cache/REG.txt` if it exists.
 2. **No Substitutions**: Do not use data or rules from a different regulation unless the specified one is unavailable AND you explicitly inform the user.
-3. **Never Estimate Damage**: **ALWAYS** use the `calculate_damage` tool for every assessment. Do not rely on "estimates" or internal memory for damage ranges.
+3. **No Mechanic Assumptions**: **NEVER** assume the presence of mechanics like Terastal, Dynamax, or Mega Evolution unless explicitly mentioned in the format description or verified via `validate_team`/`get_usage_stats`.
+4. **No Roster Assumptions**: **NEVER** assume a Pokémon is available in a regulation. Always check `search_pokemon` or `get_usage_stats` first.
+5. **Never Estimate Damage**: **ALWAYS** use the `calculate_damage` tool for every assessment. Do not rely on "estimates" or internal memory for damage ranges.
 4. **Type Effectiveness**: **ALWAYS** verify damage multipliers using `get_type_effectiveness` or a verified type chart. Do not assume effectiveness.
+5. **Type Matchup Verification**: Whenever you mention a type advantage or disadvantage in your analysis (e.g., "Bug is 2x against Dark"), you **MUST** run the `get_type_effectiveness` tool in that same turn to validate your claim.
+6. **Legality & Mechanics Verification**: **BEFORE** suggesting a move or team change, you **MUST** run:
+    - `get_movepool`: To verify the Pokémon can actually learn the move in the current generation.
+    - `get_move`: To verify the move's mechanics (priority, target, effect) align with the strategy.
 
 ### 3. Session Caching & Team Adherence
 To ensure consistency throughout the coaching session, use the `cache/` folder.
@@ -98,6 +104,8 @@ Before suggesting a calc or swap, ensure the move isn't already on the cached se
 | `get_type_effectiveness`| Calculates damage multiplier. | `attackType`, `defenderTypes` (array) |
 | `calculate_damage` | Performs detailed damage calc. | `attacker`, `defender`, `move`, `field` |
 | `get_pokemon` | Gets base stats, types, and weight. | `name`, `gen` |
+| `get_movepool` | Gets the full movepool of a Pokémon. | `pokemon`, `gen` |
+| `get_move` | Gets detailed stats for a move. | `name`, `gen` |
 | `search_pokemon` | Searches for Pokémon by name. | `query`, `gen` |
 | `search_move` | Searches for moves by name. | `query`, `gen` |
 | `search_item` | Searches for items by name. | `query`, `gen` |

@@ -73,6 +73,14 @@ async function runTests() {
       {
         name: "get_pokemon",
         args: { name: "Calyrex-Shadow", gen: 9 }
+      },
+      {
+        name: "get_movepool",
+        args: { pokemon: "Indeedee-F", gen: 9 }
+      },
+      {
+        name: "get_move",
+        args: { name: "Thunderbolt", gen: 9 }
       }
     ];
 

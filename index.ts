@@ -19,7 +19,7 @@ server.tool(
   {
     team: z.string().describe("Team in Showdown text format"),
     gen: z.number().optional().default(9).describe("Generation (default: 9)"),
-    format: z.string().optional().default("gen9vgc2025regg").describe("Format ID (e.g., gen9vgc2025regg)"),
+    format: z.string().optional().default("gen9championsvgc2026regmb").describe("Format ID (e.g., gen9vgc2025regg)"),
   },
   async ({ team, gen, format }) => {
     try {
@@ -92,7 +92,7 @@ server.tool(
   "get_pokemon_usage",
   {
     pokemon: z.string().describe("Pokémon name (e.g., Iron Hands)"),
-    format: z.string().optional().default("gen9vgc2025regg").describe("Format ID (e.g., gen9vgc2025regg)"),
+    format: z.string().optional().default("gen9championsvgc2026regmb").describe("Format ID (e.g., gen9vgc2025regg)"),
     month: z.string().optional().describe("Month in YYYY-MM format (default: latest available)"),
   },
   async ({ pokemon, format, month }) => {
@@ -239,7 +239,7 @@ server.tool(
   "validate_pokemon",
   {
     pokemon: z.string().describe("Pokémon set in Showdown text format"),
-    format: z.string().optional().default("gen9vgc2025regg").describe("Format to validate against (e.g., gen9vgc2025regg)"),
+    format: z.string().optional().default("gen9championsvgc2026regmb").describe("Format to validate against (e.g., gen9vgc2025regg)"),
   },
   async ({ pokemon, format }) => {
     try {
@@ -264,7 +264,7 @@ server.tool(
   "validate_team",
   {
     team: z.string().describe("Team in Showdown text format"),
-    format: z.string().optional().default("gen9vgc2025regg").describe("Format to validate against (e.g., gen9vgc2025regg)"),
+    format: z.string().optional().default("gen9championsvgc2026regmb").describe("Format to validate against (e.g., gen9vgc2025regg)"),
   },
   async ({ team, format }) => {
     try {
@@ -437,6 +437,78 @@ server.tool(
             weight: pokemon.weightkg,
         }, null, 2) }],
     };
+  }
+);
+
+// Get Pokémon movepool
+server.tool(
+  "get_movepool",
+  {
+    pokemon: z.string().describe("Pokémon name"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+  },
+  async ({ pokemon, gen }) => {
+    try {
+      const generation = gens.get(gen as any);
+      const species = generation.species.get(pokemon);
+      if (!species) {
+        return { content: [{ type: "text", text: "Pokemon not found." }] };
+      }
+      
+      const learnset = await generation.learnsets.get(species.id);
+      if (!learnset || !learnset.learnset) {
+        return { content: [{ type: "text", text: "Movepool not found for " + pokemon }] };
+      }
+
+      const moves = Object.keys(learnset.learnset).map(id => {
+        const move = generation.moves.get(id);
+        return move ? move.name : id;
+      }).sort();
+
+      return {
+        content: [{ type: "text", text: `Movepool for ${species.name} (Gen ${gen}):\n${moves.join(", ")}` }],
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: "Error: " + e.message }] };
+    }
+  }
+);
+
+// Get move details
+server.tool(
+  "get_move",
+  {
+    name: z.string().describe("Move name"),
+    gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+  },
+  async ({ name, gen }) => {
+    try {
+      const generation = gens.get(gen as any);
+      const move = generation.moves.get(name);
+      if (!move) {
+        return { content: [{ type: "text", text: "Move not found." }] };
+      }
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            name: move.name,
+            type: move.type,
+            category: move.category,
+            basePower: move.basePower,
+            accuracy: move.accuracy === true ? "Always hits" : move.accuracy,
+            priority: move.priority,
+            target: move.target,
+            shortDesc: move.shortDesc,
+            desc: move.desc,
+            makesContact: !!move.flags.contact,
+          }, null, 2)
+        }],
+      };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: "Error: " + e.message }] };
+    }
   }
 );
 

@@ -181,6 +181,27 @@ Swap **Close Combat** for **Body Press** on Zamazenta immediately. This is the s
 
 To ensure you have the latest Pokémon data, Regulation rules, and metagame trends, you should periodically update the underlying Smogon and @pkmn packages.
 
+### Accessing Custom or Bleeding-Edge Formats (Manual GitHub Update)
+Sometimes, specific custom regulations (like `champions` or unreleased community formats) are not available in the official `pokemon-showdown` npm package because they are only maintained on the `master` branch.
+
+To completely replace the local npm version with the absolute latest bleeding-edge data directly from GitHub:
+
+```bash
+# 1. Remove the existing npm package
+rm -rf node_modules/pokemon-showdown
+
+# 2. Clone the official repository directly into node_modules
+git clone https://github.com/smogon/pokemon-showdown.git node_modules/pokemon-showdown
+
+# 3. Install its internal dependencies and compile it
+cd node_modules/pokemon-showdown
+npm install
+npm run build
+cd ../..
+```
+
+*Note: If you need a very specific snapshot (e.g., to perfectly recreate an older tournament's exact ruleset), you can `git checkout <commit-hash>` inside the `node_modules/pokemon-showdown` directory before running `npm install`.*
+
 ### Updating Logic & Data
 The core Pokémon logic (new species, moves, and format rules like Regulation I) is provided by `pokemon-showdown` and `@pkmn/dex`.
 
