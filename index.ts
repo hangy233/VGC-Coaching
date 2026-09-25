@@ -10,6 +10,9 @@ import { Classifier, Parser } from '@pkmn/stats';
 
 const { Teams, TeamValidator } = (PS as any).default || PS;
 const gens = new Generations(Dex as any);
+const CURRENT_FORMAT = "gen9championsvgc2026regmc";
+const formatSchema = z.string().default(CURRENT_FORMAT)
+  .describe("Showdown format ID (default: Champions VGC 2026 Regulation M-C)");
 
 const server = new McpServer({ name: "smogon-vgc", version: "1.0.0" });
 
@@ -19,7 +22,7 @@ server.tool(
   {
     team: z.string().describe("Team in Showdown text format"),
     gen: z.number().optional().default(9).describe("Generation (default: 9)"),
-    format: z.string().optional().default("gen9championsvgc2026regmb").describe("Format ID (e.g., gen9vgc2025regg)"),
+    format: formatSchema,
   },
   async ({ team, gen, format }) => {
     try {
@@ -48,7 +51,7 @@ server.tool(
 server.tool(
   "get_usage_stats",
   {
-    format: z.string().describe("Format ID (e.g., gen9vgc2025regg)"),
+    format: formatSchema,
     month: z.string().optional().describe("Month in YYYY-MM format (default: latest available)"),
   },
   async ({ format, month }) => {
@@ -92,7 +95,7 @@ server.tool(
   "get_pokemon_usage",
   {
     pokemon: z.string().describe("Pokémon name (e.g., Iron Hands)"),
-    format: z.string().optional().default("gen9championsvgc2026regmb").describe("Format ID (e.g., gen9vgc2025regg)"),
+    format: formatSchema,
     month: z.string().optional().describe("Month in YYYY-MM format (default: latest available)"),
   },
   async ({ pokemon, format, month }) => {
@@ -239,7 +242,7 @@ server.tool(
   "validate_pokemon",
   {
     pokemon: z.string().describe("Pokémon set in Showdown text format"),
-    format: z.string().optional().default("gen9championsvgc2026regmb").describe("Format to validate against (e.g., gen9vgc2025regg)"),
+    format: formatSchema,
   },
   async ({ pokemon, format }) => {
     try {
@@ -264,7 +267,7 @@ server.tool(
   "validate_team",
   {
     team: z.string().describe("Team in Showdown text format"),
-    format: z.string().optional().default("gen9championsvgc2026regmb").describe("Format to validate against (e.g., gen9vgc2025regg)"),
+    format: formatSchema,
   },
   async ({ team, format }) => {
     try {

@@ -14,7 +14,7 @@ A specialized Model Context Protocol (MCP) server designed for competitive Poké
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18 or higher recommended)
+- [Node.js](https://nodejs.org/) v22.18.0 or higher (v24 LTS recommended)
 - [npm](https://www.npmjs.com/)
 
 ### Installation & Build
@@ -27,7 +27,7 @@ A specialized Model Context Protocol (MCP) server designed for competitive Poké
 
 2. Install dependencies:
    ```bash
-   npm install
+   npm ci
    ```
 
 3. Build the project:
@@ -36,6 +36,18 @@ A specialized Model Context Protocol (MCP) server designed for competitive Poké
    ```
 
 ## Usage
+
+### Current Regulation
+
+The default format is **Pokémon Champions VGC 2026 Regulation M-C**
+(`gen9championsvgc2026regmc`). Team and Pokémon validation, classification, and
+both usage-statistics tools use this format when `format` is omitted. Pass an
+explicit Showdown format ID to analyze a different regulation.
+
+The coaching skill also uses M-C when no other regulation has been selected.
+Its local session selection is stored in `cache/REG.txt` (ignored by Git).
+See the [official M-C announcement](https://champions-news.pokemon-home.com/en/page/816.html)
+for the regulation details.
 
 ### Connecting to MCP
 
@@ -66,7 +78,10 @@ I have bundled a specialized skill file (`smogon-vgc-assistant.skill`) to guide 
 
 3. **Expert Guidance**: Once loaded, the AI will automatically prioritize the MCP tools as the source of truth, ignoring outdated training memory.
 
-## Example Usage
+## Historical Example Usage (Scarlet/Violet Regulation I)
+
+This example uses a historical format. Pass `format: "gen9vgc2025regi"`
+explicitly; the current Champions M-C default has different rules and eligibility.
 
 ### User Request
 > "Analyze this Reg I team:
@@ -181,31 +196,23 @@ Swap **Close Combat** for **Body Press** on Zamazenta immediately. This is the s
 
 To ensure you have the latest Pokémon data, Regulation rules, and metagame trends, you should periodically update the underlying Smogon and @pkmn packages.
 
-### Accessing Custom or Bleeding-Edge Formats (Manual GitHub Update)
-Sometimes, specific custom regulations (like `champions` or unreleased community formats) are not available in the official `pokemon-showdown` npm package because they are only maintained on the `master` branch.
+### Pokémon Showdown Rules Snapshot
 
-To completely replace the local npm version with the absolute latest bleeding-edge data directly from GitHub:
+The published `pokemon-showdown` 0.11.11 release does not include M-C. This
+project therefore pins the official source snapshot
+[`a5df8274e85b0889bf2a9b3422a08b39732374fc`](https://github.com/smogon/pokemon-showdown/tree/a5df8274e85b0889bf2a9b3422a08b39732374fc)
+in `package.json` and `package-lock.json`. `npm run build` compiles this rules
+snapshot before compiling the MCP server, including after a fresh `npm ci`.
 
-```bash
-# 1. Remove the existing npm package
-rm -rf node_modules/pokemon-showdown
-
-# 2. Clone the official repository directly into node_modules
-git clone https://github.com/smogon/pokemon-showdown.git node_modules/pokemon-showdown
-
-# 3. Install its internal dependencies and compile it
-cd node_modules/pokemon-showdown
-npm install
-npm run build
-cd ../..
-```
-
-*Note: If you need a very specific snapshot (e.g., to perfectly recreate an older tournament's exact ruleset), you can `git checkout <commit-hash>` inside the `node_modules/pokemon-showdown` directory before running `npm install`.*
+To update the rules later, install a verified newer commit tarball (or a published
+release that includes the required format), then run `npm test`. Commit both
+package files so fresh installations use the same rules.
 
 ### Updating Logic & Data
-The core Pokémon logic (new species, moves, and format rules like Regulation I) is provided by `pokemon-showdown` and `@pkmn/dex`.
+The core Pokémon logic is provided by `pokemon-showdown` and `@pkmn/dex`.
 
-To update everything at once and rebuild the project:
+To update the published Pokémon data packages and rebuild the project while
+preserving the verified Showdown rules snapshot:
 ```bash
 npm run update-data
 ```
@@ -213,7 +220,7 @@ npm run update-data
 Alternatively, you can update packages manually:
 ```bash
 # Update core logic packages
-npm install pokemon-showdown@latest @pkmn/dex@latest @pkmn/data@latest @smogon/calc@latest
+npm install @pkmn/dex@latest @pkmn/data@latest @pkmn/stats@latest @smogon/calc@latest
 # Rebuild the project
 npm run build
 ```
@@ -221,11 +228,23 @@ npm run build
 ### Updating Metagame Usage
 The usage stats tools (`get_usage_stats` and `get_pokemon_usage`) fetch data live from `smogon.com/stats`. They will automatically retrieve the most recent month's data as it becomes available online, with no code changes required.
 
+If M-C statistics have not been published yet, the tools report that no data was
+found for M-C; they do not substitute another regulation's statistics.
+
+### Verification
+
+```bash
+npm test
+```
+
+This builds the server and checks the default regulation and Champions legality
+through the MCP tools, without requiring live usage-statistics downloads.
+
 ## Available Tools
 
 | Tool | Description |
 | :--- | :--- |
-| `validate_team` | Checks if a team is legal for a specific format (e.g., `gen9vgc2025regg`). |
+| `validate_team` | Checks team legality (default: `gen9championsvgc2026regmc`). |
 | `classify_team` | Returns tags like 'weatherless', 'offense', and stalliness scores. |
 | `get_usage_stats` | Gets the top 20 Pokémon used in a format. |
 | `get_pokemon_usage` | Detailed report on moves, items, and common teammates. |

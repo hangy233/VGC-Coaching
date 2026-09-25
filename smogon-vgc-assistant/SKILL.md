@@ -15,7 +15,7 @@ This skill provides expert guidance for Pokémon VGC analysis using the integrat
 2. **Fallback**: Use web search (Smogon, Victory Road, Pikalytics) if MCP tools lack specific data.
 
 ### 2. Strict Regulation & Type Adherence
-1. **Format Identification**: Before analyzing, confirm the exact Showdown format ID (e.g., `gen9championsvgc2026regmb` for Reg M-B). Check `cache/REG.txt` if it exists.
+1. **Format Identification**: Before analyzing, use the user-specified Showdown format ID or check `cache/REG.txt` if it exists. The current default is Champions Regulation M-C (`gen9championsvgc2026regmc`); use it when neither the user nor the cache specifies a regulation.
 2. **No Substitutions**: Do not use data or rules from a different regulation unless the specified one is unavailable AND you explicitly inform the user.
 3. **No Mechanic Assumptions**: **NEVER** assume the presence of mechanics like Terastal, Dynamax, or Mega Evolution unless explicitly mentioned in the format description or verified via `validate_team`/`get_usage_stats`.
 4. **No Roster Assumptions**: **NEVER** assume a Pokémon is available in a regulation. Always check `search_pokemon` or `get_usage_stats` first.
@@ -37,9 +37,9 @@ To ensure consistency throughout the coaching session, use the `cache/` folder.
 
 ### 1. Team Audit Workflow
 1. **Identify**: Check `cache/TEAM.txt`. If missing, ask for the team list.
-2. **Regulation**: Check `cache/REG.txt`. If missing, ask for the Regulation.
+2. **Regulation**: Use the user-specified regulation or check `cache/REG.txt`. If neither specifies one, use the current default, Champions Regulation M-C (`gen9championsvgc2026regmc`).
 3. **Classify**: Use `classify_team` to see the archetype.
-4. **Legal Check**: Use `validate_team` with the cached regulation.
+4. **Legal Check**: Use `validate_team` with the selected regulation.
 5. **Audit**: Run `get_pokemon_usage` for members to verify meta viability.
 6. **Suggest**: Provide improvements based ONLY on the current cached state.
 
