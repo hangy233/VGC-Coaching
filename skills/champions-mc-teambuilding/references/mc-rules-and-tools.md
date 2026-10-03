@@ -1,0 +1,193 @@
+# Champions M-C: rules and evidence contract
+
+Verified 2026-10-02 against the official announcement, the project's pinned
+Pokemon Showdown snapshot, and actual MCP calls. These are a versioned baseline;
+check for corrections when using the skills later. Named M-C analysis can remain
+historical after its season ends, but do not call it the current regulation then.
+
+## Rules and sources
+
+The [official M-C announcement](https://champions-news.pokemon-home.com/en/page/816.html)
+sets its period to September 9, 2026, 02:00 UTC through December 2, 2026, 01:59 UTC.
+It permits one Mega Evolution per battle with the appropriate stone and forbids
+duplicate held items. Its ranked timers are 20 minutes total, 7 minutes per player,
+45 seconds per turn, and 90 seconds for preview. Use event-specific rules when
+the user is preparing for a tournament instead of assuming every event's clocks.
+
+The [official eligible-Pokemon list](https://web-view.app.pokemonchampions.jp/battle/pages/events/rs178713870219xeaaio/en/pokemon.html)
+is linked from that announcement. It is dynamically rendered; an empty text
+extraction is not an empty roster. For executable checks use the format
+`gen9championsvgc2026regmc` in current compatible Showdown.
+
+This project pins [Showdown commit a5df8274e85b0889bf2a9b3422a08b39732374fc](https://github.com/smogon/pokemon-showdown/tree/a5df8274e85b0889bf2a9b3422a08b39732374fc).
+Its M-C rule table and Champions mod establish:
+
+| Constraint | Required handling |
+| --- | --- |
+| Doubles, six registered, four selected, battles at level 50 | Do not import singles roles or plan to use all six in one battle. |
+| Species Clause | No repeated National Pokedex number, including alternate forms. |
+| Item Clause | No repeated held item; inspect the other five sets before assigning one. |
+| Training | At most 66 stat points total and 32 per stat; export points on the `EVs:` line. |
+| IVs | All six IVs are 31; omit the line or explicitly use 31. No zero-Speed IV Trick Room sets. |
+| Mechanics | Mega Evolution is available; Terastallization, Dynamax and Z-Moves are not M-C battle resources. A Mega-Z form does not imply Z-Moves. |
+| Form changes | A Mega Stone does not prove the post-Mega ability or stats; inspect the correct form. |
+
+Useful source locations in the pinned repository: `data/mods/champions/`,
+`sim/team-validator.ts`, `sim/dex-formats.ts`, `sim/teams.ts`, and
+`data/rulesets.ts`. The latter uses a 55-second simulator turn limit in this
+snapshot; do not confuse that with the official 45-second ranked limit.
+
+## Use actual tool capabilities
+
+| Task | Tool and check |
+| --- | --- |
+| Find a candidate | `search_pokemon`, `get_pokemon`; existence is not M-C eligibility. |
+| Verify a set or six | `validate_pokemon`, `validate_team`, explicitly passing the M-C format. |
+| Learnset and mechanics | `get_movepool`, `get_move`; supplement with Champions Dex when generic data differs. |
+| Item or ability lookup | `search_item`, `search_ability`, then inspect its full Champions effect and validate the set. |
+| Type interaction | `get_type_effectiveness` for the actual defending types; verify ability-based exceptions separately. |
+| Showdown ladder usage | `get_usage_stats`, `get_pokemon_usage`, with explicit M-C, period, and rating. Missing data is not zero usage. |
+| Champions ladder data | `get_champions_usage_stats`, `get_champions_pokemon_usage`, with battle type, season, and snapshot date. Species ranks are not usage percentages. |
+| Damage | `calculate_damage`, with the native Champions mode below. |
+
+### Usage sources and provenance
+
+All four usage tools return structured JSON containing source provenance and
+resolved period metadata. Preserve this metadata when reporting or comparing
+results: Showdown and Champions ladder data describe different populations.
+
+For **Smogon**, `get_usage_stats` and `get_pokemon_usage` accept `format`
+(M-C default), optional `month` in `YYYY-MM`, and optional `rating` of
+`0`, `1500`, `1630`, or `1760`. An explicit cutoff is exact; omitted
+ratings try `1760`, then `0`, and label any fallback. An omitted month
+discovers the latest actually published reports. `get_usage_stats` accepts
+`limit` (default `20`, maximum `100`); `get_pokemon_usage` requires
+`pokemon`. Do not silently substitute another regulation for missing M-C data.
+
+On 2026-10-02, September 2026 M-C reports were verified at
+[Smogon's monthly statistics](https://www.smogon.com/stats/2026-09/).
+Do not preserve an earlier session's "statistics unavailable" result as a
+permanent fact. Record the resolved rating cutoff alongside format and month.
+
+For **Champions**, `get_champions_usage_stats` accepts `battleType`
+(`Doubles` default or `Singles`), optional `season` such as `M6`,
+optional ISO `date` such as `2026-10-02`, and `limit` (default `20`,
+maximum `100`). `get_champions_pokemon_usage` requires `pokemon` and
+accepts the same battle type, season, and date selection. Omitted season/date
+resolve the latest available snapshot through the provider's
+[metadata index](https://championsbattledata.com/data/meta/index.json).
+
+The verified latest snapshot on 2026-10-02 was season `M6`, dated
+`2026-10-02`. The provider reports species ranks without overall species
+usage percentages or a battle count. Pokémon detail data includes move, item,
+ability, nature, and stat-point percentages, plus teammate ranks. Set
+percentages do not measure the species' share of all teams. The provider
+supplies no verified Showdown regulation mapping: do not infer M-C merely
+from the season label `M6` or treat the feed as official Pokémon data.
+
+Battle data provided by
+[Pokémon Champions Battle Data](https://championsbattledata.com/api_guide), an
+unofficial community source. Follow its
+[API usage rules](https://championsbattledata.com/api-rules/): retain linked
+attribution in public output, use reasonable caching, and avoid a standalone
+raw-data service or permanent mirror without permission.
+
+The existing `get_move` and `get_movepool` tools use generic `@pkmn/data`
+generation data. Keep their supported generation setting; do not blindly pass
+zero to every tool. Generic pools can omit inherited or Champions-specific moves.
+For example, Incineroar's Parting Shot is present in the Champions learnset even
+when that generic pool omits it. Use Pokemon Showdown's
+`Dex.mod('champions').species.getLearnsetData(speciesId)` and move/ability/item
+Dex records as the supplement, then validate the complete set for M-C.
+
+If tools are not exposed in the current client, inspect the user's VGC project
+and its README. Where its installed dependencies and `dist/index.js` exist,
+the MCP SDK's `Client` and `StdioClientTransport` can call the same tools through
+`node dist/index.js`. Resolve paths from the active project, not a hard-coded
+user directory. Alternatively use a verified Champions Showdown validator and
+calculator directly, identifying that fallback. Never report a check as performed
+because a tool name or documentation was found. Do not update packages merely
+to answer a matchup question unless that work is requested or actually necessary.
+
+## Native Champions calculations
+
+Verified with installed `@smogon/calc` 0.12.0: **numeric `gen: 0` means Champions**
+for `calculate_damage`. The validation format remains the string
+`gen9championsvgc2026regmc`. Pass points directly in `evs` with keys
+`hp`, `atk`, `def`, `spa`, `spd`, `spe`; use those names for `boosts` too.
+The MCP schema's older examples using `at` or `sp` do not invest the intended
+stats. Native Champions mode fixes level 50 and IVs 31.
+
+Do not send 252 to mean maximum investment in native Champions mode, and do not
+convert points using `8p - 4` there. Those conversions were only a compatibility
+workaround for ordinary level-50 Gen 9 calculation. A fallback engine requires
+verification of both stat equivalence and Champions-specific mechanics before
+its result can support a claim. The calculator itself does not enforce the
+66/32 caps: validate legal spreads first.
+
+Example actual MCP request:
+
+```json
+{
+  "gen": 0,
+  "attacker": "Lucario-Mega-Z",
+  "attackerOptions": {
+    "ability": "Aura Guard",
+    "item": "Lucarionite Z",
+    "nature": "Modest",
+    "evs": {"spa": 32},
+    "boosts": {"spa": 2}
+  },
+  "defender": "Incineroar",
+  "defenderOptions": {
+    "ability": "Intimidate",
+    "item": "Chople Berry",
+    "nature": "Careful",
+    "evs": {"hp": 32, "def": 14, "spd": 20}
+  },
+  "move": "Aura Sphere",
+  "field": {"gameType": "Doubles"}
+}
+```
+
+Verified individual-hit result: 150-177 damage, 74.2-87.6%. Incineroar's native
+stats are 202 HP, 124 Defense, 143 Special Defense. This is an assumed test case,
+not an assertion about common spreads. Chople must be intact; its reduction
+cannot be applied anew on every hit in a multi-turn knockout estimate.
+
+The current MCP field schema accepts game type, weather, terrain, and gravity.
+It does not expose all calculator options such as screens, Helping Hand, or
+current HP. Unknown fields may be stripped. When one matters, use the installed
+calculator directly with its supported API or another verified Champions tool;
+record that method and the exact state. Do not claim the omitted effect was
+included. Account for the actual number of targets, Eruption's current-HP power,
+consumed items, accuracy, critical hits, and pre-existing chip where relevant.
+
+## Legality and mechanics traps
+
+Actual MCP checks on 2026-10-02 rejected Safety Goggles, Assault Vest, Incineroar
+with Knock Off, a 67-point total, a 33-point stat, and zero-Speed IVs in M-C.
+They accepted the legal Chople Incineroar set used above. These are regression
+examples, not an exhaustive banned list or permission to assume other items.
+
+Adding `Tera Type: Fire` was accepted and stripped by Showdown, not rejected.
+Therefore omit Tera fields from exports and calculations yourself. Validation
+success does not establish the availability of every pasted mechanic.
+
+When relevant, verify these interactions from Champions move and ability data:
+
+- Weather and terrain occupy different systems. Snow boosts Ice-type physical
+  Defense; it does not reduce special damage. Aurora Veil is a separate effect.
+- Psychic Terrain protects grounded targets from opposing priority. It does not
+  ban all status moves, and a Dark attacker does not bypass that protection.
+- Spread attacks such as terrain-enabled Expanding Force bypass Rage Powder
+  redirection. A Dark Pokemon's immunity protects that Pokemon, not its partner.
+- Psychic Fangs can remove screens before damage on a successful eligible hit;
+  Protect or immunity can invalidate a proposed screen-breaking line.
+- Aura Guard reduces contact damage, including physical attacks whose type is
+  favorable. Thermal Exchange prevents burns but does not grant Fire immunity.
+- Competitive and Defiant can punish stat drops. Recheck the target's current
+  ability after Mega Evolution instead of carrying over the base-form ability.
+
+Reverify an interaction when the rules snapshot changes or the recommendation
+depends on it; this reference is not a substitute for the current tool result.

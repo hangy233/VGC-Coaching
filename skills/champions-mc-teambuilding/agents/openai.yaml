@@ -1,0 +1,4 @@
+interface:
+  display_name: "Champions M-C Team Building"
+  short_description: "Build and refine legal Champions M-C teams"
+  default_prompt: "Use $champions-mc-teambuilding to build or refine my team for Champions Regulation M-C."

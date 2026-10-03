@@ -1,12 +1,12 @@
 # Pokémon VGC Coaching MCP Server
 
-A specialized Model Context Protocol (MCP) server designed for competitive Pokémon VGC analysis. It integrates with Smogon's data layer and Pokémon Showdown's logic to provide real-time validation, classification, and usage statistics.
+A specialized Model Context Protocol (MCP) server designed for competitive Pokémon VGC analysis. It integrates Smogon usage reports, Champions ladder battle data, and Pokémon Showdown's logic for validation, classification, and metagame analysis.
 
 ## Features
 
 - **Validation**: Check Pokémon and teams for legality in specific VGC formats.
 - **Classification**: Analyze team archetypes (Offense, Balance, Stall) and identify synergies.
-- **Usage Statistics**: Fetch format-wide rankings and detailed Pokémon-specific moveset reports from Smogon.
+- **Usage Statistics**: Fetch Smogon format-wide usage and moveset reports, plus Champions ladder species rankings and set distributions from Pokémon Champions Battle Data, with source and period metadata.
 - **Type Effectiveness**: Instant multiplier calculations for any type combination.
 - **Damage Calculation**: Integrated Smogon-calc for precise battle scenario modeling.
 
@@ -41,8 +41,10 @@ A specialized Model Context Protocol (MCP) server designed for competitive Poké
 
 The default format is **Pokémon Champions VGC 2026 Regulation M-C**
 (`gen9championsvgc2026regmc`). Team and Pokémon validation, classification, and
-both usage-statistics tools use this format when `format` is omitted. Pass an
-explicit Showdown format ID to analyze a different regulation.
+the Smogon usage tools use this format when `format` is omitted. Pass an
+explicit Showdown format ID to analyze a different regulation. The dedicated
+Champions ladder tools select `battleType`, season, and snapshot date instead;
+the provider does not establish a Showdown regulation mapping.
 
 The coaching skill also uses M-C when no other regulation has been selected.
 Its local session selection is stored in `cache/REG.txt` (ignored by Git).
@@ -77,6 +79,28 @@ I have bundled a specialized skill file (`smogon-vgc-assistant.skill`) to guide 
    Run `/skills reload` in your interactive session.
 
 3. **Expert Guidance**: Once loaded, the AI will automatically prioritize the MCP tools as the source of truth, ignoring outdated training memory.
+
+### Champions M-C Coaching Skills
+
+Two additional Codex skills separate team construction from battle planning:
+
+| Skill | Use |
+| --- | --- |
+| [champions-mc-teambuilding](skills/champions-mc-teambuilding/SKILL.md) | Build or refine a six, assign roles, choose moves/items/stat points, and test matchup coverage. |
+| [champions-mc-matchups](skills/champions-mc-matchups/SKILL.md) | Choose four and leads, plan counterplay, and review replays using information available at each turn. |
+
+Their source folders contain `SKILL.md`, Codex UI metadata, and references to
+expert guides and verified M-C rules. Copy each complete folder into
+`$CODEX_HOME/skills` (normally `~/.codex/skills`) for Codex discovery. Invoke them
+as `$champions-mc-teambuilding` and `$champions-mc-matchups`; automatic selection
+also remains enabled.
+
+The guide research and rules baseline were checked on October 2, 2026. Historical
+VGC guides contribute methodology only; recommendations must pass Champions M-C
+checks. In this project's installed calculator, use explicit `gen: 0` and native
+Champions stat points for damage, while validation uses
+`gen9championsvgc2026regmc`. The bundled references explain generic-movepool
+limitations, item eligibility, and fields that validation silently removes.
 
 ## Historical Example Usage (Scarlet/Violet Regulation I)
 
@@ -226,10 +250,43 @@ npm run build
 ```
 
 ### Updating Metagame Usage
-The usage stats tools (`get_usage_stats` and `get_pokemon_usage`) fetch data live from `smogon.com/stats`. They will automatically retrieve the most recent month's data as it becomes available online, with no code changes required.
 
-If M-C statistics have not been published yet, the tools report that no data was
-found for M-C; they do not substitute another regulation's statistics.
+Both sources return structured JSON with provenance: source links, the resolved
+period, and source-specific qualifications. Keep the populations separate when
+comparing results.
+
+| Source | Summary tool | Pokémon detail tool | Selection |
+| --- | --- | --- | --- |
+| Smogon / Pokémon Showdown ladder | `get_usage_stats` | `get_pokemon_usage` | `format` (M-C default), optional `month` (`YYYY-MM`), optional `rating` (`0`, `1500`, `1630`, or `1760`). |
+| Champions ladder, via the community provider Pokémon Champions Battle Data | `get_champions_usage_stats` | `get_champions_pokemon_usage` | `battleType` (`Doubles` default or `Singles`), optional `season` (for example `M6`), optional `date` (`YYYY-MM-DD`). |
+
+Both summary tools accept `limit` (default `20`, maximum `100`). Both detail
+tools require `pokemon`. For Smogon, an explicit rating requests that exact
+cutoff; omitted ratings try `1760`, then `0`, and label any fallback. Without
+`month`, the tools discover the latest actually published monthly reports.
+Automatic discovery searches the 12 most recent published months; pass `month`
+explicitly for an older archive.
+Missing M-C reports are reported as unavailable rather than replaced with another
+regulation. September 2026 M-C reports were verified as published on October 2,
+2026 at [Smogon's statistics archive](https://www.smogon.com/stats/2026-09/).
+
+The Champions tools resolve snapshots from the provider's
+[metadata index](https://championsbattledata.com/data/meta/index.json); omitted
+season/date select the latest available data. The verified latest snapshot on
+October 2, 2026 was season `M6`, dated `2026-10-02`. Its species list reports
+**ranks**, without overall species usage percentages or a battle count.
+Pokémon detail reports contain move, item, ability, nature, and stat-point
+percentages plus teammate ranks. Those percentages describe a species' sets,
+not its share of all teams. Season `M6` must not be assumed to mean Regulation
+M-C: the provider supplies no verified Showdown-format mapping.
+Malformed upstream stat-point spreads are omitted from the affected Pokémon's
+detail report with a warning; valid rankings and other Pokémon remain available.
+
+Battle data provided by
+[Pokémon Champions Battle Data](https://championsbattledata.com/api_guide), an
+unofficial community project. Its [API usage rules](https://championsbattledata.com/api-rules/)
+require attribution for public use, allow reasonable caching, and prohibit a
+standalone raw-data service or permanent mirror without permission.
 
 ### Verification
 
@@ -237,8 +294,9 @@ found for M-C; they do not substitute another regulation's statistics.
 npm test
 ```
 
-This builds the server and checks the default regulation and Champions legality
-through the MCP tools, without requiring live usage-statistics downloads.
+This builds the server and checks the default regulation, Champions legality,
+both usage sources, and their MCP tools. Usage tests use fixed source fixtures
+and do not require live downloads.
 
 ## Available Tools
 
@@ -246,8 +304,10 @@ through the MCP tools, without requiring live usage-statistics downloads.
 | :--- | :--- |
 | `validate_team` | Checks team legality (default: `gen9championsvgc2026regmc`). |
 | `classify_team` | Returns tags like 'weatherless', 'offense', and stalliness scores. |
-| `get_usage_stats` | Gets the top 20 Pokémon used in a format. |
-| `get_pokemon_usage` | Detailed report on moves, items, and common teammates. |
+| `get_usage_stats` | Smogon usage rankings for a format/month/rating; optional `limit` (20 default, 100 maximum). |
+| `get_pokemon_usage` | Smogon Pokémon moveset report for a format/month/rating. |
+| `get_champions_usage_stats` | Champions ladder species ranks for a battle type/season/date; optional `limit` (20 default, 100 maximum). |
+| `get_champions_pokemon_usage` | Champions ladder Pokémon set percentages and teammate ranks for a battle type/season/date. |
 | `get_type_effectiveness` | Calculates multiplier for an attack vs defender types. |
 | `calculate_damage` | Advanced damage calculation using Smogon-calc. |
 

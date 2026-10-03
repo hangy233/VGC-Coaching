@@ -1,0 +1,4 @@
+interface:
+  display_name: "Champions M-C Matchups"
+  short_description: "Plan leads and review Champions M-C battles"
+  default_prompt: "Use $champions-mc-matchups to choose my four, plan leads, and review my Champions M-C matchup."

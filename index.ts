@@ -7,6 +7,8 @@ import PS from 'pokemon-showdown';
 import { Dex } from '@pkmn/dex';
 import { Generations } from '@pkmn/data';
 import { Classifier, Parser } from '@pkmn/stats';
+import { getSmogonUsage, getSmogonPokemonUsage } from './usage/smogon.js';
+import { getChampionsUsage, getChampionsPokemonUsage } from './usage/champions.js';
 
 const { Teams, TeamValidator } = (PS as any).default || PS;
 const gens = new Generations(Dex as any);
@@ -47,163 +49,71 @@ server.tool(
   }
 );
 
-// Get Smogon usage statistics for a format
+// Usage sources retain their own populations, periods, and units.
+const usageFormatSchema = formatSchema.refine(value => /^[a-z0-9]+$/.test(value),
+  'Use a Showdown format ID containing lowercase letters and digits');
+const monthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+  .optional().describe("Smogon month YYYY-MM (default: latest published for this format)");
+const ratingSchema = z.union([z.literal(0), z.literal(1500), z.literal(1630), z.literal(1760)])
+  .optional().describe("Exact Smogon rating cutoff; omitted prefers 1760 with a labeled 0 fallback");
+const limitSchema = z.number().int().min(1).max(100).default(20)
+  .describe("Number of ranked Pokémon to return (1–100, default: 20)");
+const battleTypeSchema = z.enum(["Doubles", "Singles"]).default("Doubles")
+  .describe("Champions ranked ladder battle type (default: Doubles)");
+const seasonSchema = z.string().regex(/^M[1-9]\d*$/).optional()
+  .describe("Champions provider season, e.g. M6 (default: latest available snapshot)");
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine(value => {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
+  }, "Use a real calendar date in YYYY-MM-DD format")
+  .optional().describe("Exact Champions snapshot date YYYY-MM-DD; omitted selects latest in season");
+
+async function usageResult(action: () => Promise<unknown>) {
+  try {
+    return { content: [{ type: "text" as const, text: JSON.stringify(await action(), null, 2) }] };
+  } catch (error) {
+    return {
+      isError: true,
+      content: [{ type: "text" as const, text: "Error fetching usage: " + (error instanceof Error ? error.message : String(error)) }],
+    };
+  }
+}
+
 server.tool(
   "get_usage_stats",
-  {
-    format: formatSchema,
-    month: z.string().optional().describe("Month in YYYY-MM format (default: latest available)"),
-  },
-  async ({ format, month }) => {
-    try {
-      const now = new Date();
-      const monthsToTry = month ? [month] : [];
-      if (!month) {
-        for (let i = 0; i < 3; i++) {
-          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-          monthsToTry.push(d.toISOString().slice(0, 7));
-        }
-      }
-
-      for (const m of monthsToTry) {
-        const url = `https://www.smogon.com/stats/${m}/${format}-1760.txt`;
-        const response = await fetch(url);
-        if (response.ok) {
-          const text = await response.text();
-          const lines = text.split('\n').slice(0, 25).join('\n');
-          return { content: [{ type: "text", text: `Usage stats for ${format} in ${m}:\n\n${lines}` }] };
-        }
-        
-        const urlAlt = `https://www.smogon.com/stats/${m}/${format}-0.txt`;
-        const responseAlt = await fetch(urlAlt);
-        if (responseAlt.ok) {
-           const text = await responseAlt.text();
-           const lines = text.split('\n').slice(0, 25).join('\n');
-           return { content: [{ type: "text", text: `Usage stats for ${format} in ${m}:\n\n${lines}` }] };
-        }
-      }
-
-      return { content: [{ type: "text", text: `Could not find usage stats for ${format} in recent months.` }] };
-    } catch (e: any) {
-      return { content: [{ type: "text", text: "Error fetching stats: " + e.message }] };
-    }
-  }
+  "Smogon Pokémon Showdown monthly usage percentages. Returns source URL, month and actual rating cutoff. Use get_champions_usage_stats for the in-game ladder.",
+  { format: usageFormatSchema, month: monthSchema, rating: ratingSchema, limit: limitSchema },
+  async ({ format, month, rating, limit }) => usageResult(() => getSmogonUsage({
+    format, limit, ...(month !== undefined ? { month } : {}), ...(rating !== undefined ? { rating } : {}),
+  }))
 );
 
-// Get detailed moveset and usage statistics for a specific Pokémon
 server.tool(
   "get_pokemon_usage",
-  {
-    pokemon: z.string().describe("Pokémon name (e.g., Iron Hands)"),
-    format: formatSchema,
-    month: z.string().optional().describe("Month in YYYY-MM format (default: latest available)"),
-  },
-  async ({ pokemon, format, month }) => {
-    try {
-      const now = new Date();
-      const monthsToTry = month ? [month] : [];
-      if (!month) {
-        for (let i = 0; i < 3; i++) {
-          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-          monthsToTry.push(d.toISOString().slice(0, 7));
-        }
-      }
+  "Smogon Pokémon Showdown monthly moveset report for one species, with source URL, month and rating cutoff. Use get_champions_pokemon_usage for in-game sets.",
+  { pokemon: z.string().trim().min(1), format: usageFormatSchema, month: monthSchema, rating: ratingSchema },
+  async ({ pokemon, format, month, rating }) => usageResult(() => getSmogonPokemonUsage({
+    pokemon, format, ...(month !== undefined ? { month } : {}), ...(rating !== undefined ? { rating } : {}),
+  }))
+);
 
-      for (const m of monthsToTry) {
-        const url = `https://www.smogon.com/stats/${m}/moveset/${format}-1760.txt`;
-        const response = await fetch(url);
-        if (response.ok) {
-          const text = await response.text();
-          const lines = text.split('\n');
-          
-          let startIdx = -1;
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i] || '';
-            if (line.includes('| ' + pokemon + ' ') && !line.includes('%')) {
-               if (lines[i-1]?.includes('+---')) {
-                  let head = i - 1;
-                  while (head > 0 && lines[head-1]?.includes('+---')) {
-                     head--;
-                  }
-                  startIdx = head;
-                  break;
-               }
-            }
-          }
+server.tool(
+  "get_champions_usage_stats",
+  "In-game Pokémon Champions ladder usage ranks from the community Pokémon Champions Battle Data provider. Overall species usage percentages are unavailable. Returns exact season/date; a ladder season is not a verified Showdown regulation mapping.",
+  { battleType: battleTypeSchema, season: seasonSchema, date: dateSchema, limit: limitSchema },
+  async ({ battleType, season, date, limit }) => usageResult(() => getChampionsUsage({
+    battleType, limit, ...(season !== undefined ? { season } : {}), ...(date !== undefined ? { date } : {}),
+  }))
+);
 
-          if (startIdx !== -1) {
-            let endIdx = -1;
-            for (let j = startIdx + 5; j < lines.length; j++) {
-               const line = lines[j] || '';
-               if (line.includes('| ') && !line.includes('%')) {
-                  if (lines[j-1]?.includes('+---') && lines[j+1]?.includes('+---')) {
-                     const isNext = lines.slice(j, j + 5).some(l => l.includes('Raw count') || l.includes('Avg. weight'));
-                     if (isNext) {
-                        let nextStart = j - 1;
-                        while (nextStart > startIdx && lines[nextStart-1]?.includes('+---')) {
-                           nextStart--;
-                        }
-                        endIdx = nextStart;
-                        break;
-                     }
-                  }
-               }
-            }
-            const blockText = lines.slice(startIdx, endIdx !== -1 ? endIdx : lines.length).join('\n');
-            return { content: [{ type: "text", text: `Detailed stats for ${pokemon} in ${format} (${m}):\n${blockText}` }] };
-          }
-        }
-
-        const urlAlt = `https://www.smogon.com/stats/${m}/moveset/${format}-0.txt`;
-        const responseAlt = await fetch(urlAlt);
-        if (responseAlt.ok) {
-           const text = await responseAlt.text();
-           const lines = text.split('\n');
-           
-           let startIdx = -1;
-           for (let i = 0; i < lines.length; i++) {
-             const line = lines[i] || '';
-             if (line.includes('| ' + pokemon + ' ') && !line.includes('%')) {
-                if (lines[i-1]?.includes('+---')) {
-                   let head = i - 1;
-                   while (head > 0 && lines[head-1]?.includes('+---')) {
-                      head--;
-                   }
-                   startIdx = head;
-                   break;
-                }
-             }
-           }
-
-           if (startIdx !== -1) {
-             let endIdx = -1;
-             for (let j = startIdx + 5; j < lines.length; j++) {
-                const line = lines[j] || '';
-                if (line.includes('| ') && !line.includes('%')) {
-                   if (lines[j-1]?.includes('+---') && lines[j+1]?.includes('+---')) {
-                      const isNext = lines.slice(j, j + 5).some(l => l.includes('Raw count') || l.includes('Avg. weight'));
-                      if (isNext) {
-                         let nextStart = j - 1;
-                         while (nextStart > startIdx && lines[nextStart-1]?.includes('+---')) {
-                            nextStart--;
-                         }
-                         endIdx = nextStart;
-                         break;
-                      }
-                   }
-                }
-             }
-             const blockText = lines.slice(startIdx, endIdx !== -1 ? endIdx : lines.length).join('\n');
-             return { content: [{ type: "text", text: `Detailed stats for ${pokemon} in ${format} (${m}):\n${blockText}` }] };
-           }
-        }
-      }
-
-      return { content: [{ type: "text", text: `Could not find detailed stats for ${pokemon} in ${format} in recent months.` }] };
-    } catch (e: any) {
-      return { content: [{ type: "text", text: "Error fetching Pokémon stats: " + e.message }] };
-    }
-  }
+server.tool(
+  "get_champions_pokemon_usage",
+  "In-game Pokémon Champions move, item, ability, nature and stat-point percentages plus teammate ranks for one species. Community provider; exact season/date and attribution included. Mega forms are not silently mapped to base forms.",
+  { pokemon: z.string().trim().min(1), battleType: battleTypeSchema, season: seasonSchema, date: dateSchema },
+  async ({ pokemon, battleType, season, date }) => usageResult(() => getChampionsPokemonUsage({
+    pokemon, battleType, ...(season !== undefined ? { season } : {}), ...(date !== undefined ? { date } : {}),
+  }))
 );
 
 // Get type effectiveness multiplier
