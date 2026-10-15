@@ -5,11 +5,13 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "test": "npm run build && node --test tests/*.test.js",
+    "test": "npm run build && node --test tests/*.test.js showdown/*.test.mjs",
     "prebuild": "node node_modules/pokemon-showdown/build",
     "build": "tsc",
     "start": "node dist/index.js",
-    "update-data": "npm install @pkmn/dex@latest @pkmn/data@latest @pkmn/stats@latest @smogon/calc@latest && npm run build"
+    "update-data": "npm install @pkmn/dex@latest @pkmn/data@latest @pkmn/stats@latest @smogon/calc@latest && npm run build",
+    "test:showdown": "node --test showdown/*.test.mjs",
+    "test:all": "npm test"
   },
   "keywords": [],
   "author": "",

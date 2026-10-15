@@ -104,9 +104,13 @@ If tools are not exposed in the current client, inspect the user's VGC project
 and its README. Where its installed dependencies and `dist/index.js` exist,
 the MCP SDK's `Client` and `StdioClientTransport` can call the same tools through
 `node dist/index.js`. Resolve paths from the active project, not a hard-coded
-user directory. Alternatively use a verified Champions Showdown validator and
-calculator directly, identifying that fallback. Never report a check as performed
-because a tool name or documentation was found. Do not update packages merely
+user directory. A verified Champions Showdown validator may be used directly for
+legality, identifying that fallback. Damage calculations must use actual MCP
+`calculate_damage` calls, including calls through the MCP SDK above; do not call
+the calculator library directly or substitute another damage engine. If the MCP
+is unavailable, leave damage, KO probability, and survival benchmarks unverified.
+Never report a check as performed because a tool name or documentation was found.
+Do not update packages merely
 to answer a matchup question unless that work is requested or actually necessary.
 
 ## Native Champions calculations
@@ -118,12 +122,17 @@ for `calculate_damage`. The validation format remains the string
 The MCP schema's older examples using `at` or `sp` do not invest the intended
 stats. Native Champions mode fixes level 50 and IVs 31.
 
+For Electro Shot, supply the attacker's **pre-move** Special Attack stage. Actual
+MCP checks on October 15, 2026 returned a +1 attack description from `spa: 0`
+and +2 from `spa: 1`: the calculator applies the move's own boost. Do not add it
+again in the input. Verify returned descriptions against the intended state and
+inspect move-specific automatic effects before interpreting other benchmarks.
+
 Do not send 252 to mean maximum investment in native Champions mode, and do not
 convert points using `8p - 4` there. Those conversions were only a compatibility
-workaround for ordinary level-50 Gen 9 calculation. A fallback engine requires
-verification of both stat equivalence and Champions-specific mechanics before
-its result can support a claim. The calculator itself does not enforce the
-66/32 caps: validate legal spreads first.
+workaround for ordinary level-50 Gen 9 calculation, not an authorized fallback
+for this workflow. Use the MCP's native Champions mode. The calculator itself
+does not enforce the 66/32 caps: validate legal spreads first.
 
 Example actual MCP request:
 
@@ -157,11 +166,28 @@ cannot be applied anew on every hit in a multi-turn knockout estimate.
 
 The current MCP field schema accepts game type, weather, terrain, and gravity.
 It does not expose all calculator options such as screens, Helping Hand, or
-current HP. Unknown fields may be stripped. When one matters, use the installed
-calculator directly with its supported API or another verified Champions tool;
-record that method and the exact state. Do not claim the omitted effect was
-included. Account for the actual number of targets, Eruption's current-HP power,
-consumed items, accuracy, critical hits, and pre-existing chip where relevant.
+current HP. Unknown fields may be stripped. Inspect the current MCP schema;
+if a necessary condition remains unsupported, mark that benchmark unverified.
+The project's October 14, 2026 status extension accepts `attackerOptions.status`
+and `defenderOptions.status`: `brn`, `par`, `psn`, `tox`, `slp`, or `frz`; omit the
+field or use `""` for healthy. Pass burn as `status: "brn"` on the affected actor
+and let the MCP model physical damage and exceptions such as Guts or Facade; do
+not manually halve damage or add a second burn adjustment. Defender status also
+matters for moves such as Hex. Verify the connected server's advertised schema
+before relying on this extension: a source update does not update an already
+running server or an older build. If status is absent there, leave the benchmark
+unverified until a supported build is connected. Check form, ability, and other
+required inputs as well.
+Do not silently omit it, claim it was included, or bypass the MCP with a direct
+calculator. Record the actual MCP inputs and results for numerical claims.
+Account for the actual number of targets, Eruption's current-HP power, consumed
+items, accuracy, critical hits, and pre-existing chip where the MCP supports them.
+Report replay HP changes as observed evidence, not as calculated damage ranges
+or proof of a guaranteed KO. Reconcile raw damage and KO labels with intact
+Focus Sash, Sturdy, and other survival mechanics; a raw OHKO label does not
+establish those effects were applied even when the item or ability was supplied.
+A critical-hit KO does not establish that a normal hit would have KOed, or that
+the critical hit was necessary to win.
 
 ## Legality and mechanics traps
 

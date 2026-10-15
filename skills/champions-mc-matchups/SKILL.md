@@ -31,6 +31,12 @@ evidence. Do not infer an item solely from moving first, an ability solely from 
 Seed activating, or a chosen move that never appears because its user fainted.
 A single observed move order can be a speed tie. Missing details are not zeros.
 
+For Perish or trapping positions, track each Pokemon's counter, the current trap
+source and ability, switching eligibility, usable reserves, and latest safe
+escape turn. Removing a trapper does not clear existing Perish counters, and a
+switch route needs an available reserve. Do not infer Shadow Tag from Gengar's
+species alone; verify its current form and ability.
+
 ## Team preview and a game plan
 
 Identify the opponent's likely attacking combinations, speed control, support
@@ -47,6 +53,8 @@ Choose four with a reason for both the lead and the reserves:
   with contingencies, not a script assuming the opponent cooperates.
 - Mega Evolution is a battle resource; an eligible Mega need not be among the
   selected four, and carrying its weather/support partner is not compulsory.
+  Compare immediate and delayed Mega Evolution when defensive typing or ability
+  changes alter the incoming turn; greater offensive power alone does not settle timing.
 
 A compact matchup entry can use:
 
@@ -55,6 +63,62 @@ A compact matchup entry can use:
 | Verified or explicitly assumed mode | Two / two | Concrete endgame | Action plus opponent response | Reveal, HP, field turn, or speed change |
 
 ## Evaluate the turn
+
+### Before committing a turn
+
+Run these checks before finalizing a live recommendation; report only the checks
+that change the play. Prepare the threat-to-answer map at preview and update it
+after consequential reveals. Use the [battle regression cases](references/battle-regression-cases.md)
+when reviewing these failure modes or testing changes to the skill.
+
+- **Switch-aware legality:** Evaluate the field when moves resolve, including
+  plausible opposing switch-ins. Recheck priority, target eligibility, terrain,
+  weather, and immunity changes; give a usable alternative if a switch disables
+  the intended move. A selectable move is not necessarily an effective action.
+  For our switch-ins, check both opponents' plausible attacks and their combined
+  pressure; immunity to one move does not make the destination safe from its partner.
+  If an opponent can pivot before our attack, evaluate the replacement occupying
+  the targeted slot, not only the Pokemon present when the move was selected.
+  Check move denial as well as survival: an earlier Throat Chop can disable a
+  selected sound move even when its damage is resisted and Fake Out is blocked.
+  Apply the same check to forced mid-turn replacements: identify which attacks
+  remain pending and whether they can hit the incoming Pokemon after the trigger.
+  For an escape pivot, check that it can resolve before the deadline: Fake Out,
+  Protect, Encore, a knockout, or an invalid target can defeat the intended route.
+  Verify the resulting switch and counter clearance rather than assuming success.
+- **Preserve the answer:** Map each remaining opposing win condition to a primary
+  answer, a practical backup, and required HP or field conditions. Before trading
+  one away, check whether the remaining team still has a feasible endgame.
+- **Order the damage:** State the required attack order and chip threshold when
+  they matter. Check Protect, misses, redirection, and the first attacker fainting;
+  do not count a second hit without a route to deliver it. Include speed-control
+  expiration and the next board, not just this turn's damage total.
+  Before setting or reversing speed control, name its beneficiaries among the
+  actual active Pokemon and reserves, and the route through expiration. If a
+  later reversal is essential, check whether the setter can survive and act then.
+  If either side Protects, identify the progress still available to the other
+  active Pokemon: a knockout, setup, recovery, or field control can decide the turn.
+  Before a double target or support-plus-attack, name the active setup threat:
+  if its partner Protects, can it boost or remove our key answer unopposed?
+  Compare a pressure/disruption branch; accept that exposure only with a stated
+  immediate payoff or a checked response to the resulting boosted board.
+- **Check side effects:** Inspect incidental stat drops and other ability/item
+  triggers on every affected target, including spread attacks and switch-ins.
+  Compare the boosted opponent's next turn with the value of the immediate hit.
+- **Adapt from evidence:** Between games, record observed response -> our
+  adjustment -> their plausible counter-adjustment. Carry this into the current
+  branch; one Protect or lead choice does not establish a fixed opponent habit.
+- **Keep a legal fallback:** For live play, give a legal paired action promptly
+  and refine it only within the actual remaining clock. Revalidate the fallback
+  after state changes. Check both the current-turn deadline and the total game
+  bank: repeated animation reads, calculations, and context restoration consume
+  the latter even when earlier turns were submitted. Keep a compact current-board
+  note and stop optional analysis early enough to submit and verify the fallback.
+  After a context lapse or timeout, repair this workflow before another queue.
+  If authorized to operate the battle UI, verify both
+  selections and submission before the deadline; only claim acceptance when
+  observed. UI submission is an execution responsibility, not something a chat
+  recommendation accomplishes. In advice-only mode, leave submission to the user.
 
 Compare a few plausible joint actions for both sides. Prefer a line that retains
 useful options across reasonable responses when the position permits it. State
@@ -66,12 +130,21 @@ damage on explicit sets before stating survival, a knockout, or a double target'
 combined range. Consider Protect, accuracy, redirection, immunity, spread modifiers,
 and whether the second attacker actually gets to move. Use the reference for
 native Champions points and unsupported MCP field options.
+Use actual MCP damage-tool results for calculated damage, KO probabilities, and
+survival benchmarks. If the MCP cannot model the required state, mark that
+benchmark unverified; do not substitute a direct calculator. Observed replay HP
+changes remain observations, not calculated ranges.
 
 Separate weather from terrain, physical Defense from special survival, and
 single-target redirection from spread protection. Read a move's full mechanics
 when the line depends on an exception; a short description is not sufficient.
 Check both Pokemon when priority, an immunity, or a screen is involved. Removing
 a field setter does not automatically remove an already established field.
+For move order, compare priority brackets first, then Speed and applicable Trick
+Room effects within the bracket. Recheck whether ability-based protection is
+actually on the field when the move resolves; pivoting out Armor Tail removes
+that protection. Do not treat a priority move as faster than every other priority
+move or assume that a field effect and a holder-dependent ability persist alike.
 
 In open sheets, use revealed sets without inventing their unrevealed investments.
 In closed sheets, offer branches for consequential coverage or items. Between
@@ -95,6 +168,9 @@ adjustment to test rather than a list of speculative misplays.
 For Encore, priority, weather changes, or a speed-control reversal, verify the
 timing and what move or field state exists when the action resolves. Do not
 promise a salvage line wins without checking the next board and remaining threats.
+For a terminal Perish sequence, verify residual faint order, relevant Speed,
+reserves, and win resolution in the actual format. Do not substitute Trick Room's
+attack order for end-of-turn order or assume that the slowest Pokemon always wins.
 
 ## Deliver and keep scope
 
@@ -109,3 +185,24 @@ warrants a change, explain the smallest useful revision and its opportunity cost
 do not update saved teams merely because advice was requested. Preserve prior
 authorization when the user explicitly accepts a change. Never claim the skills
 or the simulator establish a guaranteed win against unknown opposing sets.
+
+## Play → conclude → update
+
+For headless play use the [agent client workflow](../../showdown/AGENT-WORKFLOW.md).
+The agent supplies strategy; the transport has no autonomous move policy.
+
+1. **Play:** establish the bounded authorized set count, stopping conditions and
+   fixed team version. Validate legality, read full OTS before choosing four,
+   calculate damage only through MCP, and submit both actions from current
+   requests before a conservative deadline. Verify submission and execution.
+2. **Conclude:** verify every authorized replay upload and keep access-bearing
+   private URLs out of public artifacts. Review decision quality separately
+   from outcome, timer/default errors, opponent mistakes and variance. Record
+   selected versus executed moves, effective healing, and partner progress.
+3. **Update:** turn supported evidence into a small reusable rule with explicit
+   uncertainty and counterexamples, not a named match diary or a single-game
+   guarantee. Run relevant regression checks and validate the revision before
+   the next authorized queue. Preserve useful decisions even after losses.
+4. Team changes are a separate approval and teambuilding step: validate and pin
+   the new version rather than silently changing it during an evaluation.
+   Stop when the authorized cycle ends; review does not authorize another set.

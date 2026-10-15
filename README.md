@@ -66,6 +66,22 @@ To use this server with a client like Gemini CLI or Claude Desktop, point it to 
 }
 ```
 
+### Damage calculations with status
+
+`calculate_damage` accepts optional `attackerOptions.status` and
+`defenderOptions.status`. Use Smogon status codes: `brn` (burn), `par`
+(paralysis), `psn` (poison), `tox` (bad poison), `slp` (sleep), or `frz`
+(freeze). Omit status or use `""` for a healthy Pokémon. Unsupported values
+are rejected instead of silently ignored.
+
+For example, include `"attackerOptions": { "level": 50, "status": "brn" }`
+to calculate damage from a burned attacker. The calculator applies the
+status mechanics itself, including generation-appropriate ability and move
+interactions such as Guts and Facade. Do not manually halve its result.
+Defender status can also affect moves such as Hex and the result description's
+residual-damage/KO calculation. This models an existing status; it does not
+validate whether the status could have been inflicted.
+
 ### Using the Skill
 
 I have bundled a specialized skill file (`smogon-vgc-assistant.skill`) to guide the AI on how to use these tools effectively.
@@ -314,3 +330,13 @@ and do not require live downloads.
 ## License
 
 ISC
+
+## Headless Showdown client
+
+The Node 24 client provides persistent WebSocket and JSON-lines control for an
+agent, with user-operated hidden TTY login, guarded doubles choices, BO3/OTS
+state and verified replay uploads. No battle UI is required after authentication.
+It is a transport, not a strategy engine; all damage analysis stays in the MCP.
+See [setup/API](showdown/README.md) and [play → conclude → update](showdown/AGENT-WORKFLOW.md).
+Run `npm run test:all` for MCP and client tests. Live authenticated play remains
+unverified; fixtures do not establish end-to-end live reliability.

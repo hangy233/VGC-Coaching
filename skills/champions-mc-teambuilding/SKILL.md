@@ -73,6 +73,9 @@ well-supported current set. Check:
 Use native Champions calculation as documented in the reference. Pass the actual
 Mega form and its post-Mega ability; include pre-Mega ability effects separately
 when they matter. A one-use berry does not repeat across a multi-hit-KO estimate.
+Use actual MCP damage-tool results for calculated damage, KO probabilities, and
+survival benchmarks. If the MCP cannot model the required state, mark that
+benchmark unverified; do not substitute a direct calculator or invent a threshold.
 
 ## Check matchup coverage and iterate
 
@@ -82,6 +85,30 @@ and reserves, required speed or damage benchmark, setup denial, and fallback.
 Test combined threats such as terrain offense plus a Fighting attacker or a
 weather attacker plus Helping Hand. A coverage move against one species does
 not establish a workable matchup against its team.
+
+Against opponents with materially different modes, such as sun and rain in one
+six, test the proposed four against both plausible openings and transitions.
+Identify which answers overlap and which depend on selection or weather control;
+do not call the matchup covered because separate specialists exist among all six.
+If different selections are needed, state the preview evidence guiding the choice.
+Include plausible alternate opposing Mega choices in this test. Track our own
+Mega allocation too: a teammate left in base form retains that form's properties,
+including abilities that can force a switch and expose a reserve mid-turn.
+Test entry before Mega Evolution separately from competition for the Mega slot:
+having only one Mega candidate does not remove its base-form switch-in vulnerability.
+For mixed-speed selections, identify which members benefit from each speed-control
+state and how the selected four transition between them. A slow support Pokemon
+does not by itself justify Trick Room beside a fast attacker or fast reserves.
+
+When Perish/trapping is relevant, stress-test a complete selected four against
+the trapper and its support. Identify which members can escape, which need the
+trapper removed, the reserves required, and the partner that enables each route.
+Test a blocked or disrupted pivot and depleted reserves: Fake Out, Protect,
+Encore, or a knockout may prevent an apparent escape. Verify actual trapping
+abilities and deadlines; the presence of a pivot move alone is not coverage.
+Assess support such as priority protection for what it actually enables. Distinguish
+a structural lack of escape routes from a piloting or submission failure before
+changing a role, move, or slot; no anti-trap option is mandatory on every team.
 
 Prioritize weaknesses by frequency, severity, and whether better selection or
 positioning already addresses them. Change a role or slot when a problem repeats
@@ -93,6 +120,25 @@ Separate building from testing: a legal, calculated team is a starting build,
 not a ladder-tested or tournament-proven team. Use replay evidence to compare
 each member's intended role with its actual contribution and revise the weakest
 assumption first. Novel choices should have a useful job beyond surprise value.
+Unused reserves in a short win do not establish a wasted slot; assess their
+contingency role and evidence across relevant matchups before removing them.
+Treat execution complexity as a roster cost: required setup, narrow entry windows,
+repeated precise reads, and competing preservation needs affect practical reliability.
+Separate a missed available line from a plan that repeatedly offers no robust line.
+For comparison builds, record observed opportunities, selections, and successful
+executions separately; an offered action with a boosted foe is not automatically
+a safe Haze opportunity. Check what a reset removes from both sides before valuing it.
+For recovery moves, record effective HP restored, not just successful hits; for
+conditional attacks, distinguish condition failure from sleep, flinch, KO-before-action,
+or unsubmitted intent. Compare lost coverage and the partner burden alongside benefits.
+Measure threatened coverage alongside delivered damage: record opposing Protect,
+target choices, and simultaneous partner progress, but do not infer why the
+opponent protected or claim the same progress was impossible without that threat.
+When adding protection, classify the observed denial first: spread attacks,
+single-target attacks, priority, or action/submission failure. Evaluate Wide Guard
+against spread pressure and redirection against eligible single-target pressure;
+neither covers every category. Count the support action and lost moveslot, and
+do not assume a setter can protect the team and set Trick Room on the same turn.
 
 ## Deliver the result
 
@@ -106,3 +152,11 @@ An advice or review request does not itself authorize replacing a saved team.
 When the user requests or accepts a revision, save it in the established project
 location and synchronize the current-team cache as appropriate; preserve a useful
 prior variant. Do not require a second approval for an already authorized change.
+
+## Evaluate through controlled play
+
+Use the matchup skill’s [play → conclude → update cycle](../champions-mc-matchups/SKILL.md#play--conclude--update) and [headless agent workflow](../../showdown/AGENT-WORKFLOW.md).
+Keep each approved team version fixed for its bounded evaluation. Separate
+selection, execution, timing and variance before attributing results to the
+roster. Propose evidence-backed changes, obtain approval, validate legality,
+and pin the next team version before a new authorized cycle.
