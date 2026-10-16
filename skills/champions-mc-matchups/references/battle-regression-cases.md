@@ -22,16 +22,28 @@ not matching a prescribed move or a string in the skill.
 | Conditional attack | Count selections, executions, conditional failures, flinches and KOs separately | Calling a denied action an executed failure or inferring unconditional value |
 | Recovery under pressure | Effective HP gained, overheal, entry damage, move order and subsequent survival | Counting full-HP hits as healing or calling recovery proof of safe entry |
 | Paired progress | Both opponents, partner KO route, Protect/redirection, current ability holder | Judging one failed move without its partner's progress, or assuming a departed holder protects priority |
+| Helper faints before its ally attacks | Whether support already resolved, effect recipient and duration, receiver's attack delivery, both our slots | Treating the helper's KO as cancellation of already-applied Helping Hand, or counting a helped attack that never executes |
 | Delivery before payoff | Incoming joint damage, speed and denial before outgoing range | Calling a high damage roll a usable plan when the attacker cannot act |
 | Revealed Encore / Disable support beside King's Shield | Last executed moves, actual lock timing, current priority protection, partner target and legal switch route | Repeating a damage-only answer while both actions can be denied; claiming Armor Tail blocks every use of those moves |
 | Protection beside a setup threat | Model both the protected target and its partner's boost, including Disguise or other progress already made | Calling a spread hit free progress while ignoring Swords Dance, or declaring setup decisive without checking the next turn |
 | Current form and weather pivot | Rebuild the execution board after switches, weather moves and Mega Evolution; identify any forced replacement | Using rain or a Mega ability because its provider is on the roster, or treating an Emergency Exit replacement as optional analysis time |
+| Weather setter reenters the same active weather | Track the original activation and expiry; distinguish setter entry from a new weather activation | Restarting the rain count merely because Drizzle reentered during existing rain |
 | Setup with a support partner | Delivery of the boost, joint incoming pressure, HP cost, disruption and next-turn payoff | Calling default-selected or Encore-forced Soul an intentional setup line; inferring an uncritical KO from a critical one |
 | Recharge turn | Include the recharge board, partner's useful action, opposing switches and loss of control | Recommending a finishing Hyper Beam using only this turn's range or treating one miss as proof the move is always wrong |
 | Low total bank during a handoff | One control owner, fresh request and clock, legal paired fallback, acknowledgement before further analysis | Repeating stale choices until expiry or crediting a server-default action to the intended policy |
+| Optional research consumes the turn | Identify the complete legal pair first, use the early-commit buffers and total bank, verify send, refresh after a new request | Finishing every calculation before choosing, treating an observer alert as submission, or sending the old pair after a forced replacement |
+| A receiving MCP process starts but cannot reach the signed-in client | Verify its actual read-only status access to the same session/team before transfer or a new queue; retain one responsible operator until acknowledgment | Treating process startup as working controls or leaving the live board unattended during pipe-access setup |
+| Batch boundary with saved login available | Keep the client through intermediate BO3 checkpoints; after the final durable preservation/review and bounded retention, stop and verify it; carry remaining authorization into the next approved batch | Disconnecting mid-batch or before preservation, closing only an MCP helper, or treating a saved credential/new client as extra battle allowance |
 
 ## Counterexample exercises
 
+- **Early commitment:** Compare a short clock with a useful but unavailable
+  numerical check, a new forced-switch request that invalidates the old pair,
+  and a healthy clock with a known priority blocker. A passing operator commits
+  a current legal pair without inventing the missing benchmark in the first,
+  rebuilds the replacement in the second, and respects the known blocker in the
+  third. It treats the buffers as operational cutoffs, not a reason to send a
+  knowingly ineffective first move or assume the server will choose for it.
 - **Conditional attack:** Give the reviewer a Sucker Punch user facing a revealed
   King's Shield or Rage Powder, then a second board where an attacking target
   must be removed before its hit. A passing review evaluates paired responses
@@ -49,6 +61,18 @@ not matching a prescribed move or a string in the skill.
   whether priority protection still exists at resolution and whether a Room
   reset can execute. It preserves the setter only when that retains a feasible
   route, rather than treating preservation as an unconditional rule.
+- **Early support:** Compare an opposing Helping Hand user fainting after it
+  helps its ally, our helper fainting while its recipient can still attack,
+  and a helped recipient that Protects or faints before acting. A passing review
+  tracks the recipient's effect and actual attack delivery independently from
+  the helper's survival. It checks the resulting paired pressure without
+  inventing an unsupported numerical Helping Hand benchmark.
+- **Weather duration:** Compare Politoed reentry while rain is already active
+  with reentry after rain has ended or been replaced. A passing review retains
+  the existing rain window in the first board and checks a new Drizzle activation
+  in the second. It models the partner's action and the expiry transition rather
+  than assuming every entry refreshes rain or that a weather pivot guarantees
+  survival.
 - **Attribution and uncertainty:** Supply an accepted selection whose user
   faints first, a defaulted Soul, an Encore-forced Soul, an explicit miss, a
   critical-hit KO and a concession before the finishing move. A passing review

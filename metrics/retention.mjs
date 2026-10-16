@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { gzip, gunzip } from 'node:zlib';
 import { acquireMetricsBattleLock } from './catalog.mjs';
 import { listBattles, updateBattleMetadata } from './store.mjs';
+import { previewTerminalProof, validPreviewCorroboration, ownedPreviewProof } from './preview-terminal.mjs';
 
 const compress = promisify(gzip), decompress = promisify(gunzip);
 const MAX_BYTES = 12 * 1024 * 1024, MAX_EVENTS = 20000;
@@ -104,9 +105,9 @@ function sanitizeDecision(value, turn) {
   }
   return result;
 }
-const completeProtocol = events => events.some(event => event.type === 'start') && events.filter(event => ['win', 'tie'].includes(event.type)).length === 1;
-function verifyProtocolIdentity(events, game) {
-  if (!completeProtocol(events)) return;
+const completeProtocol = (events, game, previewObservation) => (events.some(event => event.type === 'start') && events.filter(event => ['win', 'tie'].includes(event.type)).length === 1) || Boolean(previewTerminalProof(events, game, previewObservation));
+function verifyProtocolIdentity(events, game, previewObservation) {
+  if (!completeProtocol(events, game, previewObservation)) return;
   const normalized = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/gu, '');
   const players = {};
   for (const event of events) if (event.type === 'player' && ['p1', 'p2'].includes(event.data?.[0]) && normalized(event.data[1])) players[event.data[0]] = normalized(event.data[1]);
@@ -118,26 +119,60 @@ function verifyProtocolIdentity(events, game) {
   if (game.outcome !== 'unknown' && game.outcome !== result) throw safeError('completed protocol result differs from the registered game');
 }
 
+const sameObservedFact=(a,b)=>JSON.stringify({...a,at:undefined})===JSON.stringify({...b,at:undefined});
+function factSubsequence(source,target){let index=0;for(const value of source){while(index<target.length&&!sameObservedFact(value,target[index]))index++;if(index===target.length)return false;index++;}return true;}
+function preserveObservedFacts(previous,incoming){let index=0;return incoming.map(value=>index<previous.length&&sameObservedFact(previous[index],value)?previous[index++]:value);}
+function mergeCompletedEvidence(previous,incoming){
+  const split=events=>{const terminal=events.findIndex(event=>['win','tie'].includes(event.type));if(terminal<0)throw safeError('completed evidence differs; retain it for review');return {core:events.slice(0,terminal+1),tail:events.slice(terminal+1)};};
+  const before=split(previous.events),after=split(incoming.events);
+  if(before.core.length!==after.core.length||before.core.some((event,index)=>!sameObservedFact(event,after.core[index]))||[...before.tail,...after.tail].some(event=>event.type!=='player')||previous.parentId&&incoming.parentId&&previous.parentId!==incoming.parentId)throw safeError('completed evidence differs; retain it for review');
+  const sheets={...previous.sheets};for(const [side,packed]of Object.entries(incoming.sheets)){if(sheets[side]&&sheets[side]!==packed)throw safeError('completed evidence differs; retain it for review');sheets[side]=packed;}
+  const oldDecisions=previous.decisions||[],newDecisions=incoming.decisions||[];let decisions=oldDecisions;
+  if(factSubsequence(oldDecisions,newDecisions))decisions=preserveObservedFacts(oldDecisions,newDecisions);
+  else if(!factSubsequence(newDecisions,oldDecisions))throw safeError('completed evidence differs; retain it for review');
+  // Rejoined history has new receive timestamps. Keep the first battle core;
+  // append only player lifecycle observations after its immutable terminal event.
+  let tail;
+  if(factSubsequence(after.tail,before.tail))tail=before.tail;
+  else if(factSubsequence(before.tail,after.tail))tail=preserveObservedFacts(before.tail,after.tail);
+  else{
+    let overlap=Math.min(before.tail.length,after.tail.length);
+    while(overlap&&!before.tail.slice(-overlap).every((event,index)=>sameObservedFact(event,after.tail[index])))overlap--;
+    tail=[...before.tail,...after.tail.slice(overlap)];
+  }
+  const events=[...before.core,...tail];
+  if(events.length>MAX_EVENTS)throw safeError('compact game evidence exceeds its event limit');
+  return {...incoming,parentId:previous.parentId||incoming.parentId,events,sheets,decisions,decisionEvidenceIncluded:decisions.length>0};
+}
+
 /** Compact one game's useful state and decision journal; drop chat and session secrets. */
-export async function saveGameEvidence({ workspace, teamId, roomId, events, sheets = {} } = {}) {
+export async function saveGameEvidence({ workspace, teamId, roomId, events, sheets = {}, previewCorroboration, previewObservation } = {}) {
   identity(teamId, roomId);
   if (!Array.isArray(events) || !events.length || events.length > MAX_EVENTS) throw safeError('supply a bounded game event list');
   const release = await acquireMetricsBattleLock({ workspace, teamId, roomId: `${roomId}-evidence` });
   try {
     const game = await storedGame(workspace, teamId, roomId);
+    if (previewCorroboration !== undefined && !validPreviewCorroboration(previewCorroboration, game)) throw safeError('invalid legacy preview corroboration');
+    if (previewObservation !== undefined && (!ownedPreviewProof(game, previewObservation) || !previewCorroboration)) throw safeError('invalid owned preview observation');
     const { collectBattleEvents } = await import('./import.mjs');
     const data = collectBattleEvents(events, { defaultRoom: roomId }).get(roomId);
     if (!data?.events.length) throw safeError('no observations for this game');
     const clean = data.events.map(sanitizeEvent).filter(Boolean), decisions = [];
-    verifyProtocolIdentity(clean, game);
+    if (previewTerminalProof(clean, game, previewObservation) && (data.startedObserved || data.progressObserved)) throw safeError('earlier observed battle progress prevents preview-terminal completeness');
+    verifyProtocolIdentity(clean, game, previewObservation);
     let turn = 0;
     for (const value of events) {
       if (canonicalRoom(value?.room ?? roomId) !== roomId) continue;
       if (value.type === 'turn') turn = Number(value.data?.[0]) || 0;
       const decision = sanitizeDecision(value, turn); if (decision) decisions.push(decision);
     }
-    const document = { schemaVersion: 1, kind: 'sanitized-events', teamId, roomId, parentId: game.parentId, complete: completeProtocol(clean), events: clean, sheets: sanitizeSheets({ ...data.sheets, ...sheets }), decisions, decisionEvidenceIncluded: decisions.length > 0 };
-    const bytes = Buffer.from(`${JSON.stringify(document)}\n`), hash = sha256(bytes);
+    let document = { schemaVersion: 1, kind: 'sanitized-events', teamId, roomId, parentId: game.parentId, complete: completeProtocol(clean, game, previewObservation), observedHistory: {started: data.startedObserved === true, progress: data.progressObserved === true}, events: clean, sheets: sanitizeSheets({ ...data.sheets, ...sheets }), decisions, decisionEvidenceIncluded: decisions.length > 0, ...(previewObservation ? {previewObservation} : {}) };
+    if (previewCorroboration) {
+      if (!previewTerminalProof(clean, game, previewObservation)) throw safeError('legacy corroboration needs exact preview-terminal observations');
+      document.observedHistory = {started:null,progress:null};
+      document.previewCorroboration = previewCorroboration;
+    }
+    let bytes = Buffer.from(`${JSON.stringify(document)}\n`), hash = sha256(bytes);
     if (bytes.length > MAX_BYTES) throw safeError('compact game evidence exceeds its size limit');
     const file = `cache/team-metrics/evidence/${roomId}--${teamId}.events.json.gz`;
     const target = await checkedPath(workspace, file, { createParents: true, allowMissing: true });
@@ -150,12 +185,22 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
       if (oldHash !== game.metadata.evidence?.sha256 && oldHash !== hash) throw safeError('existing evidence hash does not match its registered identity');
       previous = JSON.parse(old);
       if (previous.roomId !== roomId || previous.teamId !== teamId || previous.kind !== document.kind) throw safeError('existing evidence belongs to another game');
-      if (previous.complete && (!document.complete || clean.length < previous.events.length)) return { roomId, teamId, evidence: game.metadata.evidence, complete: true, eventCount: previous.events.length, decisionEvidenceIncluded: previous.decisionEvidenceIncluded, status: 'preserved' };
+      document.observedHistory = {
+        started: document.observedHistory.started || previous.observedHistory?.started === true || previous.events.some(event=>event.type==='start') || (previewCorroboration || previous.previewCorroboration ? null : false),
+        progress: document.observedHistory.progress || previous.observedHistory?.progress === true || previous.events.some(event=>event.type==='start'||MINOR.has(event.type)||['turn','upkeep','switch','drag','replace','detailschange','swap','move','cant','faint'].includes(event.type)||event.type==='request'&&(Array.isArray(event.request?.active)||Array.isArray(event.request?.forceSwitch)||!event.request?.teamPreview&&event.request?.side?.pokemon?.some(pokemon=>pokemon.active))) || (previewCorroboration || previous.previewCorroboration ? null : false),
+      };
+      if (previous.previewCorroboration && !document.previewCorroboration) document.previewCorroboration = previous.previewCorroboration;
+      if (previous.previewObservation && !document.previewObservation) document.previewObservation = previous.previewObservation;
+      bytes=Buffer.from(`${JSON.stringify(document)}\n`);hash=sha256(bytes);
+      if(bytes.length>MAX_BYTES)throw safeError('compact game evidence exceeds its size limit');
+      if (previewTerminalProof(clean, game, document.previewObservation) && (document.observedHistory.started || document.observedHistory.progress)) throw safeError('earlier observed battle progress prevents preview-terminal completeness');
+      if (previous.complete && !document.complete) return { roomId, teamId, evidence: game.metadata.evidence, complete: true, eventCount: previous.events.length, decisionEvidenceIncluded: previous.decisionEvidenceIncluded, status: 'preserved' };
       if (oldHash === hash && game.metadata.evidence?.sha256 === hash) return { roomId, teamId, evidence: game.metadata.evidence, complete: document.complete, eventCount: clean.length, decisionEvidenceIncluded: document.decisionEvidenceIncluded, status: 'unchanged' };
       if (previous.complete && document.complete && oldHash !== hash) {
-        // A canonical completed history is immutable. Missing decision evidence
-        // may be added only when the protocol and sheets are identical.
-        if (JSON.stringify(previous.events) !== JSON.stringify(document.events) || JSON.stringify(previous.sheets) !== JSON.stringify(document.sheets) || previous.decisions.length) throw safeError('completed evidence differs; retain it for review');
+        document=mergeCompletedEvidence(previous,document);
+        bytes=Buffer.from(`${JSON.stringify(document)}\n`);hash=sha256(bytes);
+        if(bytes.length>MAX_BYTES)throw safeError('compact game evidence exceeds its size limit');
+        if(oldHash===hash&&game.metadata.evidence?.sha256===hash)return {roomId,teamId,evidence:game.metadata.evidence,complete:true,eventCount:document.events.length,decisionEvidenceIncluded:document.decisionEvidenceIncluded,status:'unchanged'};
       }
     }
     const pending = join(dirname(target.path), `.pending-${teamId}-${randomUUID()}.tmp`);
@@ -163,7 +208,7 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
     finally { await rm(pending, { force: true }); }
     const evidence = { path: file, sha256: hash, kind: 'sanitized-events', complete: document.complete, version: 1 };
     const saved = await updateBattleMetadata({ workspace, teamId, roomId, metadata: { evidence } });
-    return { roomId, teamId, evidence: saved.record.metadata.evidence, complete: document.complete, eventCount: clean.length, decisionEvidenceIncluded: document.decisionEvidenceIncluded, status: previous ? 'updated' : 'created' };
+    return { roomId, teamId, evidence: saved.record.metadata.evidence, complete: document.complete, eventCount: document.events.length, decisionEvidenceIncluded: document.decisionEvidenceIncluded, status: previous ? 'updated' : 'created' };
   } finally { await release(); }
 }
 
@@ -187,8 +232,13 @@ export async function readGameEvidence({ workspace, teamId, roomId, fromTurn, to
       document = JSON.parse(bytes);
       if (document.schemaVersion !== 1 || document.kind !== 'sanitized-events' || document.roomId !== roomId || document.teamId !== teamId || !Array.isArray(document.events) || document.events.length > MAX_EVENTS || document.complete !== reference.complete) throw safeError('evidence identity or schema verification failed');
       document = { ...document, events: document.events.map(sanitizeEvent).filter(Boolean), sheets: sanitizeSheets(document.sheets), decisions: (document.decisions ?? []).map(value => sanitizeDecision(value, value.turn ?? 0)).filter(Boolean) };
-      if (document.complete !== completeProtocol(document.events)) throw safeError('canonical protocol completeness does not match its metadata');
-      verifyProtocolIdentity(document.events, game);
+      // Older recorders honestly marked a pre-start concession partial. Keep
+      // that read-only state until a normal checked save upgrades the metadata.
+      if (document.previewObservation && !ownedPreviewProof(game, document.previewObservation)) throw safeError('invalid owned preview observation');
+      if (document.complete !== completeProtocol(document.events, game, document.previewObservation) && !(document.complete === false && previewTerminalProof(document.events, game, document.previewObservation))) throw safeError('canonical protocol completeness does not match its metadata');
+      if (document.complete && previewTerminalProof(document.events, game, document.previewObservation) && (document.observedHistory?.started === true || document.observedHistory?.progress === true)) throw safeError('preview-terminal evidence conflicts with earlier observed progress');
+      if (document.complete && previewTerminalProof(document.events, game, document.previewObservation) && (document.observedHistory?.started !== false || document.observedHistory?.progress !== false) && !validPreviewCorroboration(document.previewCorroboration,game)) throw safeError('preview-terminal evidence lacks its observed-history attestation');
+      verifyProtocolIdentity(document.events, game, document.previewObservation);
       sourceKind = 'sanitized-events';
     } else if (game.metadata.replay?.verified && game.metadata.replay.evidencePath) {
       reference = game.metadata.replay;
@@ -198,7 +248,7 @@ export async function readGameEvidence({ workspace, teamId, roomId, fromTurn, to
       document = { events, sheets: {}, decisions: [], complete: completeProtocol(events) }; sourceKind = 'verified-replay';
     } else throw safeError('no durable game evidence is registered');
     const decisions = document.decisions.filter(value => value.turn === 0 || ((fromTurn === undefined || value.turn >= fromTurn) && (toTurn === undefined || value.turn <= toTurn)));
-    return { schemaVersion: 1, teamId, roomId, parentId: game.parentId, events: filteredTurns(document.events, fromTurn, toTurn), sheets: document.sheets, decisions, complete: document.complete === true, decisionEvidenceIncluded: document.decisions.length > 0, sourceKind, evidence: { path: reference.path ?? reference.evidencePath, sha256: reference.sha256 ?? reference.logSha256 }, turnWindow: { fromTurn: fromTurn ?? null, toTurn: toTurn ?? null, setupIncluded: true } };
+    return { schemaVersion: 1, teamId, roomId, parentId: game.parentId, events: filteredTurns(document.events, fromTurn, toTurn), sheets: document.sheets, decisions, complete: document.complete === true, completionKind: previewTerminalProof(document.events, game, document.previewObservation) ? 'preview-terminal' : document.complete ? 'started-battle' : 'partial', observedHistory: document.observedHistory ?? null, previewCorroboration:document.previewCorroboration ?? null, previewObservation:document.previewObservation??null, completionLimitation: document.previewObservation ? 'The recorder archive was unavailable. Actual saved replay protocol and separately retained owned preview status corroborate this pre-start ending; no protocol request was reconstructed, earlier-start observation and full private action history remain unavailable.' : document.previewCorroboration ? 'Legacy recording has no ever-start flags. Exact owned current preview state and the saved server terminal corroborated a pre-start ending; earlier-start observation remains unavailable.' : null, decisionEvidenceIncluded: document.decisions.length > 0, sourceKind, evidence: { path: reference.path ?? reference.evidencePath, sha256: reference.sha256 ?? reference.logSha256 }, turnWindow: { fromTurn: fromTurn ?? null, toTurn: toTurn ?? null, setupIncluded: true } };
 }
 
 export function reviewedCheckpoint(checkpoint, { teamId, parentId }) {

@@ -33,6 +33,7 @@ async function replayJSON(response, signal) {
 // Room privacy changes preserve this identity; unrelated rooms never become aliases.
 const battleRoomIdentity = value => /^(game-bestof3-gen9championsvgc2026regmcbo3-\d+|battle-gen9championsvgc2026regmcbo3-\d+)(?:-[a-z0-9]+pw)?$/.exec(value)?.[1] || null;
 const readyContent = value => value.replace(/(?:game-bestof3-|battle-)gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?/g, id => battleRoomIdentity(id));
+const gameplayLine = line => /^\|(?:start(?:\||$)|turn\||upkeep(?:\||$)|switch\||drag\||replace\||detailschange\||move\||cant\||faint\||swap\||-(?!message\|))/.test(line);
 function mergeHistory(source, target) {
   if(!target.length)return {lines:source,tail:[],reconciled:true};
   if(!source.length)return {lines:target,tail:target,reconciled:true};
@@ -58,7 +59,7 @@ export class ShowdownClient extends EventEmitter {
     if (!this.rooms.has(id)) this.rooms.set(id, {id, request: null, revision: 0, epoch: -1, ended: false, sheets: {}, children: [], battleLog: [], timers: [], readyPrompt: null, readyRevision:0,battle:createBattleState()});
     return this.rooms.get(id);
   }
-  renameRoom(oldRoom, room) {
+  renameRoom(oldRoom, room, {resyncJoin = false} = {}) {
     oldRoom = this.resolveRoom(oldRoom);
     const identity = battleRoomIdentity(oldRoom);
     if (!identity || identity !== battleRoomIdentity(room)) return false;
@@ -89,6 +90,8 @@ export class ShowdownClient extends EventEmitter {
       battleLog:history.lines.slice(-2000),
       timers:records.flatMap(record => record.timers).sort((a,b)=>a.at-b.at).slice(-20),
       ended:records.some(record=>record.ended),
+      previewObserved:records.some(record=>record.previewObserved),
+      startedObserved:records.some(record=>record.startedObserved),
       lastAction:records.map(record=>record.lastAction).filter(Boolean).sort((a,b)=>b.sentAt-a.sentAt)[0],
       readyRevision:Math.max(...records.map(record=>record.readyRevision)),
       forfeitPending:records.find(record=>record.forfeitPending)?.forfeitPending || null,
@@ -108,7 +111,10 @@ export class ShowdownClient extends EventEmitter {
     }
     for(const key of [...this.sent]) {
       for(const prefix of ['choose:','ready:','replay:','forfeit:'])if(key.startsWith(`${prefix}${oldRoom}:`) || key===`${prefix}${oldRoom}`)this.sent.add(`${prefix}${room}${key.slice(prefix.length+oldRoom.length)}`);
-      if(key===`join:${this.epoch}:${oldRoom}`)this.sent.add(`join:${this.epoch}:${room}`);
+      // An explicit rename moves subscribed connections. A search-list handoff
+      // can instead race an unconfirmed public join, so its private destination
+      // needs one fresh observation join rather than an assumed subscription.
+      if(!resyncJoin && key===`join:${this.epoch}:${oldRoom}`)this.sent.add(`join:${this.epoch}:${room}`);
     }
     if(chosen && merged.request)this.sent.add(`choose:${room}:${merged.request.rqid}:${merged.revision}`);
     if(merged.readyPrompt && records.some(record=>record.readyPrompt?.content===merged.readyPrompt.content && this.sent.has(`ready:${record.id}:${record.readyPrompt.token}`)))this.sent.add(`ready:${room}:${merged.readyPrompt.token}`);
@@ -170,6 +176,8 @@ export class ShowdownClient extends EventEmitter {
       if(type==='noinit' && parts[0]==='rename' && room){if(this.renameRoom(room,parts[1]))room=this.resolveRoom(room);continue;}
       const r = room ? this.state(room) : null;
       if(r)r.observedSequence=++this.observationSequence;
+      if(r && type==='teampreview')r.previewObserved=true;
+      if(r && gameplayLine(line))r.startedObserved=true;
       if(r && type !== 'request') {
         reduceBattleLine(r.battle,line,{now:this.now});
         this.observeAction(r,type,parts);
@@ -183,6 +191,21 @@ export class ShowdownClient extends EventEmitter {
       if (type === 'updatesearch') {
         const state = JSON.parse(value);
         check(Array.isArray(state.searching) && (state.games === null || (state.games && typeof state.games === 'object' && !Array.isArray(state.games))), 'Invalid search state');
+        // The official room rename notice is sent only to connections already
+        // in that room. A parent made private while its public join is racing
+        // may therefore be visible solely as a replacement in updatesearch.
+        // Reconcile only one-to-one replacements of the exact already observed
+        // format/type/numeric identity; unrelated rooms grant no authority.
+        const previousIds=Object.keys(this.searchState?.games||{}),nextIds=Object.keys(state.games||{});
+        for(const oldRoom of previousIds){
+          const identity=battleRoomIdentity(oldRoom),current=this.resolveRoom(oldRoom);
+          if(!identity||nextIds.includes(current)||previousIds.filter(id=>battleRoomIdentity(id)===identity).length!==1)continue;
+          const candidates=nextIds.filter(id=>battleRoomIdentity(id)===identity);
+          if(candidates.length===1&&candidates[0]!==current){
+            const destination=this.rooms.get(candidates[0]);
+            this.renameRoom(current,candidates[0],{resyncJoin:destination?.subscriptionEpoch!==this.epoch});
+          }
+        }
         if(state.games)state.games=Object.fromEntries(Object.entries(state.games).map(([id,title])=>[this.resolveRoom(id),title]));
         this.searchState = state;
         const active = state.searching.length > 0 || Object.keys(state.games || {}).length > 0;
@@ -197,6 +220,8 @@ export class ShowdownClient extends EventEmitter {
         if (request && r.request && request.rqid < r.request.rqid) { this.audit('old-request-ignored',{room}); continue; }
         if (JSON.stringify(r.request) !== JSON.stringify(request)) { r.revision++; r.confirmedChoice = null; }
         r.request = request; r.epoch = this.epoch; r.receivedAt = this.now(); r.requestSequence=this.observationSequence;
+        if(request?.teamPreview)r.previewObserved=true;
+        else if(request && (Array.isArray(request.active) || Array.isArray(request.forceSwitch) || request.side?.pokemon?.some(p=>p.active)))r.startedObserved=true;
         if(request && !request.wait)for(const parent of this.rooms.values())if(parent.children.includes(room))parent.readyPrompt=null;
         reduceBattleRequest(r.battle,request,{now:this.now});
         if(r.lastAction && request?.rqid !== r.lastAction.rqid)r.lastAction.boundary='next-request';
@@ -228,6 +253,9 @@ export class ShowdownClient extends EventEmitter {
       }
       // Parse only official server/system HTML, never opponent chat as commands.
       const trustedHTML = ['html','uhtml','uhtmlchange','controlshtml','fieldhtml'].includes(type) || (type === 'c' && parts[0] === '~');
+      // Current-connection room init or official room content proves the
+      // destination is already subscribed when a search update beats rename.
+      if(r && (type==='init' || trustedHTML))r.subscriptionEpoch=this.epoch;
       if (trustedHTML && r) {
         for (const match of value.matchAll(/href="\/(battle-[a-z0-9-]+)"/g)) {const child=this.resolveRoom(match[1]);if(!r.children.includes(child))r.children.push(child);}
         const ready = value.match(/value="\/msgroom ([a-z0-9-]+),\/confirmready"/);
@@ -436,11 +464,20 @@ export class ShowdownClient extends EventEmitter {
     check(results.length===1,'Replay identity or finished log not verified');
     const result=results[0].split('|');
     check(result[1]===state.result?.type && (result[1]==='tie' || userID(result[2])===userID(state.result.winner)),'Replay result differs from the official observed result');
-    for(const format of [data.format,data.formatid,...lines.filter(line=>line.startsWith('|tier|')).map(line=>line.slice(6))])if(typeof format==='string' && format.trim())check(isMcFormat(format),'Replay format does not match M-C');
+    const formats=[data.format,data.formatid,...lines.filter(line=>line.startsWith('|tier|')).map(line=>line.slice(6))].filter(format=>typeof format==='string' && format.trim());
+    for(const format of formats)check(isMcFormat(format),'Replay format does not match M-C');
     if(username) {
       const players=lines.filter(line=>/^\|player\|p[12]\|/.test(line)).map(line=>line.split('|')[3]);
       check(players.some(name=>userID(name)===userID(username)),'Replay does not identify the authorized player');
-      check(lines.includes('|start') || lines.includes('|start|'),'Replay is missing its battle start');
+      if(!lines.includes('|start') && !lines.includes('|start|')){
+        // A server-confirmed concession can finish during team preview. Its
+        // missing start is valid only with exact local preview/player evidence;
+        // this cannot excuse a truncated battle that actually began.
+        const local=state.battleLog,localPlayers={},replayPlayers={};
+        for(const [history,target] of [[local,localPlayers],[lines,replayPlayers]])for(const line of history){const match=/^\|player\|(p[12])\|([^|]+)/.exec(line);if(match)target[match[1]]=userID(match[2]);}
+        check(state.ended && state.previewObserved && !state.startedObserved && !local.some(gameplayLine) && lines.some(line=>/^\|teampreview(?:\||$)/.test(line)) && !lines.some(gameplayLine),'Replay is missing its battle start');
+        check(formats.length>0 && ['p1','p2'].every(side=>localPlayers[side] && localPlayers[side]===replayPlayers[side]) && (result[1]==='tie' || Object.values(replayPlayers).includes(userID(result[2]))),'Replay preview concession lacks exact format or player evidence');
+      }
       const maxTurn=history=>Math.max(0,...history.filter(line=>/^\|turn\|\d+$/.test(line)).map(line=>Number(line.slice(6))));
       check(maxTurn(lines)>=maxTurn(state.battleLog),'Replay is shorter than the observed completed battle');
       for(const name of state.battleLog.filter(line=>/^\|player\|p[12]\|/.test(line)).map(line=>line.split('|')[3]))check(players.some(player=>userID(player)===userID(name)),'Replay players differ from the observed battle');

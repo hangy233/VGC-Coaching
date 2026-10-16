@@ -13,6 +13,7 @@ const normalized=value=>String(value||'').toLowerCase().replace(/[^a-z0-9]/g,'')
 export const canonicalRoom=value=>String(value||'').replace(/-[a-z0-9]+pw$/,'');
 const battleRoom=value=>/^battle-[a-z0-9]+(?:-[a-z0-9]+)*-\d+$/.test(value);
 const allowedProtocol=new Set(['player','poke','start','turn','upkeep','switch','drag','replace','detailschange','swap','move','cant','faint','win','tie','gen','gametype','tier','teamsize','teampreview']);
+const progressProtocol=new Set(['start','turn','upkeep','switch','drag','replace','detailschange','swap','move','cant','faint']);
 
 /** Local inputs only. Resolve links before checking containment, never echo data on errors. */
 export async function readWorkspaceFile(workspace,file,{extensions=['.json','.jsonl','.log','.txt'],maxBytes=32*1024*1024}={}) {
@@ -109,17 +110,26 @@ function safeRequest(request) {
 /** Reusable ingestion path for old JSONL wrappers and future live recording. */
 export function collectBattleEvents(values,{defaultRoom}={}) {
   const rooms=new Map();
-  const get=raw=>{const room=canonicalRoom(raw);if(!battleRoom(room))return null;if(!rooms.has(room))rooms.set(room,{events:[],sheets:{},warnings:[]});return rooms.get(room);};
+  const get=raw=>{const room=canonicalRoom(raw);if(!battleRoom(room))return null;if(!rooms.has(room))rooms.set(room,{events:[],sheets:{},warnings:[],startedObserved:false,progressObserved:false});return rooms.get(room);};
   for(const value of values){
     const data=get(value.room||defaultRoom);if(!data)continue;
     if(value.event==='sheet'&&typeof value.side==='string'&&typeof value.packed==='string')data.sheets[value.side]=value.packed;
     else if(value.event==='request'||value.type==='request'){
-      const request=safeRequest(value.request);if(request)data.events.push({type:'request',request,at:value.at});
+      const request=safeRequest(value.request);if(request){
+        if(Array.isArray(request.active)||Array.isArray(request.forceSwitch)||!request.teamPreview&&(request.side?.pokemon?.some(p=>p.active)||request.wait&&request.side?.pokemon?.length===4))data.progressObserved=true;
+        data.events.push({type:'request',request,at:value.at});
+      }
     }else if(value.event==='result'&&['win','tie'].includes(value.type)){
       // Client emits a result callback immediately before the same protocol line.
       // Preserve only protocol results here; a callback fallback is added below.
       data.result={type:value.type,data:value.type==='win'?[value.winner]:[],at:value.at};
     }else if(typeof value.type==='string'&&(allowedProtocol.has(value.type)||value.type.startsWith('-'))&&Array.isArray(value.data)){
+      // Replayed history can replace the retained event sequence, but cannot
+      // erase the fact that this exact game already reached battle activity.
+      if(value.type==='start')data.startedObserved=true;
+      // -message is informational text (including a whole-series concession),
+      // not proof that the preview advanced to any battle action.
+      if(progressProtocol.has(value.type)||value.type.startsWith('-')&&value.type!=='-message')data.progressObserved=true;
       // A server rejoin can resend a complete history. Retain the newest full
       // history, rather than counting earlier copies of the same turns twice.
       if(value.type==='gametype'&&data.events.some(e=>e.type==='gametype')){

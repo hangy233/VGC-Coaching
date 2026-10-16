@@ -204,8 +204,13 @@ the set finished. Reuse the command ID to reconcile an uncertain reply rather
 than submitting a new forfeit. An already-running older terminal cannot load this
 operation merely by rebuilding or restarting its MCP server.
 
-The terminal stays signed in after the authorized sets are consumed. To reuse it
-after an explicit user request, first verify with `battle_status` that the server
+The bridge does not automatically disconnect when its set allowance is consumed.
+The agent's batch policy is to keep it open between BO3s, then close it after the
+batch's final verified replay, metrics, review and bounded-retention checkpoint,
+unless the user requests otherwise. Call `battle_stop` and verify shutdown;
+closing an MCP helper alone leaves the battle client open. See the
+[batch-end procedure](../skills/champions-mc-matchups/references/headless-battle-cycle.md#end-the-batch).
+To reuse an open session for another authorized set, verify with `battle_status` that the server
 reports no searching formats or active games. Call
 `battle_authorize_sets({confirmed:true,additionalSets:1,commandId:"authorize-next-set"})`,
 then separately call `battle_start({confirmed:true,commandId:"start-next-set"})`.
@@ -213,10 +218,11 @@ Authorization requires a live, idle session with no pending match and changes
 only its remaining allowance; it never queues or changes the account/team.
 `additionalSets` is an integer from 1 to 100, with a cumulative maximum of 100.
 Repeating the same command ID retrieves the original result without extending
-the allowance twice. Keep the terminal open for reuse; call `battle_stop` or
-press Ctrl-C when ending the session. A lost connection requires a new visible
-session: hidden terminal login by default, or the explicitly selected Windows
-saved-login broker.
+the allowance twice. A closed session requires a new visible session: hidden
+terminal login by default, or the authorized Windows saved-login broker. Use that
+broker for the next already-authorized batch, preserving overall progress and
+remaining limits. Stored credentials do not authorize extra battles, automatic
+login retries or authentication merely to test the workflow.
 
 The bridge uses a Windows named pipe or Unix domain socket, not TCP. `cache/showdown-session.json` contains a random local control capability, address, PID and session ID. It contains no password or Showdown assertion and is removed on orderly shutdown. Keep the cache private. An existing descriptor blocks replacement; after a hard crash, verify the recorded process has stopped before removing that exact descriptor. The bridge never reconnects, reauthenticates or replays queued actions.
 

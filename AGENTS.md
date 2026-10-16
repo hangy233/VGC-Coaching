@@ -21,6 +21,15 @@ do not handwrite a completed status to bypass evidence checks. Run
 and readiness; tactical judgment and this instruction are not a runtime review
 guard in `battle_start`.
 
+Close the battle client after each user-defined batch, unless the user gives a
+newer keep-open instruction. Keep it open between BO3s within that batch. After
+the final official result and server idle, finish replay preservation, metrics,
+review/skill sync and bounded retention, then call `battle_stop` and verify
+shutdown. Missing durable evidence or an incomplete review defers closure;
+protected disposable files can remain explicitly retained. Start the next
+already-authorized batch through the saved-login broker, carrying forward the
+overall remaining battle allowance; stored credentials grant no extra battles.
+
 Use open sheets and plausible opposing paired actions to choose a plan; use actual
 MCP `calculate_damage` and `calculate_speed` for all numerical damage and Speed
 checks. Do not use mental arithmetic or a direct calculator fallback. Label

@@ -84,6 +84,50 @@ test('missing preview history and untracked choice acknowledgments remain explic
   }
 });
 
+test('postresult disconnect and sync preserve completed preview provenance without a recorder failure',async()=>{
+  const f=await previewFixture();try{
+    f.preview();f.action('sent');f.start();const {evidence}=await f.finish();
+    f.emit('player','p1','');f.emit('player','p1','Fixture');
+    const status=await f.recorder.flush({savePending:true});
+    assert.equal(status.state,'ready');assert.equal(status.lastError,null);
+    const retained=await readGameEvidence({workspace:f.workspace,teamId:f.teamId,roomId:f.room});
+    assert.deepEqual(retained.decisions,evidence.decisions);assert.deepEqual(retained.events.slice(0,evidence.events.length),evidence.events);
+    assert.deepEqual(retained.events.slice(-2).map(value=>value.data),[['p1',''],['p1','Fixture']]);
+    assert.equal((await f.recorder.flush({savePending:true})).state,'ready');
+  }finally{await f.close();}
+});
+
+test('a whole-series concession during preview archives without treating its message as battle progress',async()=>{
+  const f=await previewFixture();try{
+    f.emit('tier','[Gen 9 Champions] VGC 2026 Reg M-C (Bo3)');f.emit('teampreview','4');
+    f.preview();f.action('sent');f.emit('-message','Fixture forfeited the series.');f.emit('win','Opponent');
+    const status=await f.recorder.flush({savePending:true});
+    assert.equal(status.state,'ready');assert.equal(status.lastError,null);
+    const evidence=await readGameEvidence({workspace:f.workspace,teamId:f.teamId,roomId:f.room});
+    assert.equal(evidence.complete,true);assert.equal(evidence.completionKind,'preview-terminal');
+    assert.deepEqual(evidence.observedHistory,{started:false,progress:false});
+    assert.deepEqual(evidence.decisions.map(value=>value.status),['selected','sent']);
+    assert(evidence.decisions.every(value=>value.accepted===undefined&&value.executed===undefined&&value.serverDefaulted===undefined));
+  }finally{await f.close();}
+});
+
+test('recorder reports allowlisted failure codes without leaking private error messages or replay URLs',async()=>{
+  for(const [message,code,reasonCode]of [
+    ['Game evidence: completed evidence differs;','EUNKNOWN','COMPLETED_EVIDENCE_CONFLICT'],
+    ['Disk operation failed:','ENOSPC','LOCAL_STORAGE_FULL'],
+    ['Unexpected private failure:','EUNKNOWN','METRICS_SAVE_FAILED'],
+  ]){
+    const workspace=await mkdtemp(join(tmpdir(),'vgcm-safe-error-')),client=new EventEmitter(),room='battle-gen9championsvgc2026regmcbo3-61',errors=[];
+    const secret='DO-NOT-REFLECT',url='https://replay.pokemonshowdown.com/gen9championsvgc2026regmcbo3-61-privatepw';
+    const recorder=attachMetricsRecorder(client,{workspace,username:'Fixture',teamId:'2'.repeat(64),team:[{species:'Sylveon',moves:['Protect']}],onError:error=>errors.push(error),replayAttacher:async()=>{throw Object.assign(new Error(`${message} ${secret} ${url} ${workspace}`),{code});}});
+    try{
+      await recorder.flush();client.emit('battle-event',{room,type:'player',data:['p1','Fixture']});client.emit('replay-verified',{roomId:room,url});
+      const status=await recorder.flush();assert.equal(status.state,'error');assert.equal(status.lastError.reasonCode,reasonCode);assert.equal(errors.length,1);assert.equal(errors[0].reasonCode,reasonCode);
+      const serialized=JSON.stringify({status,errors});assert(!serialized.includes(secret));assert(!serialized.includes(url));assert(!serialized.includes(workspace));assert.equal(status.lastError.stack,undefined);assert.equal(typeof status.lastError.detail,'string');
+    }finally{await recorder.close();await rm(workspace,{recursive:true,force:true});}
+  }
+});
+
 test('late preview and unidentified acknowledgments cannot count as submitting the following turn',async()=>{
   for(const source of ['previous-preview','unidentified']){
     const f=await previewFixture();try{

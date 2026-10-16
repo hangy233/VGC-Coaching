@@ -15,6 +15,15 @@ direct calculator or mental damage/Speed arithmetic as a fallback.
 
 ## Rules to carry into the next set
 
+**Choose the fallback before optional research.** In a reviewed game, a late
+intended pair was never sent, the server supplied different moves, and later
+deliberate submissions still ended in total-bank inactivity. Identify a complete
+legal pair from the fresh board first, then use the cycle's early-commit buffers
+to bound only the checks that could change it. An unavailable damage benchmark
+stays unverified; it does not prevent every qualitative legal choice. Recheck the
+pair after a forced replacement or other request change. An external deadline
+alert helps the operator notice urgency but never submits that pair for it.
+
 **Read denial and coverage before choosing four.** Convert the full open sheet
 into plausible paired actions: attacks, Protect, setup, switches, weather,
 Encore, Disable, redirection and other relevant disruption. State the expected
@@ -42,6 +51,17 @@ then removed on the next turn. Count both the boost and the broken Disguise.
 Conversely, our Protect plus an attacking partner produced actual KOs in sets
 7–9. Neither a protected attack nor a Protect selection alone proves a bad turn.
 
+**Carry early support into the receiver's action.** Helping Hand places a
+one-turn effect on its ally; knocking out the helper afterward does not cancel
+it. The [pinned move handler](https://github.com/smogon/pokemon-showdown/blob/a5df8274e85b0889bf2a9b3422a08b39732374fc/data/moves.ts#L8573-L8604)
+stores that effect on the recipient. Before trading an endgame answer for a
+support knockout, still check the helped attack against both our slots. Our own
+Helping Hand can also deliver value before its user faints, provided its ally
+can attack successfully. A protected target, a recipient fainting first, or
+other action denial can prevent that payoff. The current MCP cannot model
+Helping Hand damage numerically; keep that benchmark unverified instead of
+applying a manual multiplier.
+
 **Treat Sucker Punch as a read with an escape branch.** Include revealed
 King's Shield, Protect, Rage Powder and other nonattacks when testing its value,
 as well as move denial and the partner's pressure. Repeated Sucker Punch into
@@ -63,6 +83,15 @@ Evolution and revealed weather moves. Weather Ball is not permanently a rain
 attack, and rain can benefit opposing threats too. Check current forms and
 abilities: base Golisopod's Emergency Exit caused replacement requests in this
 batch; carrying a stone did not make it already Mega Evolved.
+
+Track weather activations and expiry separately from setter entries. In this
+Gen 9 format, Drizzle reentry during existing rain does not refresh its duration;
+the [pinned weather handler](https://github.com/smogon/pokemon-showdown/blob/a5df8274e85b0889bf2a9b3422a08b39732374fc/sim/field.ts#L39-L52)
+rejects the same-weather ability activation. A later controlled game confirmed
+no new rain activation on that entry, followed by rain expiring that turn.
+Reentry after expiry did establish new rain while the partner delivered Trick
+Room, so this is not a reason to discard weather pivots. Check the actual new
+activation and opposing responses before relying on the next weather window.
 
 **Require a protected route to setup and payoff.** Check incoming paired damage,
 denial, setup cost, and the next attacking turn before choosing Clangorous Soul

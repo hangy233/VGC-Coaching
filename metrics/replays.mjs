@@ -2,7 +2,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {lstat, mkdir, readFile, realpath, rename, rm, writeFile} from 'node:fs/promises';
 import {isAbsolute, join, relative, sep} from 'node:path';
 import {importBattleFiles, loadMetricsTeam, readWorkspaceFile} from './import.mjs';
-import {attachVerifiedReplay, fetchVerifiedReplay} from './replay-evidence.mjs';
+import {attachVerifiedReplay, fetchVerifiedReplay, fetchRegisteredReplay} from './replay-evidence.mjs';
 import {updateTeamReport} from './live-reports.mjs';
 import {listBattles} from './store.mjs';
 import {acquireMetricsBattleLock,assertMetricsTeamWritable} from './catalog.mjs';
@@ -197,7 +197,7 @@ async function writeCachedReplay(directory, replay, path) {
 /** Import explicitly supplied saved replay URLs without publication or login.
  * Verified links live only in private game metadata; cached protocol is stripped
  * of replay capabilities and never becomes a background polling source. */
-export async function importReplayUrls({workspace, urls, username, teamFile, teamId, name, ledgerFile, fetchImpl = globalThis.fetch} = {}) {
+export async function importReplayUrls({workspace, urls, username, teamFile, teamId, name, ledgerFile, fetchImpl = globalThis.fetch, sessionReader} = {}) {
   if (!Array.isArray(urls) || !urls.length || urls.length > 20) throw new Error('Supply 1–20 saved replay URLs.');
   if (typeof fetchImpl !== 'function') throw new Error('Replay fetching is unavailable.');
   if (typeof username !== 'string' || !normalized(username) || username.length > 30) throw new Error('Supply the battle username.');
@@ -216,20 +216,27 @@ export async function importReplayUrls({workspace, urls, username, teamFile, tea
   }
   const existing = new Map((await listBattles({workspace, includeArchived: true}))
     .filter(record => record.teamId === registration.teamId).map(record => [record.roomId, record]));
-  const budget = AbortSignal.timeout(30000), replays = [];
+  const budget = AbortSignal.timeout(30000), replays = [], previewTerminals = new Set();
+  let sessionSnapshot;
+  const readSession = typeof sessionReader === 'function' ? () => (sessionSnapshot ??= Promise.resolve().then(sessionReader)) : undefined;
   // Validate every download before writing any cache or metric record. One failed
   // fetch cannot leave an apparently successful partial batch behind.
   for (const identity of identities.values()) {
     if (budget.aborted) throw genericFailure();
     const replay = await downloadReplay(identity, {fetchImpl, username, budget});
-    if (completeness(replay).complete) {
+    if (completeness(replay).complete || /(?:^|\n)\|win\|[^\n]+(?:\n|$)/u.test(replay.log)) {
       // Check a terminal replay before publishing any batch records. This also
       // rejects conflicting results and an unrelated winner, rather than adding
       // a report row before discovering that its evidence cannot be verified.
       try {
         const previous = existing.get(`battle-${replay.id}`);
-        const verified = await fetchVerifiedReplay({url: `${ORIGIN}/${identity.accessId}`, username,
-          ownSide: previous?.ownSide, outcome: previous?.outcome, fetchImpl: cachedReplayFetcher(replay)});
+        const verified = completeness(replay).complete
+          ? await fetchVerifiedReplay({url: `${ORIGIN}/${identity.accessId}`, username, ownSide: previous?.ownSide, outcome: previous?.outcome, fetchImpl: cachedReplayFetcher(replay)})
+          : await fetchRegisteredReplay({workspace,teamId:registration.teamId,roomId:`battle-${replay.id}`,url:`${ORIGIN}/${identity.accessId}`,fetchImpl:cachedReplayFetcher(replay),sessionReader:readSession});
+        if (verified.completionKind === 'preview-terminal') {
+          if (normalized(previous?.username) !== normalized(username)) throw genericFailure();
+          previewTerminals.add(replay.id);
+        }
         if (previous?.metadata.replay && previous.metadata.replay.logSha256 !== verified.metadata.logSha256) throw genericFailure();
       }
       catch { throw genericFailure(); }
@@ -239,11 +246,18 @@ export async function importReplayUrls({workspace, urls, username, teamFile, tea
   const release=await acquireMetricsBattleLock({workspace,teamId:registration.teamId,roomId:'team-replay-import'});
   try{
   const directory = {...await replayDirectory(workspace),teamId:registration.teamId}, files = [];
-  for (const replay of replays) files.push(await cacheReplay(directory, replay));
+  for (const replay of replays) if (!previewTerminals.has(replay.id)) files.push(await cacheReplay(directory, replay));
   const teamReference = teamId === undefined ? {teamFile: registration.teamFile} : {teamId: registration.teamId};
-  const imported = await importBattleFiles({workspace, files, username, ...teamReference, name: name ?? registration.descriptor.name,
-    ledgerFile, remember: false, expectedTeamId: registration.teamId});
+  const imported = files.length ? await importBattleFiles({workspace, files, username, ...teamReference, name: name ?? registration.descriptor.name,
+    ledgerFile, remember: false, expectedTeamId: registration.teamId}) : {teamId:registration.teamId,imported:0,skipped:[],battles:[],team:registration.descriptor,savedTeamFile:registration.teamFile,stableReport:null,provenance:'Existing registered private game facts are retained; a pre-start terminal replay adds verification only.'};
   const attached = [];
+  for (const replay of replays) if (previewTerminals.has(replay.id)) {
+    const identity = identities.get(replay.id), roomId = `battle-${replay.id}`;
+    const saved = await attachVerifiedReplay({workspace,teamId:registration.teamId,roomId,url:`${ORIGIN}/${identity.accessId}`,fetchImpl:cachedReplayFetcher(replay),sessionReader:readSession});
+    attached.push(saved);
+    const record = (await listBattles({workspace,includeArchived:true})).find(value=>value.teamId===registration.teamId&&value.roomId===roomId);
+    imported.battles.push({roomId,status:saved.status,record}); imported.imported++;
+  }
   for (const battle of imported.battles) {
     const replay = replays.find(value => battle.roomId === `battle-${value.id}`);
     if (!replay || !completeness(replay).complete) continue;

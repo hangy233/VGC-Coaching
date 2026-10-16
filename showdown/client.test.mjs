@@ -2,6 +2,7 @@ import test from 'node:test';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {ShowdownClient, FORMAT} from './client.mjs';
+import {AgentSession} from './agent-session.mjs';
 const room = 'battle-gen9championsvgc2026regmcbo3-123';
 const replayResponse=data=>new Response(JSON.stringify(data),{headers:{'content-type':'application/json'}});
 const fixture = () => ({rqid:7,active:[{canMegaEvo:true,moves:[{move:'Leech Life',pp:10,target:'normal'}]},{moves:[{move:'Protect',pp:10,target:'self'}]}],side:{pokemon:[{active:true,condition:'100/100'},{active:true,condition:'100/100'},{active:false,condition:'100/100'},{active:false,condition:'100/100'},{active:false,condition:'0 fnt'},{active:false,condition:'100/100'}]}});
@@ -45,6 +46,49 @@ test('room aliases require the exact server rename protocol and matching format/
   for(const target of ['battle-gen9championsvgc2026regmcbo3-124-privatepw','battle-gen9ou-123-privatepw','game-bestof3-gen9championsvgc2026regmcbo3-123-privatepw'])c.receive(`>${room}\n|noinit|rename|${target}|Other`);
   c.receive(`>${room}\n|c|Opponent|noinit|rename|${privateRoom}|Fake\n|html|<div>|noinit|rename|${privateRoom}|Fake</div>`);
   assert.equal(c.resolveRoom(room),room);assert.equal(c.state(room).revision,revision);assert.equal(c.roomAliases.size,0);
+});
+
+test('authoritative search privacy replacement recovers the owned parent and linked preview without a rename notice',async()=>{
+  const {c,sent}=setup(),packed='Species|item|ability|move',parent='game-bestof3-gen9championsvgc2026regmcbo3-122',privateParent=parent+'-fixtureparentpw',privateChild='battle-gen9championsvgc2026regmcbo3-124-fixturechildpw';
+  const session=new AgentSession(c,{username:'Fixture',packed,autoReady:false});
+  try{
+    session.searchesSent=1;session.awaitingSet=true;
+    c.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[parent]:'Fixture vs Opponent'}})}`);
+    assert(session.ownedParents.has(parent));assert(sent.includes('|/join '+parent));
+    // A private child arrives while the old public join has no init/rename.
+    c.receive(`>${privateChild}\n|request|${JSON.stringify({rqid:8,teamPreview:true,side:{id:'p2',name:'Fixture',pokemon:[]}})}`);
+    assert.equal(session.snapshot().actions.length,0);
+    const update=`|updatesearch|${JSON.stringify({searching:[],games:{[privateParent]:'Fixture vs Opponent',[privateChild]:'Fixture vs Opponent'}})}`;
+    c.receive(update);c.receive(update);
+    assert.equal(c.resolveRoom(parent),privateParent);assert(session.ownedParents.has(privateParent));assert(!session.ownedParents.has(parent));
+    assert.equal(sent.filter(line=>line==='|/join '+privateParent).length,1);
+    assert.equal(session.snapshot().actions.length,0); // Still needs a trusted child link.
+    c.receive(`>${privateParent}\n|uhtml|game1|<a href="/${privateChild}">Game 1</a>`);
+    const action=session.snapshot().actions[0];assert.equal(action.room,privateChild);assert.equal(action.kind,'preview');
+    const forfeited=await session.execute({id:'fixture-handoff-forfeit',op:'forfeit',room:parent,confirmed:true});
+    assert.equal(forfeited.ok,true);assert.equal(forfeited.result.room,privateParent);assert(sent.includes(privateParent+'|/forfeit'));
+    assert.equal(session.snapshot().actions.length,0);assert.equal(sent.filter(line=>line.includes('/search ')).length,0);
+  }finally{session.dispose();}
+});
+
+test('search-derived aliases preserve sent choice reservations and reject ambiguous or unrelated replacements',()=>{
+  const {c,sent,grant,choose}=setup(),privateRoom=room+'-fixturehandoffpw';
+  grant('choose');choose();c.joinRoom(room);
+  c.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[room]:'Fixture'}})}`);
+  for(const games of [
+    {[room]:'Fixture',[privateRoom]:'Duplicate identity'},
+    {['battle-gen9championsvgc2026regmcbo3-124-fixturepw']:'Other number'},
+    {['battle-gen9ou-123-fixturepw']:'Other format'},
+    {['game-bestof3-gen9championsvgc2026regmcbo3-123-fixturepw']:'Other room type'},
+  ]){
+    c.receive(`|updatesearch|${JSON.stringify({searching:[],games})}`);assert.equal(c.resolveRoom(room),room);
+    c.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[room]:'Fixture'}})}`);
+  }
+  c.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[privateRoom]:'Fixture'}})}`);
+  assert.equal(c.resolveRoom(room),privateRoom);
+  c.authorize('choose',{room:privateRoom,confirmed:true});
+  assert.throws(()=>c.choose(privateRoom,{rqid:7,revision:c.state(privateRoom).revision,actions:[{type:'move',slot:1,target:1},{type:'move',slot:1}],deadlineAt:2000}),/Duplicate/);
+  assert.equal(sent.filter(line=>line.includes('/choose ')).length,1);
 });
 test('server sentchoice survives a restored destination request before a rename',()=>{
   const {c}=setup(),privateRoom=`${room}-fixtureprivatepw`;
@@ -168,6 +212,23 @@ test('replay verification rejects mismatched outcome, missing player/start, shor
   for(const data of [{id,log:good.replace('|win|Alice','|win|Bob')},{id,log:good.replace('|player|p1|Alice','|player|p1|Other')},{id,log:good.replace('|start\n','')},{id,log:good.replace('|turn|4','|turn|3')},{id,log:good,format:'gen9ou'}])await assert.rejects(c.verifyReplay({room,username:'Alice',fetchImpl:async()=>replayResponse(data)}));
   assert.equal(c.replays.length,0);
   const verified=await c.verifyReplay({room,username:'Alice',fetchImpl:async()=>replayResponse({id,log:good})});assert.equal(verified.verified,true);
+});
+
+test('a finished preview concession verifies only with exact local preview, players and M-C evidence',async()=>{
+  const previewRoom=room+'9',id=previewRoom.slice(7),good=`|tier|${FORMAT}\n|player|p1|Alice\n|player|p2|Bob\n|teampreview|4\n|-message|Alice forfeited the series.\n|win|Bob`;
+  const make=({local=good}={})=>{const f=setup();f.c.receive(`>${previewRoom}\n${local}`);f.grant('save-replay',previewRoom);f.c.saveReplay(previewRoom);f.c.receive(`|popup|https://replay.pokemonshowdown.com/${id}`);return f;};
+  const f=make();
+  for(const log of [good.replace('|teampreview|4\n',''),good.replace(`|tier|${FORMAT}\n`,''),good.replace('|player|p2|Bob','|player|p2|Other'),good.replace('|win|Bob','|win|Alice'),good.replace('|win|Bob','|turn|1\n|win|Bob')])await assert.rejects(f.c.verifyReplay({room:previewRoom,username:'Alice',fetchImpl:async()=>replayResponse({id,log})}));
+  assert.equal(f.c.replays.length,0);
+  assert.equal((await f.c.verifyReplay({room:previewRoom,username:'Alice',fetchImpl:async()=>replayResponse({id,log:good})})).verified,true);
+  for(const local of [good.replace('|teampreview|4','|start'),good.replace('|win|Bob','|turn|1\n|win|Bob'),good.replace('|win|Bob','|move|p1a: A|Protect|p1a: A\n|win|Bob'),good.replace('|win|Bob','|-damage|p1a: A|50/100\n|win|Bob'),good.replace('|player|p2|Bob\n','')]){
+    const bad=make({local});await assert.rejects(bad.c.verifyReplay({room:previewRoom,username:'Alice',fetchImpl:async()=>replayResponse({id,log:good})}));
+  }
+  // Persistent observation survives bounded history and a privacy rename.
+  const truncated=make({local:good.replace('|win|Bob','|start\n|win|Bob')}),privateRoom=previewRoom+'-fixtureconcessionpw';
+  truncated.c.state(previewRoom).battleLog=truncated.c.state(previewRoom).battleLog.filter(line=>line!=='|start');
+  truncated.c.receive(`>${previewRoom}\n|noinit|rename|${privateRoom}|Private`);
+  await assert.rejects(truncated.c.verifyReplay({room:privateRoom,username:'Alice',fetchImpl:async()=>replayResponse({id,log:good})}),/battle start/);
 });
 
 test('replay download rejects oversize/redirects and redacts sensitive transport exceptions',async()=>{

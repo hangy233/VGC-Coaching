@@ -72,9 +72,28 @@ later revealed by requests. Inspect the recorded preview phase: a server-selecte
 four is not an intentional selection, and a sent choice without acknowledgment
 leaves acceptance unknown. Missing preview history does not prove a default.
 Keep these distinctions in selection-quality and execution review.
-Treat a short observed deadline or depleted total bank as urgent: skip optional
-explanations, history scans and extra calculations, then submit a current legal
-paired action while there is time to verify it. A stale attempt is not a fallback.
+From each fresh actionable request, identify a complete legal pair immediately.
+Before submission, check only unresolved facts that could change it; reuse actual
+MCP results only while all relevant inputs still match. Defer optional notes,
+history reads and extra research until the send is verified, and stop that work
+if a new actionable request arrives. A legal qualitative choice need not claim
+a numerical survival or KO benchmark. Leave an unavailable benchmark unverified
+and never replace it with arithmetic.
+
+Aim to commit within the first 20 seconds of planning; stop optional research
+by 25 seconds remaining on an observed turn clock, sooner when the total game
+bank is low. An observer's threshold alert means commit now, not begin another
+round of checks. These are operator buffers, not server deadlines or guarantees.
+An already short request needs immediate action; an unavailable clock stays
+unknown and calls for minimal checks rather than an assumed full turn. Budget
+from the remaining game bank too: repeatedly using most of a turn can still
+cause inactivity after earlier choices were sent.
+
+Refresh legality, targets and request identity before submission. A forced
+replacement or changed board can invalidate the earlier pair; rebuild that
+fallback instead of sending stale actions. Verify the send before more analysis.
+Do not use the cutoff to ignore a known immunity, priority blocker or illegal
+replacement. A stale attempt or an observer alert is not a submitted choice.
 
 During automatic context restoration, an external observer can alert the active
 operator using fresh request/choice evidence; it must not create competing move
@@ -82,6 +101,17 @@ ownership. If operation cannot recover and the user authorized forfeiting when
 stuck, use the owned whole-BO3 `battle_forfeit`, then verify the parent result and
 server idle. `battle_stop` only disconnects. Do not assume either a fallback move
 or an automatic forfeit policy exists in the client.
+
+Prepare a deliberate operator handoff between BO3s when possible. Before a new
+search or transfer, the receiving operator must read the current guidance and
+successfully call `battle_status` through its own MCP connection, verifying the
+same signed-in session, locked team and current request or idle state. A running
+MCP process does not prove access to the client's local pipe. Keep the original
+operator responsible until the receiver acknowledges working controls and
+exclusive ownership. During an urgent live turn, submit and verify a legal pair
+before optional controller setup; if recovery cannot finish, use an already
+authorized whole-set forfeit. Do not delay an available current operator merely
+to arrange a handoff.
 
 Between games, handle readiness and preview deadlines promptly. Record observed
 response -> our adjustment -> their plausible counter-adjustment. Save deep log
@@ -91,7 +121,8 @@ audits, skill edits and installation for after the official BO3 parent ends.
 
 Verify the official parent result and server idle. A child result, submitted
 finisher, disconnect or `sent-not-acknowledged` forfeit does not prove completion.
-Keep signed-in clients open if requested; finishing a batch does not close them.
+Keep the client open between BO3s within the batch. At its stopping condition,
+follow [End the batch](#end-the-batch) after the final checkpoint and retention.
 
 ### Save verified replay evidence
 
@@ -286,8 +317,9 @@ canonical evidence; matching room IDs alone are insufficient. Registered shared
 sources remain protected by this cleanup tool; a
 source spanning several BO3s needs a separate all-set audit and must not be passed
 off as one set's disposable source. Prefer direct recording or `remember: false`
-for closed per-set imports intended for cleanup. Do not stop a signed-in client, delete an arbitrary
-cache directory, follow a junction, or broaden a path pattern to make cleanup pass.
+for closed per-set imports intended for cleanup. Do not stop a signed-in client
+merely to make cleanup pass, delete an arbitrary cache directory, follow a junction,
+or broaden a path pattern. Normal batch-end closure follows the procedure below.
 Do not manually delete registered sources or remove their registrations to bypass
 this protection. Record kept paths and reasons rather than silently treating
 partial cleanup as complete.
@@ -296,6 +328,35 @@ Backfilled reviews must say they are retrospective. They repair future guidance
 but do not prove that this cycle was followed between past sets. Skill edits and
 reviews never authorize a roster change, replay publication, authentication,
 another set beyond the user's limit, or a Git commit/push.
+
+## End the batch
+
+A batch is the user's defined group of BO3s, including any early stopping
+condition; a request for one BO3 is one batch. Several authorized batches still
+have separate client lifetimes. Unless a newer user instruction keeps it open,
+close the client at each batch boundary, not between its individual BO3s.
+
+First verify the final official parent result and server idle. Finish authorized
+replay saving, flush metrics, verify durable evidence and the final review/skill
+checkpoint, then inspect and apply bounded retention. Missing replay preservation,
+unflushed data or an incomplete review defers closure so recovery remains possible.
+Protected or shared disposable files can remain explicitly retained; they do not
+require keeping the client open once useful evidence and review are durable.
+
+Call `battle_stop` with `confirmed: true` and a stable `commandId`, then verify
+the stopped result and client exit or absence of an active local session.
+Disconnecting is not a forfeit or proof of a completed BO3. Retain useful reports,
+team snapshots, review history, calculator records and compressed evidence after
+shutdown. Closing is a lifecycle step, not permission to bypass cleanup protection.
+
+For the next already-authorized batch, validate its approved team and start a
+fresh visible client with `--saved-login` when that broker is authorized. The
+broker reads the exact Windows credential; agents do not read or copy the password.
+Carry forward overall batch progress and remaining user authorization across
+clients, limiting the new session to the next batch. Read current guidance and
+verify the new session's identity, team and preflight before a separate search.
+Do not authenticate just to test instructions, retry a failed login automatically,
+or start another batch merely because a credential or unused allowance exists.
 
 ## Team report lifetime
 
@@ -313,8 +374,9 @@ ownership, shared or unrecognized sources,
 unsafe paths and changed files remain explicit pending cleanup. A false `complete`
 value is not full removal; inspect `retained`, `blockers` and
 `team_metrics_list.pendingCleanupTeams`, then retry after resolving those exact
-conditions. Do not close a signed-in client or delete another team's shared file
-to force completion. Background imports and ordinary report reads cannot recreate
+conditions. Do not close a client merely to force team deletion; use the normal
+batch-end procedure when its conditions are met. Keep another team's shared files
+protected. Background imports and ordinary report reads cannot recreate
 a deleted version; deliberate registration of the full legal team starts a fresh
 report without its old games. Team deletion does not remove published remote
 replays or copies outside managed local storage.

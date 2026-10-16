@@ -114,7 +114,11 @@ export function registerMetricsTools(server,{workspace,replayImporter=importRepl
     username:z.string().min(1).max(30),teamFile:z.string().min(1).max(2048).optional(),teamId:teamId.optional(),
     ledgerFile:z.string().min(1).max(2048).optional(),name:z.string().min(1).max(120).optional(),
   },false,args=>result(async()=>{
-    try{return await replayImporter({workspace,...args});}
+    try{return await replayImporter({workspace,...args,sessionReader:async()=>{
+      const reply=await call(join(workspace,'cache','showdown-session.json'),{id:randomUUID(),op:'status'});
+      if(!reply?.ok)throw new Error('Legacy preview evidence needs independent owned session state.');
+      return reply.result;
+    }});}
     catch{throw new Error('Replay import failed. Check the supported replay URLs, owner username and saved team ID or local team file.');}
   }),{openWorld:true,teamChoice:true,destructive:true});
   register('team_metrics_export','Export a private standalone HTML dashboard, spreadsheet-friendly CSV, or JSON report. Writes a new file only in cache/team-metrics/reports, never overwrites files, and loads no network assets. Dashboard opponent/result filters recompute its aggregate summaries and all tables from the included game metrics.',{

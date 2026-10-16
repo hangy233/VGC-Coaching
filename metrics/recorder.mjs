@@ -5,6 +5,18 @@ import {updateTeamReport} from './live-reports.mjs';
 import {saveGameEvidence} from './retention.mjs';
 import {attachVerifiedReplay} from './replay-evidence.mjs';
 
+function safeFailure(error){
+  const message=typeof error?.message==='string'?error.message:'';
+  if(/completed evidence differs/u.test(message))return {reasonCode:'COMPLETED_EVIDENCE_CONFLICT',detail:'A completed archive conflicts with a later observation; retained evidence was not overwritten.'};
+  if(/existing evidence hash|evidence hash/u.test(message))return {reasonCode:'EVIDENCE_HASH_MISMATCH',detail:'Stored evidence could not pass its registered hash check.'};
+  if(/registered snapshot roster|snapshot does not match|Team snapshot does not match/u.test(message))return {reasonCode:'TEAM_SNAPSHOT_MISMATCH',detail:'The saved exact team snapshot and report identity do not match.'};
+  if(error?.code==='METRICS_TEAM_DELETED')return {reasonCode:'TEAM_REPORT_DELETED',detail:'The exact team report was deleted or is being deleted.'};
+  if(error?.code==='METRICS_TEAM_BUSY')return {reasonCode:'TEAM_REPORT_BUSY',detail:'The exact report has an active writer or cleanup transaction.'};
+  if(['EACCES','EPERM'].includes(error?.code))return {reasonCode:'LOCAL_FILE_ACCESS_DENIED',detail:'A local generated-data operation was denied.'};
+  if(['ENOSPC','EDQUOT'].includes(error?.code))return {reasonCode:'LOCAL_STORAGE_FULL',detail:'Local generated-data storage has no available capacity.'};
+  return {reasonCode:'METRICS_SAVE_FAILED',detail:'The local metrics operation failed; retain its source evidence for investigation.'};
+}
+
 /** Observation only: no socket, authentication, commands, or battle decisions. */
 export function attachMetricsRecorder(client,{workspace,username,teamId,team,name='Team',session,onError=()=>{},replayAttacher=attachVerifiedReplay}={}) {
   const buffers=new Map(),listeners=[],parentResults=new Map(),failures=new Map(),observers=new Set(),verifiedReplayUrls=new Map(),activeReplays=new Set();
@@ -13,9 +25,9 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
   const notify=()=>{for(const observer of observers)try{observer(status());}catch{}};
   const enqueue=(key,operation)=>{
     pending++;notify();
-    chain=chain.then(operation).then(()=>{failures.delete(key);lastSavedAt=new Date().toISOString();},()=>{
-      failures.set(key,{operation:key,at:new Date().toISOString(),message:'Team metrics could not be saved. Retain local battle evidence and retry metrics sync.'});
-      try{onError();}catch{}
+    chain=chain.then(operation).then(()=>{failures.delete(key);lastSavedAt=new Date().toISOString();},error=>{
+      const failure={operation:key,at:new Date().toISOString(),message:'Team metrics could not be saved. Retain local battle evidence and retry metrics sync.',...safeFailure(error)};failures.set(key,failure);
+      try{onError(failure);}catch{}
     }).finally(()=>{pending--;notify();});
     return chain;
   };

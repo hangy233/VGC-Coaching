@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-15.8**. Read the bundled
+Cycle revision: **2026-10-16.13**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -33,6 +33,12 @@ before another authorized queue. Report a brief **review complete / lesson or no
 change / sync verified**, plus replay coverage and any retained cleanup blockers.
 Never invent a new rule merely to show activity.
 This is an agent workflow requirement, not a review check enforced by `battle_start`.
+
+Keep the client open between BO3s within an authorized batch. At the batch's
+stopping condition, complete preservation, the final review and bounded retention,
+then explicitly stop and verify the client, unless the user requests otherwise.
+The cycle's [batch-end procedure](references/headless-battle-cycle.md#end-the-batch)
+covers saved-login startup for the next authorized batch and preservation blockers.
 
 Read [M-C rules and tool usage](references/mc-rules-and-tools.md) before mechanics
 or calculation work. Read [source notes](references/sources.md) for the expert
@@ -149,10 +155,11 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
 - **Adapt from evidence:** Between games, record observed response -> our
   adjustment -> their plausible counter-adjustment. Carry this into the current
   branch; one Protect or lead choice does not establish a fixed opponent habit.
-- **Keep a legal fallback:** For live play, give a legal paired action promptly
-  and refine it only within the actual remaining clock. Revalidate the fallback
-  after state changes. Check both the current-turn deadline and the total game
-  bank: repeated animation reads, calculations, and context restoration consume
+- **Keep a legal fallback:** From the fresh request, identify a complete legal
+  pair before optional research. Follow the cycle's early-commit procedure;
+  an unverified numerical benchmark does not require delaying every legal play.
+  Revalidate the pair after state changes. Check both the current-turn deadline
+  and the total game bank: repeated animation reads, calculations, and context restoration consume
   the latter even when earlier turns were submitted. Keep a compact current-board
   note and stop optional analysis early enough to submit and verify the fallback.
   After a context lapse or timeout, repair this workflow before another queue.

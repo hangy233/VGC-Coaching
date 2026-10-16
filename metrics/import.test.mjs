@@ -21,6 +21,23 @@ test('resent history keeps observed player identities without repeating earlier 
   assert.equal(renewed.events.filter(value=>value.type==='player'&&value.data[0]==='p1').length,1);
   assert.equal(renewed.events.find(value=>value.type==='player'&&value.data[0]==='p1').data[1],'Updated Opponent');
 });
+test('collector preserves prior start and progress facts across truncated preview-only history resets',()=>{
+  const preview=[e('gametype','doubles'),e('player','p1','Opponent'),e('player','p2','Fixture'),e('teampreview','4')],canonical=ROOM.replace('-secretpw','');
+  for(const [observed,started]of [[e('start'),true],[e('turn','1'),false],[e('move','p2a: Shell','Protect','p2a: Shell'),false],[e('-damage','p2a: Shell','100/182'),false],[{event:'request',room:ROOM,request:{active:[],side:{id:'p2',name:'Fixture',pokemon:[]}}},false],[{event:'request',room:ROOM,request:{forceSwitch:[true,false],side:{id:'p2',name:'Fixture',pokemon:[]}}},false],[{event:'request',room:ROOM,request:{wait:true,side:{id:'p2',name:'Fixture',pokemon:Array.from({length:4},()=>({active:false}))}}},false]]){
+    const data=collectBattleEvents([...preview,observed,...preview,...preview,e('win','Fixture')]).get(canonical);
+    assert.equal(data.startedObserved,started);assert.equal(data.progressObserved,true);
+    assert.equal(data.events.some(value=>value.type==='start'||value.type==='turn'||value.type==='move'||value.type==='-damage'||value.type==='request'),false);
+  }
+  const clean=collectBattleEvents([...preview,{event:'request',room:ROOM,request:{teamPreview:true,side:{id:'p2',name:'Fixture',pokemon:Array.from({length:6},(_,index)=>({active:index<2}))}}},...preview,e('win','Fixture')]).get(canonical);
+  assert.equal(clean.startedObserved,false);assert.equal(clean.progressObserved,false);
+  const concession=collectBattleEvents([...preview,e('-message','Fixture forfeited the series.'),e('win','Opponent')]).get(canonical);
+  assert.equal(concession.startedObserved,false);assert.equal(concession.progressObserved,false);
+  const playedConcession=collectBattleEvents([...preview,e('-damage','p2a: Shell','100/182'),...preview,e('-message','Fixture forfeited the series.'),e('win','Opponent')]).get(canonical);
+  assert.equal(playedConcession.progressObserved,true);
+  const foreign=e('start');foreign.room=ROOM.replace('-123-','-124-');
+  const isolated=collectBattleEvents([...preview,foreign,...preview,e('win','Fixture')]);
+  assert.equal(isolated.get(canonical).progressObserved,false);assert.equal(isolated.get(foreign.room.replace('-secretpw','')).startedObserved,true);
+});
 async function setup(){const workspace=await mkdtemp(join(tmpdir(),'vgcm-import-'));await mkdir(join(workspace,'teams'));await mkdir(join(workspace,'cache'));await writeFile(join(workspace,'teams/team.txt'),TEAM);await writeFile(join(workspace,'cache/battles.jsonl'),jsonl(EVENTS));return workspace;}
 
 test('concurrent snapshot publishers retain one validated immutable team file',async()=>{

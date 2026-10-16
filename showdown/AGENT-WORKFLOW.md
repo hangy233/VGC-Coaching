@@ -191,12 +191,17 @@ Do not perform longer reporting or review inside a live turn deadline.
 Automatic readiness responds promptly only to server prompts inside the bound
 set. With manual readiness, use the current urgent ready token in `battle_ready`.
 Do deeper between-game review after readiness is handled, preserving time for
-preview. A child win is not the parent set result. Stop at the authorized set
-count/condition and keep the terminal signed in when the user wants to reuse it.
-Consuming the set allowance does not close the connection.
+preview. A child win is not the parent set result. Keep the client signed in
+between BO3s within the authorized batch. At its stopping condition, finish the
+final preservation/review/retention checkpoint, then call `battle_stop` and verify
+shutdown, unless a newer user instruction keeps it open. Missing durable evidence
+or incomplete review defers shutdown; protected disposable files can be retained.
+Consuming the set allowance does not itself close the connection: the agent must
+perform this batch-end step.
 `battle_cancel_search` cancels matchmaking;
 `battle_stop` closes the client connection and terminal session. It does not
-send a forfeit; use it when the user asks to end the session. No hidden reconnect
+send a forfeit; use it for the requested batch-end closure or an explicit
+session-end request. No hidden reconnect
 or automatic bailout move exists.
 
 If the user has authorized forfeiting when stuck, call
@@ -215,14 +220,17 @@ forfeit policy is enabled by this tool; remain within the user's authorized
 conditions. Older running terminal processes do not gain this operation when
 the source or MCP server is updated.
 
-## Reuse the signed-in session
+## Within and between batches
 
 After the parent set finishes, inspect `battle_status` and wait for the server to
 report no searching formats or active games, then complete the skill/review
-checkpoint before the next search. Keep the same terminal open; an
-exhausted allowance requires neither a reconnect nor another password prompt.
+checkpoint before the next search. Keep the same terminal open for the remaining
+BO3s within that batch. After its final checkpoint and bounded retention, use the
+skill's [batch-end procedure](../skills/champions-mc-matchups/references/headless-battle-cycle.md#end-the-batch)
+to stop and verify the client. Closing only the MCP helper does not close the
+battle client. Honor a newer user request to keep it open.
 
-When the user explicitly requests another set with this account and locked team,
+When reusing an open session for another authorized set within the batch,
 extend only the requested allowance, then start the next search separately:
 
 ```text
@@ -238,8 +246,12 @@ result after an uncertain response; use a new ID for a newly authorized request.
 An exhausted allowance alone never authorizes more sets. A disconnected session
 requires a newly started visible terminal session and fresh challenge-bound
 authentication. With the user's saved-login authorization, explicitly start it
-using `--saved-login`; do not add an automatic reconnect or queue another battle
-merely because a saved credential exists.
+using `--saved-login`. A normally closed batch also needs a fresh visible client
+for the next already-authorized batch. Carry forward overall progress and remaining
+user authorization; a fresh process does not reset the user's limit. Verify the
+approved team, new session identity, current guidance and preflight before its
+separate search. Do not add an automatic reconnect, authenticate to test guidance,
+or queue another battle merely because a saved credential exists.
 
 For an explicitly approved roster change, finish the old BO3 checkpoint and
 preservation first. While the existing server connection confirms idle, use

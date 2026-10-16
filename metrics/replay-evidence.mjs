@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { gzip, gunzip } from 'node:zlib';
 import {acquireMetricsBattleLock,assertMetricsTeamWritable} from './catalog.mjs';
+import { previewTerminalProof, corroboratesPreviewState, validPreviewCorroboration, ownedPreviewObservation, ownedPreviewProof } from './preview-terminal.mjs';
 
 const compress = promisify(gzip), decompress = promisify(gunzip);
 const ORIGIN = 'https://replay.pokemonshowdown.com';
@@ -73,6 +74,9 @@ async function boundedJson(response, signal) {
 
 /** Read an already saved replay. This never uploads, publishes, or authenticates. */
 export async function fetchVerifiedReplay({ url, roomId, username, ownSide, outcome, fetchImpl = globalThis.fetch } = {}) {
+  return fetchReplay({ url, roomId, username, ownSide, outcome, fetchImpl });
+}
+async function fetchReplay({ url, roomId, username, ownSide, outcome, fetchImpl, previewProof }) {
   const identity = canonicalReplayUrl(url, { roomId });
   if (!normalize(username) || typeof fetchImpl !== 'function' || (ownSide !== undefined && !['p1', 'p2'].includes(ownSide))) throw bad();
   const endpoint = `${ORIGIN}/${identity.accessId}.json`, signal = AbortSignal.timeout(15000);
@@ -81,9 +85,10 @@ export async function fetchVerifiedReplay({ url, roomId, username, ownSide, outc
     if (!response?.ok || response.redirected || (response.url && response.url !== endpoint)) throw bad();
     const payload = await boundedJson(response, signal);
     if (!payload || typeof payload.log !== 'string' || ![identity.id, identity.accessId, identity.roomId].includes(payload.id)) throw bad();
-    for (const format of [payload.formatid, payload.format]) if (typeof format === 'string' && format.trim() && !FORMAT.test(normalize(format))) throw bad();
+    let formatObserved = false;
+    for (const format of [payload.formatid, payload.format]) if (typeof format === 'string' && format.trim()) { if (!FORMAT.test(normalize(format))) throw bad(); formatObserved = true; }
     const lines = [], players = {}, results = [];
-    let started = false;
+    let started = false, preview = false, gameplay = false, doubles = false;
     for (let line of payload.log.split(/\r?\n/u)) {
       line = line.replace(/((?:battle-)?gen\d+[a-z0-9]+-\d+)-[a-z0-9]+pw/gu, '$1');
       if (line.startsWith('>')) {
@@ -93,21 +98,27 @@ export async function fetchVerifiedReplay({ url, roomId, username, ownSide, outc
       if (!line.startsWith('|')) continue;
       const [, type, ...parts] = line.split('|');
       if (!PROTOCOL.has(type) && !MINOR.has(type)) continue;
-      if (type === 'tier' && !FORMAT.test(normalize(parts[0]))) throw bad();
+      if (type === 'tier') { if (!FORMAT.test(normalize(parts[0]))) throw bad(); formatObserved = true; }
+      if (type === 'gametype') { if (parts[0] !== 'doubles') throw bad(); doubles = true; }
       if (type === 'player' && ['p1', 'p2'].includes(parts[0]) && normalize(parts[1])) players[parts[0]] = normalize(parts[1]);
+      if (previewProof && type === 'player' && normalize(parts[1]) && normalize(parts[1]) !== previewProof.players[parts[0]]) throw bad();
       if (type === 'start') started = true;
+      if (type === 'teampreview') preview = true;
+      if (MINOR.has(type) || ['turn', 'upkeep', 'switch', 'drag', 'replace', 'detailschange', 'swap', 'move', 'cant', 'faint'].includes(type)) gameplay = true;
       if (type === 'win') results.push(normalize(parts.join('|')));
       if (type === 'tie') results.push(null);
       lines.push(line);
     }
     const side = ownSide ?? Object.keys(players).find(key => players[key] === normalize(username));
-    if (!started || !players.p1 || !players.p2 || !side || players[side] !== normalize(username) || results.length !== 1) throw bad();
+    if (!players.p1 || !players.p2 || !side || players[side] !== normalize(username) || results.length !== 1) throw bad();
     const winner = results[0];
+    if (previewProof && started) throw bad();
     if (winner !== null && !Object.values(players).includes(winner)) throw bad();
+    if (!started && (!previewProof || !preview || gameplay || !doubles || !formatObserved || winner === null || winner !== previewProof.winner || side !== previewProof.ownSide || players.p1 !== previewProof.players.p1 || players.p2 !== previewProof.players.p2 || roomId !== previewProof.roomId)) throw bad();
     const observedOutcome = winner === null ? 'tie' : winner === normalize(username) ? 'win' : 'loss';
     if (outcome && outcome !== 'unknown' && outcome !== observedOutcome) throw bad();
     const log = `${lines.join('\n')}\n`, logSha256 = createHash('sha256').update(log).digest('hex');
-    return { metadata: { url: identity.url, verified: true, verifiedAt: new Date().toISOString(), logSha256 }, log, outcome: observedOutcome };
+    return { metadata: { url: identity.url, verified: true, verifiedAt: new Date().toISOString(), logSha256 }, log, outcome: observedOutcome, completionKind: started ? 'started-battle' : 'preview-terminal' };
   } catch { throw bad(); }
 }
 
@@ -128,15 +139,76 @@ async function evidenceDirectory(workspace) {
   return { root, path };
 }
 
-/** Attach a verified saved replay to an existing identity without changing its private facts. */
-export async function attachVerifiedReplay({ workspace, teamId, roomId, url, fetchImpl = globalThis.fetch } = {}) {
+async function registeredReplay({ workspace, teamId, roomId, url, fetchImpl = globalThis.fetch, sessionReader } = {}) {
   if (!HASH.test(teamId)) throw bad();
   canonicalReplayUrl(url, { roomId });
-  await assertMetricsTeamWritable({workspace,teamId});
-  const { listBattles, updateBattleMetadata } = await import('./store.mjs');
+  const { listBattles } = await import('./store.mjs');
   const existing = (await listBattles({ workspace, includeArchived: true })).find(record => record.teamId === teamId && record.roomId === roomId);
   if (!existing) throw new Error('The game must already exist in the team metrics database.');
-  const replay = await fetchVerifiedReplay({ url, roomId, username: existing.username, ownSide: existing.ownSide, outcome: existing.outcome, fetchImpl });
+  let localEvidence, previewProof, previewCorroboration, previewObservation;
+  if (existing.completed && existing.turns === 0 && existing.metadata.evidence) {
+    const { readGameEvidence } = await import('./retention.mjs');
+    localEvidence = await readGameEvidence({ workspace, teamId, roomId });
+    previewObservation = localEvidence.previewObservation ?? undefined;
+    if (localEvidence.sourceKind === 'sanitized-events') previewProof = previewTerminalProof(localEvidence.events, existing, previewObservation);
+    if (previewProof && (localEvidence.observedHistory?.started === true || localEvidence.observedHistory?.progress === true)) throw bad();
+    if (previewProof && (localEvidence.observedHistory?.started !== false || localEvidence.observedHistory?.progress !== false)) {
+      if (localEvidence.complete && existing.metadata.replay?.verified && validPreviewCorroboration(localEvidence.previewCorroboration,existing)) previewCorroboration=localEvidence.previewCorroboration;
+      else {
+        if (typeof sessionReader !== 'function') throw bad();
+        const snapshot=await sessionReader();
+        if (!corroboratesPreviewState(snapshot, previewProof)) throw bad();
+        previewCorroboration={kind:'legacy-owned-session-preview',teamId,roomId,sessionId:snapshot.sessionId,snapshotSha256:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'),observedAt:new Date().toISOString(),earlierStartObservation:'unavailable'};
+      }
+    }
+  } else if (existing.completed && existing.turns === 0 && !existing.metadata.evidence && typeof sessionReader === 'function') {
+    // A failed recorder can leave a registered terminal row with no archive.
+    // Observe the existing owned client, never manufacture its missing request.
+    // This fallback cannot be enabled through any caller-supplied import flag.
+    const snapshot = await sessionReader();
+    previewObservation = ownedPreviewObservation(snapshot, existing);
+    previewProof = ownedPreviewProof(existing, previewObservation);
+    if (!previewProof) throw bad();
+    previewCorroboration = {kind:'legacy-owned-session-preview',teamId,roomId,sessionId:snapshot.sessionId,snapshotSha256:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex'),observedAt:previewObservation.observedAt,earlierStartObservation:'unavailable'};
+    const room = snapshot.rooms.find(value => String(value.id ?? '').replace(/-[a-z0-9]+pw$/u, '') === roomId);
+    const choice = room.choice;
+    const decisions = [];
+    if (choice && choice.rqid === room.state.request.rqid && choice.actions?.length === 1 && choice.actions[0]?.type === 'team') {
+      decisions.push({event:'choice',phase:'preview',turn:0,rqid:choice.rqid,status:choice.status,actions:choice.actions,
+        ...(Number.isFinite(choice.sentAt)?{at:choice.sentAt,submitted:true}:{}),...(Number.isFinite(choice.acceptedAt)?{accepted:true}:{}),
+        reason:'Recovered last observed preview choice from battle_status. Full recorder action history was unavailable; this status does not establish battle execution.',evidence:{type:'owned-session-status'}});
+    }
+    localEvidence = {sourceKind:'sanitized-events',complete:false,events:[],decisions,sheets:room.sheets??{},previewObservation};
+  }
+  const replay = await fetchReplay({ url, roomId, username: existing.username, ownSide: existing.ownSide, outcome: existing.outcome, fetchImpl, previewProof });
+  if (previewObservation && localEvidence.events.length === 0) {
+    // Preserve actual replay protocol as protocol and the status projection as
+    // a separate observation. A synthesized |request| would misstate provenance.
+    const {collectBattleEvents,decodeInput} = await import('./import.mjs');
+    const data = collectBattleEvents(decodeInput({path:'replay.json',text:JSON.stringify({id:roomId,log:replay.log})})).get(roomId);
+    if (!data || data.startedObserved || data.progressObserved || !previewTerminalProof(data.events,existing,previewObservation)) throw bad();
+    localEvidence.events=data.events;localEvidence.sheets={...data.sheets,...localEvidence.sheets};
+  }
+  return { existing, replay, localEvidence, previewProof, previewCorroboration, previewObservation };
+}
+
+/** Read-only verification bound to registered facts and hash-checked private local evidence. */
+export async function fetchRegisteredReplay(args = {}) {
+  const { replay } = await registeredReplay(args);
+  return replay;
+}
+
+/** Attach a verified saved replay to an existing identity without changing its private facts. */
+export async function attachVerifiedReplay({ workspace, teamId, roomId, url, fetchImpl = globalThis.fetch, sessionReader } = {}) {
+  await assertMetricsTeamWritable({workspace,teamId});
+  const { existing, replay, localEvidence, previewProof, previewCorroboration, previewObservation } = await registeredReplay({workspace,teamId,roomId,url,fetchImpl,sessionReader});
+  const { updateBattleMetadata } = await import('./store.mjs');
+  // Legacy recorders marked a genuine preview concession partial. Upgrade only
+  // after both the immutable local observations and saved server replay agree.
+  if (previewProof && !localEvidence.complete) {
+    const { saveGameEvidence } = await import('./retention.mjs');
+    await saveGameEvidence({ workspace, teamId, roomId, events: [...localEvidence.events, ...localEvidence.decisions], sheets: localEvidence.sheets, previewCorroboration, previewObservation });
+  }
   const release=await acquireMetricsBattleLock({workspace,teamId,roomId:roomId+'-replay'});
   try{
   const directory = await evidenceDirectory(workspace), filename = `${roomId}--${teamId}.replay.log.gz`, path = join(directory.path, filename);

@@ -84,6 +84,48 @@ test('completed canonical evidence keeps historical player identity when either 
   }
 });
 
+test('completed evidence accepts later player lifecycle observations without rewriting the battle or decision journal',async t=>{
+  const dir=await workspace(t),events=values().map((value,index)=>({...value,at:100+index}));
+  events.splice(4,0,{room:ROOM,event:'decision',phase:'preview',status:'unknown',turn:0,at:99,reason:'Preview submission history was not observed.',evidence:{type:'preview-transition',transition:'battle-start'}});
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});
+  const before=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});
+  const later=[...events,{room:ROOM,type:'player',data:['p1',''],at:200},{room:ROOM,type:'player',data:['p1','TofuRotom'],at:201}];
+  const saved=await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:later});
+  assert.equal(saved.status,'updated');assert.equal(saved.eventCount,before.events.length+2);
+  const read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});
+  assert.deepEqual(read.events.slice(0,before.events.length),before.events);assert.deepEqual(read.decisions,before.decisions);
+  assert.deepEqual(read.events.slice(-2).map(value=>value.data),[['p1',''],['p1','TofuRotom']]);
+  assert.equal((await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:later})).status,'unchanged');
+  // Receiving the same history after a reconnect does not change fact timestamps.
+  assert.equal((await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:later.map(value=>({...value,at:value.at+1000}))})).status,'unchanged');
+  assert.deepEqual((await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM})).events,read.events);
+});
+
+test('completed evidence can add missing sheets and compatible journal facts while retaining stronger existing observations',async t=>{
+  const dir=await workspace(t),selected={room:ROOM,event:'decision',phase:'preview',status:'selected',turn:0,rqid:1,at:50,actions:[{type:'team',order:[1,2,3,4]}]};
+  const events=[...values(),selected,{room:ROOM,type:'player',data:['p2',''],at:80}];
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});
+  const sheets={p2:Teams.pack([{species:'Archaludon',moves:['Protect']}])};
+  const enriched=[...values(),{...selected,at:500},{room:ROOM,event:'decision',phase:'preview',status:'sent',turn:0,rqid:1,at:501,actions:[{type:'team',order:[1,2,3,4]}]}];
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:enriched,sheets});
+  const read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});
+  assert.deepEqual(read.decisions.map(value=>value.status),['selected','sent']);assert.equal(read.decisions[0].at,50);assert.equal(read.events.at(-1).at,80);assert.equal(read.sheets.p2,Teams.pack(Teams.unpack(sheets.p2)));
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:values()});
+  assert.deepEqual((await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM})).decisions,read.decisions);
+  const conflict=[...values(),{...selected,actions:[{type:'team',order:[4,3,2,1]}]}];
+  await assert.rejects(saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:conflict}),/completed evidence differs/);
+  await assert.rejects(saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:values(),sheets:{p2:Teams.pack([{species:'Archaludon',moves:['Flash Cannon']}])}}),/completed evidence differs/);
+});
+
+test('completed evidence rejects changed battle facts and postresult gameplay instead of weakening its archive',async t=>{
+  const dir=await workspace(t);await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:values()});
+  const before=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});
+  const changed=values();changed[6]={...changed[6],data:['p1a: Golisopod','Sucker Punch','p2a: Archaludon']};
+  const shortened=values();shortened.splice(6,1);
+  for(const events of [changed,shortened,[...values(),{room:ROOM,type:'move',data:['p1a: Golisopod','Protect','p1a: Golisopod']}]])await assert.rejects(saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events}),/completed evidence differs/);
+  assert.deepEqual((await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM})).events,before.events);
+});
+
 test('corrupt canonical evidence fails reads and cleanup without deleting the source', async t => {
   const dir = await prepared(t), game = (await listBattles({ workspace: dir }))[0];
   await writeFile(join(dir, game.metadata.evidence.path), gzipSync('{}'));
