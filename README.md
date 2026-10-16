@@ -351,6 +351,12 @@ and do not require live downloads.
 | `battle_status`, `battle_wait` | Compact state, current action tokens, observed clocks and event-driven waiting on the terminal-owned session. |
 | `battle_start`, `battle_choose`, `battle_ready` | Guarded M-C BO3 search, complete doubles decisions and readiness within the authorized set limit. |
 | `battle_cancel_search`, `battle_stop` | Cancel matchmaking or close the signed-in local session. |
+| `battle_authorize_sets`, `battle_forfeit`, `battle_save_replays` | Extend an explicitly authorized allowance, forfeit an owned set, or save its completed replays. |
+| `team_metrics_register_team` | Create an exact-version team report from pasted `teamText` or a local `teamFile`. |
+| `team_metrics_sync_battles` | Append/update the live client's observations and confirm local report persistence. |
+| `team_metrics_import`, `team_metrics_import_replays` | Append saved logs or replay URLs without duplicating existing games; verified replay links appear in the report. |
+| `team_metrics_list`, `team_metrics_report`, `team_metrics_agent_report` | Find team versions and query human/agent-readable metrics. |
+| `team_metrics_game_evidence`, `team_metrics_export`, `team_metrics_finalize_bo3` | Read retained turns, export reports, and preserve/clean a reviewed completed set. |
 
 ## License
 
@@ -374,6 +380,11 @@ authorized `battle_start` call searches for one set. The team is validated and
 locked for that process. Automatic readiness only advances games inside its
 authorized BO3. `--manual-ready` disables it. No browser battle UI is needed.
 See [setup/API](showdown/README.md) and [play → conclude → update](showdown/AGENT-WORKFLOW.md).
+Battle and report tools share the same MCP server. After a game or BO3, use
+`team_metrics_sync_battles` before querying the exact team's report. The recorder's
+readiness and failures appear in `battle_status.metrics`; older running clients
+continue to use saved-log or replay imports until their next normal start.
+See the [report API](metrics/README.md) for creation, appending, querying and storage.
 Run `npm run test:all` for MCP and client tests. The original transport completed
 one authorized live BO3 on October 15, 2026. The new MCP bridge, structured state,
 Speed tool and log streaming are verified with isolated fixtures and public MCP

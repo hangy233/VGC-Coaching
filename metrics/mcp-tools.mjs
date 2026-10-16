@@ -1,6 +1,9 @@
 import {z} from 'zod';
+import {randomUUID} from 'node:crypto';
+import {join} from 'node:path';
 import {getTeamReport, listTeams, MAX_ACTIVE_TEAMS} from './store.mjs';
-import {importBattleFiles, refreshMetricsSources, registerTeamFromFile} from './import.mjs';
+import {importBattleFiles, refreshMetricsSources, registerTeamFromFile, registerTeamFromText} from './import.mjs';
+import {callLocalSession} from '../showdown/local-bridge.mjs';
 import {importReplayUrls} from './replays.mjs';
 import {exportReport, addTeamProfileLinks} from './dashboard.mjs';
 import {updateTeamReport} from './live-reports.mjs';
@@ -20,15 +23,15 @@ const filters={
   from:date.optional(),to:date.optional(),
 };
 
-export function registerMetricsTools(server,{workspace,replayImporter=importReplayUrls,bo3Finalizer=finalizeBo3}={}) {
+export function registerMetricsTools(server,{workspace,replayImporter=importReplayUrls,bo3Finalizer=finalizeBo3,call=callLocalSession}={}) {
   if (!workspace) throw new Error('A workspace is required for private team metrics.');
   const result=async action=>{
     try { return {content:[{type:'text',text:JSON.stringify(await action(),null,2)}]}; }
     catch(error) { return {isError:true,content:[{type:'text',text:error.message}]}; }
   };
-  const register=(name,description,schema,readOnly,handler,{openWorld=false,teamChoice=false}={})=>server.registerTool(name,{
-    description,inputSchema:teamChoice?z.strictObject(schema).refine(value=>Boolean(value.teamFile)!==Boolean(value.teamId),{message:'Supply exactly one of teamFile or teamId.'}):z.strictObject(schema),
-    annotations:{readOnlyHint:readOnly,destructiveHint:false,openWorldHint:openWorld,idempotentHint:readOnly},
+  const register=(name,description,schema,readOnly,handler,{openWorld=false,teamChoice=false,teamInput=false,destructive=false}={})=>server.registerTool(name,{
+    description,inputSchema:teamChoice?z.strictObject(schema).refine(value=>Boolean(value.teamFile)!==Boolean(value.teamId),{message:'Supply exactly one of teamFile or teamId.'}):teamInput?z.strictObject(schema).refine(value=>Boolean(value.teamFile)!==Boolean(value.teamText),{message:'Supply exactly one of teamFile or teamText.'}):z.strictObject(schema),
+    annotations:{readOnlyHint:readOnly,destructiveHint:destructive,openWorldHint:openWorld,idempotentHint:readOnly},
   },handler);
   register('team_metrics_list','List up to 10 active exact team versions in last-used order, sample sizes and profile metadata. Include archived versions to find recoverable older teams. Listing does not change usage order. Refreshes remembered local logs only; never logs in, searches, publishes or changes a battle.',{
     includeArchived:z.boolean().default(false),
@@ -39,9 +42,27 @@ export function registerMetricsTools(server,{workspace,replayImporter=importRepl
     includeGames:z.boolean().default(false).describe('Include per-game measured observations in addition to the compact brief and cited game IDs.'),
     maxEvidence:z.number().int().min(1).max(20).default(5).describe('Maximum supporting game references per review signal.'),
   },true,args=>result(async()=>{const refresh=await refreshMetricsSources({workspace});const brief=await getAgentTeamReport({workspace,...args});const stableReport=brief.team?.teamId?await updateTeamReport({workspace,teamId:brief.team.teamId}):null;return {...brief,stableReport,refresh};}));
-  register('team_metrics_register_team','Save a complete legal M-C team as an exact version before its first game and create its private stable report. Access marks it recently used; at most 10 team versions stay active, with older versions recoverably archived. Reads only the supplied local team file; never changes the signed-in battle team or starts a battle.',{
-    teamFile:z.string().min(1).max(2048),name:z.string().min(1).max(120).optional(),
-  },false,args=>result(()=>registerTeamFromFile({workspace,...args})));
+  register('team_metrics_register_team','Create a private stable report for a complete legal M-C team before its first game. Supply exactly one of inline teamText (Showdown export) or workspace-local teamFile. Save the returned exact teamId for later append/import and queries. Move, item or spread changes create another version; at most 10 versions stay active with recoverable archives. Never changes the signed-in battle team or starts a battle.',{
+    teamFile:z.string().min(1).max(2048).optional(),teamText:z.string().min(1).max(128*1024).optional(),name:z.string().min(1).max(120).optional(),
+  },false,args=>result(()=>args.teamText!==undefined?registerTeamFromText({workspace,...args}):registerTeamFromFile({workspace,...args})),{teamInput:true});
+  register('team_metrics_sync_battles','Append or update the existing terminal client’s observed games in its exact team report and wait for buffered recording to finish (up to 25 seconds). Returns recording status, current aggregate report and stable human/agent report paths. Duplicate syncs never add duplicate games. Optional teamId must match the locked live team. Call after a game or BO3, outside live turn/readiness deadlines, before querying or reviewing its report. Retries failed replay attachments by reading previously verified official saved URLs; never authenticates, searches, uploads replays, changes the roster or deletes logs. An older or disabled recorder returns an explicit error; saved logs and URLs can still be appended with team_metrics_import or team_metrics_import_replays.',{
+    teamId:teamId.optional(),
+  },false,args=>result(async()=>{
+    const descriptor=join(workspace,'cache','showdown-session.json');
+    const invoke=async op=>{
+      const reply=await call(descriptor,{id:randomUUID(),op});
+      if(!reply?.ok)throw new Error((reply?.error||'Live metrics are unavailable')+'. No recording completion was confirmed; use saved-log/replay import for older clients.');
+      return reply.result;
+    };
+    const before=await invoke('metrics-status');
+    if(!before?.enabled||!before.teamId)throw new Error('Live metrics recording is disabled or unavailable; append saved logs or replay URLs instead.');
+    if(args.teamId&&before.teamId!==args.teamId)throw new Error('Requested report does not match the locked live team; no metrics sync was requested.');
+    const recording=await invoke('metrics-sync');
+    if(!recording?.enabled||recording.teamId!==before.teamId||recording.state!=='ready'||recording.lastError)throw new Error('Live metrics recording did not confirm a complete local flush. Inspect battle_status.metrics and retain the local logs.');
+    const report=await getTeamReport({workspace,teamId:recording.teamId});
+    const stableReport=await updateTeamReport({workspace,teamId:recording.teamId});
+    return {teamId:recording.teamId,recording,report,stableReport};
+  }),{openWorld:true});
   register('team_metrics_game_evidence','Read retained compact evidence for one exact team/game, optionally by turn range. Works after redundant local logs are cleaned. Returns sanitized protocol, known sheets and available decision observations; a public replay alone does not recover private selections or intent. No replay upload, authentication or battle control.',{
     teamId,roomId:z.string().regex(/^battle-[a-z0-9]+-\d+$/),
     fromTurn:z.number().int().min(0).max(10000).optional(),toTurn:z.number().int().min(0).max(10000).optional(),
@@ -52,14 +73,14 @@ export function registerMetricsTools(server,{workspace,replayImporter=importRepl
     cleanupFiles:z.array(z.string().min(1).max(2048)).max(100).default([]),
     closedFiles:z.array(z.string().min(1).max(2048)).max(100).default([]).describe('Exact listed cleanup files whose separate writer is known to have closed. Needed for cleanup while the client stays open; never overrides active/shared source protections.'),
     dryRun:z.boolean().default(true),confirmed:z.literal(true).optional(),saveReplays:z.boolean().default(false),
-  },false,args=>result(()=>bo3Finalizer({workspace,...args})),{openWorld:true});
+  },false,args=>result(()=>bo3Finalizer({workspace,...args})),{openWorld:true,destructive:true});
   register('team_metrics_import','Import existing local Showdown protocol/event logs into the private metrics store. Paths must resolve inside this workspace. Requires the owner username and exactly one of a saved teamId or a complete teamFile. Saved IDs resolve the immutable validated team snapshot. Optional ledger flags operational games and official set results. Reads no credentials and performs no battle or network actions.',{
     files:z.array(z.string().min(1).max(2048)).min(1).max(20),
     username:z.string().min(1).max(30),teamFile:z.string().min(1).max(2048).optional(),teamId:teamId.optional(),
     ledgerFile:z.string().min(1).max(2048).optional(),name:z.string().min(1).max(120).optional(),
     remember:z.boolean().default(true).describe('Remember these workspace-local source paths and refresh their metrics when list/report/export is requested.'),
   },false,args=>result(()=>importBattleFiles({workspace,...args})),{teamChoice:true});
-  register('team_metrics_import_replays','Read existing Pokémon Showdown replay URLs and import their protocol metrics into an exact local team version. Requires the owner username and exactly one of a saved teamId or complete local M-C teamFile. Saved IDs use the immutable validated snapshot, so the original export is not needed again. Fetches only supported replay endpoints; never publishes a replay, authenticates or queues a battle. Private replay access URLs are not returned or remembered.',{
+  register('team_metrics_import_replays','Append existing Pokémon Showdown replay URLs to an exact local team report. Reimporting a room updates its row without adding a duplicate. Requires the owner username and exactly one of saved teamId or complete local M-C teamFile. Verified completed replay links and compact evidence are retained in the private report, including private access suffixes; sharing a report shares those links. Fetches only supported replay endpoints; never publishes a replay, authenticates or queues a battle.',{
     urls:z.array(z.string().min(1).max(2048)).min(1).max(20),
     username:z.string().min(1).max(30),teamFile:z.string().min(1).max(2048).optional(),teamId:teamId.optional(),
     ledgerFile:z.string().min(1).max(2048).optional(),name:z.string().min(1).max(120).optional(),

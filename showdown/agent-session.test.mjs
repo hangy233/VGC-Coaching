@@ -19,6 +19,44 @@ function fixture({autoReady=true,authorizedSets=1,...replayOptions}={}) {
     client.receive(`>${parent}\n|uhtml|game|<a href="/${room}">Game 1</a>`);return result;
   }};
 }
+
+test('metrics IPC exposes safe status and flushes local observations without blocking battle actions',async()=>{
+  const f=fixture();let finishSync,flushes=0;
+  const state={enabled:true,teamId:f.client.expectedTeamHash,state:'pending',pending:1,lastSavedAt:null,lastError:null,stableReport:null};
+  const recorder={status:()=>({...state}),flush:async options=>{
+    assert.deepEqual(options,{savePending:true});flushes++;
+    await new Promise(resolve=>{finishSync=resolve;});
+    return {...state,state:'ready',pending:0,stableReport:{teamId:state.teamId,path:'synthetic-report.html'}};
+  }};
+  try{
+    assert.equal(f.session.snapshot().metrics.enabled,false);
+    assert.match((await f.session.execute({id:'disabled-sync',op:'metrics-sync'})).error,/unavailable/);
+    f.session.attachMetricsRecorder(recorder);
+    const syncing=f.session.execute({id:'flush-once',op:'metrics-sync'});await Promise.resolve();await Promise.resolve();
+    assert.equal(f.session.snapshot().metrics.state,'pending');
+    const status=await f.session.execute({id:'read-metrics',op:'metrics-status'});
+    assert.equal(status.ok,true);assert.equal(status.result.teamId,state.teamId);
+    // A slow derived report never serializes deadline-sensitive commands.
+    assert.equal((await f.start()).ok,true);f.request();
+    const action=f.session.snapshot().actions[0];
+    assert.equal((await f.session.execute({id:'choose-during-sync',op:'choose',confirmed:true,token:action.token,actions:[{type:'move',slot:1},{type:'move',slot:1}]})).ok,true);
+    finishSync();const reply=await syncing;
+    assert.equal(reply.ok,true);assert.equal(reply.result.state,'ready');
+    assert.deepEqual(await f.session.execute({id:'flush-once',op:'metrics-sync'}),reply);assert.equal(flushes,1);
+    assert(!f.sent.some(line=>/metrics|report/.test(line)));
+  }finally{finishSync?.();f.session.dispose();}
+});
+
+test('metrics sync cannot claim success for failed recording or a mismatched team',async()=>{
+  const f=fixture();
+  try{
+    assert.throws(()=>f.session.attachMetricsRecorder({status:()=>({teamId:'a'.repeat(64)}),flush(){}}),/differs from the approved/);
+    f.session.attachMetricsRecorder({status:()=>({enabled:true,teamId:f.client.expectedTeamHash,state:'error'}),flush:async()=>({state:'error'})});
+    const reply=await f.session.execute({id:'failed-sync',op:'metrics-sync'});
+    assert.equal(reply.ok,false);assert.match(reply.error,/persistence is not confirmed/);
+    assert.equal(f.sent.length,0);
+  }finally{f.session.dispose();}
+});
 test('one authorized search, fixed team, explicit control and idempotent commands',async()=>{
   const f=fixture();assert.equal((await f.session.execute({id:'no',op:'start'})).ok,false);
   assert((await f.start()).ok);assert((await f.start()).ok);

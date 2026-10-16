@@ -30,14 +30,19 @@ export async function loadMetricsTeam({workspace,teamFile,teamId:requestedId,nam
   if(requestedId&&!/^[a-f0-9]{64}$/.test(requestedId))throw new Error('Use an exact saved team fingerprint');
   if(requestedId)teamFile='cache/team-metrics/teams/'+requestedId+'.txt';
   const input=await readWorkspaceFile(workspace,teamFile,{extensions:['.txt']});
-  const team=Teams.import(input.text);
-  if(!team||team.length!==6)throw new Error('Metrics require a complete six-Pokemon team');
-  const problems=new TeamValidator('gen9championsvgc2026regmc').validateTeam(team);
-  if(problems?.length)throw new Error('Metrics team failed M-C validation: '+problems.join('; '));
-  const teamId=createHash('sha256').update(Teams.pack(team)).digest('hex');
+  const {team,teamId}=validateMetricsTeam(input.text);
   if(requestedId&&teamId!==requestedId)throw new Error('Saved team snapshot does not match its fingerprint');
   const known=(await listTeams({workspace,includeArchived:true})).find(t=>t.teamId===teamId);
   return {team,teamId,teamFile:input.relative,descriptor:{name:name||known?.name||basename(teamFile,'.txt'),format:'gen9championsvgc2026regmc',roster:team.map(p=>p.species)}};
+}
+
+function validateMetricsTeam(text) {
+  if(typeof text!=='string'||!text.trim()||Buffer.byteLength(text,'utf8')>128*1024)throw new Error('Supply a team export no larger than 128 KiB');
+  const team=Teams.import(text);
+  if(!team||team.length!==6)throw new Error('Metrics require a complete six-Pokemon team');
+  const problems=new TeamValidator('gen9championsvgc2026regmc').validateTeam(team);
+  if(problems?.length)throw new Error('Metrics team failed M-C validation: '+problems.join('; '));
+  return {team,teamId:createHash('sha256').update(Teams.pack(team)).digest('hex')};
 }
 
 /** Keep a private immutable export so a saved version survives edits to its source. */
@@ -76,6 +81,16 @@ export async function registerTeamFromFile({workspace,teamFile,name}={}) {
   await registerMetricsTeam({workspace,teamId:registration.teamId,...registration.descriptor});
   const stableReport=await ensureTeamReport({workspace,teamId:registration.teamId});
   return {teamId:registration.teamId,team:registration.descriptor,savedTeamFile,stableReport};
+}
+
+/** MCP callers can register a pasted team without creating an intermediate file. */
+export async function registerTeamFromText({workspace,teamText,name}={}) {
+  const {team,teamId}=validateMetricsTeam(teamText);
+  const known=(await listTeams({workspace,includeArchived:true})).find(value=>value.teamId===teamId);
+  const descriptor={name:name||known?.name||'M-C team',format:'gen9championsvgc2026regmc',roster:team.map(p=>p.species)};
+  const savedTeamFile=await saveMetricsTeamSnapshot({workspace,teamId,team});
+  await registerMetricsTeam({workspace,teamId,...descriptor});
+  return {teamId,team:descriptor,savedTeamFile,stableReport:await ensureTeamReport({workspace,teamId})};
 }
 
 function safeRequest(request) {

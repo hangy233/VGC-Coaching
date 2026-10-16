@@ -83,7 +83,19 @@ logs while it lacks support; do not restart or authenticate merely to test it.
 
 ### Read the exact team's metrics
 
-After the parent ends, call `team_metrics_agent_report` for the session's locked
+After the parent ends and any authorized replay saving finishes, call
+`team_metrics_sync_battles` with the locked `teamId` to append/update the current
+client's observations and await buffered local recording. Check its recording
+status and `battle_status.metrics`; an error, timeout or replay-save response
+alone does not confirm that report rows and evidence are durable. Sync can retry
+reading previously verified saved replay URLs, but sends no battle action or
+replay upload. With an older or disabled recorder, append
+saved logs through `team_metrics_import` or saved replay URLs through
+`team_metrics_import_replays`, retaining failures explicitly. These are MCP tools;
+do not restart or authenticate merely to gain live sync. Verify imported replay
+links against the matching game rows before treating replay coverage as complete.
+
+Then call `team_metrics_agent_report` for the session's locked
 team ID. Confirm the returned full cached team sheet matches that version; the
 current team file or most recently used report may belong to another version.
 If the snapshot is missing or invalid, use the verified locked team and record

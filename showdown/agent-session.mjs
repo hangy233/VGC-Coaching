@@ -129,6 +129,7 @@ export class AgentSession extends EventEmitter {
       sessionId:this.id,revision:this.revision,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,
       username:this.username,teamSha256:this.client.expectedTeamHash,authorizedSets:this.authorizedSets,searchesSent:this.searchesSent,autoReady:this.autoReady,
       savingReplays:this.savingReplays,
+      metrics:this.metricsStatus(),
       search:this.client.searchState || null,cancellation:this.cancellation || null,actions:this.actions(),notices:this.notices,
       rooms:[...this.client.rooms.values()].filter(r=>this.ownedRooms.has(r.id)).map(r=>({
         id:r.id,ended:r.ended,result:r.result || null,children:r.children,sheets:r.sheets,
@@ -137,6 +138,27 @@ export class AgentSession extends EventEmitter {
         forfeit:r.forfeitPending || null,
       })),
     };
+  }
+  attachMetricsRecorder(recorder) {
+    check(!this.metricsRecorder,'A metrics recorder is already attached');
+    check(typeof recorder?.status==='function' && typeof recorder?.flush==='function','Metrics recorder must expose status and flush');
+    check(recorder.status().teamId===this.client.expectedTeamHash,'Metrics recorder differs from the approved fixed team');
+    this.metricsRecorder=recorder;
+    this.detachMetrics=recorder.onChange?.(()=>this.emit('change',{revision:++this.revision,event:'metrics'}));
+  }
+  metricsStatus() {
+    return this.metricsRecorder?.status()||{enabled:false,teamId:this.client.expectedTeamHash,state:'disabled',pending:0,lastSavedAt:null,lastError:null,stableReport:null,message:'Live metrics recording is unavailable in this session. Use report imports or enable recording on the next normal client start.'};
+  }
+  async syncMetrics() {
+    check(this.metricsRecorder,'Live metrics recording is unavailable in this session; use report imports or enable recording on the next normal client start');
+    let timer;
+    try {
+      const result=await Promise.race([this.metricsRecorder.flush({savePending:true}),new Promise((_resolve,reject)=>{
+        timer=setTimeout(()=>reject(new Error('Metrics sync did not finish within 25 seconds. Recording continues in the background; inspect metrics status before cleanup.')),25000);
+      })]);
+      check(result.state!=='error' && result.state!=='closed','Team metrics persistence is not confirmed. Retain local battle evidence and inspect metrics status before cleanup.');
+      return result;
+    } finally {clearTimeout(timer);}
   }
   async wait({afterRevision = this.revision, timeoutMs = 25000, signal} = {}) {
     check(Number.isInteger(afterRevision) && afterRevision >= 0, 'Invalid revision');
@@ -153,6 +175,7 @@ export class AgentSession extends EventEmitter {
   execute(command, {signal} = {}) {
     if (!command || typeof command.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(command.id)) return Promise.resolve({ok:false,error:'A unique command id is required'});
     if (command.op === 'status') return Promise.resolve({id:command.id,ok:true,result:this.snapshot()});
+    if (command.op === 'metrics-status') return Promise.resolve({id:command.id,ok:true,result:this.metricsStatus()});
     // Long polling is read-only and can be cancelled independently of other calls.
     if (command.op === 'wait') return this.wait({...command,signal}).then(result=>({id:command.id,ok:true,result}));
     if (this.commands.has(command.id)) return this.commands.get(command.id);
@@ -201,6 +224,8 @@ export class AgentSession extends EventEmitter {
   dispatch({op,confirmed,token,actions,room,additionalSets,validForMs = 10000}) {
     const c = this.client;
     if (op === 'status') return this.snapshot();
+    // Local observation persistence grants no socket, login, roster or search authority.
+    if (op === 'metrics-sync') return this.syncMetrics();
     check(confirmed === true, 'Explicit session control confirmation required');
     if (op === 'stop') { this.stopped=true;c.close();this.revision++;this.emit('change',{revision:this.revision,event:'stopped'});return {stopped:true}; }
     this.assertLive();
@@ -252,6 +277,7 @@ export class AgentSession extends EventEmitter {
     return c.choose(action.room,{rqid:action.rqid,revision:action.revision,actions,deadlineAt});
   }
   dispose() {
+    this.detachMetrics?.();this.detachMetrics=null;
     for (const [event,listener] of this.listeners) this.client.off(event,listener);
     this.listeners=[];this.stopped=true;this.emit('change',{revision:++this.revision,event:'disposed'});
   }

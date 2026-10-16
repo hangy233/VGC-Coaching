@@ -177,6 +177,10 @@ test('login is terminal-only, publishes local controls afterward, streams events
     assert.equal(reply.result.authenticated,true);assert.equal(reply.result.searchesSent,0);
     assert.equal(reply.result.authorizedSets,1);assert.equal(reply.result.autoReady,true);
     assert.match(reply.result.teamSha256,/^[a-f0-9]{64}$/);
+    assert.equal(reply.result.metrics.enabled,true);assert.equal(reply.result.metrics.teamId,reply.result.teamSha256);
+    const synced=await callLocalSession(f.descriptorPath,{id:'metrics-initialize',op:'metrics-sync'});
+    assert.equal(synced.ok,true);assert.equal(synced.result.state,'ready');assert.equal(synced.result.stableReport.games,0);
+    assert.match(await readFile(synced.result.stableReport.path,'utf8'),/<!doctype html>/i);
     assert.deepEqual(f.client().commands,[]); // Signing in must not search or upload.
     await assert.rejects(f.client().connect(),/new user-operated login/);
     const room='battle-gen9championsvgc2026regmcbo3-321';

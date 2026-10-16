@@ -6,16 +6,37 @@ import {saveGameEvidence} from './retention.mjs';
 import {attachVerifiedReplay} from './replay-evidence.mjs';
 
 /** Observation only: no socket, authentication, commands, or battle decisions. */
-export function attachMetricsRecorder(client,{workspace,username,teamId,team,name='Team',session,onError=()=>{}}={}) {
-  const buffers=new Map(),listeners=[];let chain=Promise.resolve(),disposed=false;
+export function attachMetricsRecorder(client,{workspace,username,teamId,team,name='Team',session,onError=()=>{},replayAttacher=attachVerifiedReplay}={}) {
+  const buffers=new Map(),listeners=[],parentResults=new Map(),failures=new Map(),observers=new Set(),verifiedReplayUrls=new Map(),activeReplays=new Set();
+  let chain=Promise.resolve(),disposed=false,initialized=false,pending=0,lastSavedAt=null,stableReport=null;
+  const status=()=>({enabled:true,teamId,state:failures.size?'error':disposed?'closed':pending?'pending':initialized?'ready':'initializing',pending,lastSavedAt,lastError:[...failures.values()].at(-1)||null,stableReport});
+  const notify=()=>{for(const observer of observers)try{observer(status());}catch{}};
+  const enqueue=(key,operation)=>{
+    pending++;notify();
+    chain=chain.then(operation).then(()=>{failures.delete(key);lastSavedAt=new Date().toISOString();},()=>{
+      failures.set(key,{operation:key,at:new Date().toISOString(),message:'Team metrics could not be saved. Retain local battle evidence and retry metrics sync.'});
+      try{onError();}catch{}
+    }).finally(()=>{pending--;notify();});
+    return chain;
+  };
+  const attachReplay=(roomId,url)=>{
+    if(activeReplays.has(roomId))return;
+    activeReplays.add(roomId);
+    enqueue('replay:'+roomId,async()=>{
+      // This rereads an already saved replay; it never requests another upload.
+      await replayAttacher({workspace,teamId,roomId,url});
+      stableReport=await updateTeamReport({workspace,teamId});
+    }).finally(()=>activeReplays.delete(roomId));
+  };
   // Team registration creates an empty version report without queuing a battle.
-  chain=chain.then(async()=>{
+  const initialize=()=>enqueue('register-team',async()=>{
     // Production sessions provide a validated six-Pokémon export. Retain it so
     // later replay imports can refer to this exact version by its saved ID.
     if(team.length===6)await saveMetricsTeamSnapshot({workspace,teamId,team});
     await registerMetricsTeam({workspace,teamId,name,format:'gen9championsvgc2026regmc',roster:team.map(p=>p.species)});
-    await updateTeamReport({workspace,teamId});
-  }).catch(()=>onError());
+    stableReport=await updateTeamReport({workspace,teamId});initialized=true;
+  });
+  initialize();
   const owned=room=>!session||session.ownedRooms.has(client.resolveRoom?.(room)||room);
   const get=room=>{const id=canonicalRoom(room);if(!/^battle-/.test(id)||!owned(room))return null;if(!buffers.has(id))buffers.set(id,{roomId:id,events:[],truncated:false});return buffers.get(id);};
   const on=(event,handler)=>{client.on(event,handler);listeners.push([event,handler]);};
@@ -23,17 +44,19 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
   const save=(b,parentResult)=>{
     const events=[...b.events],roomId=b.roomId;
     const parent=[...(session?.roomParents||[])].find(([child])=>canonicalRoom(child)===roomId)?.[1]||null;
-    const data=collectBattleEvents(events).get(roomId);if(!data)return;
-    const record=analyzeBattle({roomId,username,teamId,team,events:data.events,parentId:parent?canonicalRoom(parent):null,metadata:{source:'live-client',operational:!!b.operational}});
-    record.team={name,format:'gen9championsvgc2026regmc',roster:team.map(p=>p.species)};
-    record.metadata={...(record.metadata||{}),sources:['live-client'],...(parentResult?{setResult:parentResult}:{})};
-    if(b.operational){record.quality.operational=true;record.quality.warnings.push('Observed inactivity or submission failure; excluded from default team comparisons.');}
-    if(b.truncated){record.quality.complete=false;record.quality.warnings.push('Recorder event limit reached; partial observations only.');}
-    chain=chain.then(async()=>{
+    const officialResult=parentResult||parentResults.get(canonicalRoom(parent));
+    const operational=!!b.operational,truncated=b.truncated;
+    enqueue('battle:'+roomId,async()=>{
+      const data=collectBattleEvents(events).get(roomId);if(!data)return;
+      const record=analyzeBattle({roomId,username,teamId,team,events:data.events,parentId:parent?canonicalRoom(parent):null,metadata:{source:'live-client',operational}});
+      record.team={name,format:'gen9championsvgc2026regmc',roster:team.map(p=>p.species)};
+      record.metadata={...(record.metadata||{}),sources:['live-client'],...(officialResult?{setResult:officialResult}:{})};
+      if(operational){record.quality.operational=true;record.quality.warnings.push('Observed inactivity or submission failure; excluded from default team comparisons.');}
+      if(truncated){record.quality.complete=false;record.quality.warnings.push('Recorder event limit reached; partial observations only.');}
       const saved=await saveBattle({workspace,record});
       if(record.completed&&/^battle-gen9championsvgc2026regmc(?:bo3)?-\d+$/.test(roomId))await saveGameEvidence({workspace,teamId,roomId,events,sheets:client.state?.(roomId)?.sheets});
-      if(saved.status!=='unchanged')await updateTeamReport({workspace,teamId});
-    }).catch(()=>onError());
+      if(saved.status!=='unchanged'||!stableReport||failures.has('battle:'+roomId))stableReport=await updateTeamReport({workspace,teamId});
+    });
   };
   on('request',value=>{
     append(value.room,{event:'request',request:value.request});
@@ -69,6 +92,8 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
       const own=String(username).toLowerCase().replace(/[^a-z0-9]/g,'');
       const winner=String(value.winner||'').toLowerCase().replace(/[^a-z0-9]/g,'');
       const result={outcome:value.type==='tie'?'tie':winner===own?'win':'loss',completed:true};
+      if(!owned(value.room))return;
+      parentResults.set(canonicalRoom(value.room),result);
       queueMicrotask(()=>{if(disposed)return;for(const b of buffers.values()){
         const parent=[...(session?.roomParents||[])].find(([child])=>canonicalRoom(child)===b.roomId)?.[1];
         if(canonicalRoom(parent)===canonicalRoom(value.room))save(b,result);
@@ -78,11 +103,26 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
   on('timer',value=>{if(/lost due to inactivity|disconnected.*lost|inactivity.*loss/i.test(value.text||'')){const b=get(value.room);if(b)b.operational=true;}});
   on('replay-verified',value=>{
     const b=get(value.roomId||value.room);if(!b)return;
-    chain=chain.then(async()=>{await attachVerifiedReplay({workspace,teamId,roomId:b.roomId,url:value.url});await updateTeamReport({workspace,teamId});}).catch(()=>onError());
+    // Private replay capabilities remain in memory and the canonical replay
+    // metadata only; status/errors expose no URL and retry needs no client event.
+    verifiedReplayUrls.set(b.roomId,value.url);attachReplay(b.roomId,value.url);
   });
   on('disconnected',()=>{for(const b of buffers.values())save(b);});
   return {
-    async flush(){await chain;},
-    async close(){disposed=true;for(const [event,handler]of listeners)client.off(event,handler);for(const b of buffers.values())save(b);await chain;},
+    status,
+    onChange(observer){observers.add(observer);return()=>observers.delete(observer);},
+    async flush({savePending=false}={}){
+      // The parent's result callback precedes its protocol event. Drain that
+      // microtask before capturing the queue so an immediate MCP sync includes it.
+      await Promise.resolve();
+      let observed;do{observed=chain;await observed;}while(observed!==chain);
+      if(savePending){
+        if(!initialized)initialize();for(const b of buffers.values())save(b);
+        for(const [roomId,url]of verifiedReplayUrls)if(failures.has('replay:'+roomId))attachReplay(roomId,url);
+        do{observed=chain;await observed;}while(observed!==chain);
+      }
+      return status();
+    },
+    async close(){disposed=true;for(const [event,handler]of listeners)client.off(event,handler);for(const b of buffers.values())save(b);let observed;do{observed=chain;await observed;}while(observed!==chain);notify();observers.clear();},
   };
 }

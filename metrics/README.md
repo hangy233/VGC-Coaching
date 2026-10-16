@@ -28,7 +28,8 @@ After rebuilding and reloading the MCP server, use:
 | Tool | Purpose |
 | --- | --- |
 | `team_metrics_list` | List stored team versions and sample sizes. |
-| `team_metrics_register_team` | Save a legal team export as an exact version and create its report before its first game. |
+| `team_metrics_register_team` | Create a report from inline `teamText` or a local `teamFile`, returning its exact version ID. |
+| `team_metrics_sync_battles` | Append/update the existing client's observed games, await local recording, and return its report and recording status. |
 | `team_metrics_import` | Import saved local logs using owner username, a saved team ID or team export, and optional result ledger. |
 | `team_metrics_import_replays` | Read existing Showdown replay URLs and add their metrics to a saved team ID or supplied team export. |
 | `team_metrics_report` | Return the team's aggregate metrics and included game summaries. |
@@ -37,13 +38,17 @@ After rebuilding and reloading the MCP server, use:
 | `team_metrics_finalize_bo3` | Retain a completed set's useful evidence, attach verified replay links, and dry-run or apply bounded cleanup after its review checkpoint. |
 | `team_metrics_export` | Save a standalone HTML dashboard, CSV or JSON report. |
 
-Report filters are `teamId`, `opponentSpecies`, `selectedSpecies`, `outcome`, `from`, `to`, `includeIncomplete` and `includeOperational`. Omit `teamId` only when exactly one active team exists. Filters recompute the report, including its sample sizes. List results expose active/archived status, last-used order, capacity and profile links; use `includeArchived: true` to find older versions. Imports require exactly one of `teamId` or `teamFile`; registration requires `teamFile`. Imported files must resolve inside the workspace. No metrics tool authenticates, queues a battle or reads saved credentials. Confirmed BO3 finalization can request replay saving through the existing signed-in battle client when `saveReplays: true`; it preserves the room's current privacy.
+Report filters are `teamId`, `opponentSpecies`, `selectedSpecies`, `outcome`, `from`, `to`, `includeIncomplete` and `includeOperational`. Omit `teamId` only when exactly one active team exists. Filters recompute the report, including its sample sizes. List results expose active/archived status, last-used order, capacity and profile links; use `includeArchived: true` to find older versions. Imports require exactly one of `teamId` or `teamFile`; registration requires exactly one of inline `teamText` or local `teamFile`. Imported files must resolve inside the workspace. No metrics tool authenticates, queues a battle or reads saved credentials. Confirmed BO3 finalization can request replay saving through the existing signed-in battle client when `saveReplays: true`; it preserves the room's current privacy.
+
+Battle control, report creation, append/import and report queries are registered together in this repository's MCP. For a new team, call `team_metrics_register_team` with its pasted Showdown export as `teamText`; keep the returned `teamId`. Registration never changes the terminal client's locked team. After a game or BO3 on an updated client, call `team_metrics_sync_battles({teamId: LOCKED_TEAM_ID})` outside action deadlines. This flushes the observer's buffered games and official results, then returns the current report and stable human/agent paths. Repeating it updates the same game identities. A different requested ID is rejected before syncing.
+
+`battle_status.metrics` exposes recorder readiness, pending work, last successful save and safe persistence errors. Sync waits at most 25 seconds; failure or timeout does not confirm durable recording, and logs must be retained. It retries failed replay attachments by reading their previously verified official saved URLs; it performs no replay upload or battle action. After authorized `battle_save_replays`, sync and check each report row's verified replay link; a save response alone does not confirm report attachment. If the recorder is disabled, unavailable or from an older running client, use the existing local-log or replay-URL import tools instead. Source changes never reload a signed-in process.
 
 Register or import your legal team export once. A validated immutable snapshot is saved under `cache/team-metrics/teams/<teamId>.txt`. Later imports can use that saved ID with a replay URL or local log; you do not need to paste or export the team again. Editing the original file does not change the cached version. A changed move, item or spread belongs to another exact team ID.
 
 Imports remember their local source paths by default. List/report/agent-report/export refresh those logs before reading metrics, so an already open client that appends its event log can contribute new games without a login or client restart. Refresh failures appear as warnings; they do not silently erase existing records. Use `remember: false` in MCP or `--no-remember` in CLI to avoid registering a source.
 
-Future sessions started with the updated lightweight client's `runSession` also record private summaries automatically. The current open client's source is unchanged; its remembered logs refresh when queried. Automatic recording is observation-only and never starts or extends a battle batch.
+Sessions started with the updated lightweight client's `runSession` record private summaries automatically and expose recording status/sync through MCP. An older open client's source is unchanged; its remembered logs still refresh when queried. Automatic recording is observation-only and never starts or extends a battle batch.
 
 ## Reading reports as an agent
 
@@ -87,7 +92,7 @@ Full private replay URLs can grant access to a private battle. They stay in igno
 - Client `.jsonl` event streams: protocol events, private requests used to establish your own selected four, and observed team sheets.
 - Saved raw `.log` or `.txt` Showdown protocol: `|player|`, `|move|`, damage and result lines. `>battle-room-id` headers identify rooms; otherwise the filename must supply the room ID.
 - Saved replay `.json` files containing an `id` and protocol `log` string. Import an already saved file; no replay is fetched or published.
-- Existing URLs on `https://replay.pokemonshowdown.com/`, supplied to the replay import tool or CLI `--url`. Only the supported replay data endpoint is fetched. This reads an already saved replay and never publishes one. Private access suffixes are not returned or remembered as source URLs.
+- Existing URLs on `https://replay.pokemonshowdown.com/`, supplied to the replay import tool or CLI `--url`. Only the supported replay data endpoint is fetched. This reads an already saved replay and never publishes one. Verified completed replay links and compressed evidence are saved in private game metadata and reports; this includes private access suffixes. Source-cache protocol and evidence omit those suffixes. No URL polling source is registered.
 
 Every import requires the owner's username and exactly one of a saved team ID or a complete legal six-Pokémon M-C team export. The saved ID resolves the full validated snapshot, including moves, items and training; catalog names and rosters alone are not used to reconstruct a team. Supply a result ledger when available for official parent-set outcomes and operational flags. One import accepts 1–20 files or URLs. Reimporting the same room/team updates its summary without adding another game. A partial import cannot replace stronger complete observations.
 

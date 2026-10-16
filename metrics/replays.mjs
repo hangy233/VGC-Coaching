@@ -2,6 +2,9 @@ import {createHash, randomUUID} from 'node:crypto';
 import {lstat, mkdir, readFile, realpath, rename, rm, writeFile} from 'node:fs/promises';
 import {isAbsolute, join, relative, sep} from 'node:path';
 import {importBattleFiles, loadMetricsTeam, readWorkspaceFile} from './import.mjs';
+import {attachVerifiedReplay, fetchVerifiedReplay} from './replay-evidence.mjs';
+import {updateTeamReport} from './live-reports.mjs';
+import {listBattles} from './store.mjs';
 
 const ORIGIN = 'https://replay.pokemonshowdown.com';
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -116,6 +119,13 @@ async function downloadReplay(identity, {fetchImpl, username, budget}) {
   }
 }
 
+// The official response was already fetched within the batch budget. Reuse only
+// its sanitized protocol when verifying and retaining evidence; never download
+// the same replay again merely to attach its saved URL to the report.
+function cachedReplayFetcher(replay) {
+  return async () => new Response(JSON.stringify({id: replay.id, log: replay.log}), {headers: {'Content-Type': 'application/json'}});
+}
+
 function contained(root, path) {
   const rel = relative(root, path);
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
@@ -183,8 +193,9 @@ async function writeCachedReplay(directory, replay, path) {
   return relative(directory.root, path).replaceAll('\\', '/');
 }
 
-/** Import explicitly supplied saved replay URLs. There is no replay publication,
- * authentication, watch-room joining, background polling or persistent URL list. */
+/** Import explicitly supplied saved replay URLs without publication or login.
+ * Verified links live only in private game metadata; cached protocol is stripped
+ * of replay capabilities and never becomes a background polling source. */
 export async function importReplayUrls({workspace, urls, username, teamFile, teamId, name, ledgerFile, fetchImpl = globalThis.fetch} = {}) {
   if (!Array.isArray(urls) || !urls.length || urls.length > 20) throw new Error('Supply 1–20 saved replay URLs.');
   if (typeof fetchImpl !== 'function') throw new Error('Replay fetching is unavailable.');
@@ -201,19 +212,45 @@ export async function importReplayUrls({workspace, urls, username, teamFile, tea
     const ledger = await readWorkspaceFile(workspace, ledgerFile, {extensions: ['.json']});
     try { JSON.parse(ledger.text); } catch { throw new Error('Invalid metrics ledger JSON.'); }
   }
+  const existing = new Map((await listBattles({workspace, includeArchived: true}))
+    .filter(record => record.teamId === registration.teamId).map(record => [record.roomId, record]));
   const budget = AbortSignal.timeout(30000), replays = [];
   // Validate every download before writing any cache or metric record. One failed
   // fetch cannot leave an apparently successful partial batch behind.
   for (const identity of identities.values()) {
     if (budget.aborted) throw genericFailure();
-    replays.push(await downloadReplay(identity, {fetchImpl, username, budget}));
+    const replay = await downloadReplay(identity, {fetchImpl, username, budget});
+    if (completeness(replay).complete) {
+      // Check a terminal replay before publishing any batch records. This also
+      // rejects conflicting results and an unrelated winner, rather than adding
+      // a report row before discovering that its evidence cannot be verified.
+      try {
+        const previous = existing.get(`battle-${replay.id}`);
+        const verified = await fetchVerifiedReplay({url: `${ORIGIN}/${identity.accessId}`, username,
+          ownSide: previous?.ownSide, outcome: previous?.outcome, fetchImpl: cachedReplayFetcher(replay)});
+        if (previous?.metadata.replay && previous.metadata.replay.logSha256 !== verified.metadata.logSha256) throw genericFailure();
+      }
+      catch { throw genericFailure(); }
+    }
+    replays.push(replay);
   }
   const directory = await replayDirectory(workspace), files = [];
   for (const replay of replays) files.push(await cacheReplay(directory, replay));
   const teamReference = teamId === undefined ? {teamFile: registration.teamFile} : {teamId: registration.teamId};
   const imported = await importBattleFiles({workspace, files, username, ...teamReference, name: name ?? registration.descriptor.name,
     ledgerFile, remember: false, expectedTeamId: registration.teamId});
+  const attached = [];
+  for (const battle of imported.battles) {
+    const replay = replays.find(value => battle.roomId === `battle-${value.id}`);
+    if (!replay || !completeness(replay).complete) continue;
+    const identity = identities.get(replay.id);
+    const saved = await attachVerifiedReplay({workspace, teamId: imported.teamId, roomId: battle.roomId,
+      url: `${ORIGIN}/${identity.accessId}`, fetchImpl: cachedReplayFetcher(replay)});
+    attached.push(saved);
+    if (battle.record) battle.record = {...battle.record, metadata: {...battle.record.metadata, replay: saved.replay}};
+  }
+  if (attached.length) imported.stableReport = await updateTeamReport({workspace, teamId: imported.teamId});
   const replayWarnings = replays.filter(replay => !replay.formatConfirmed).map(replay => ({roomId: `battle-${replay.id}`,
     warning: 'Replay payload has no format metadata; its URL identifies M-C, but the payload did not independently confirm the format.'}));
-  return {...imported, replayUrls: identities.size, replayWarnings};
+  return {...imported, replayUrls: identities.size, replays: attached, replayWarnings};
 }

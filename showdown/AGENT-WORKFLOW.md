@@ -170,7 +170,17 @@ merely because a saved credential exists.
 
 ## Conclude and improve
 
-After the official parent ends, use `team_metrics_agent_report` for the exact
+After the official parent ends, call `team_metrics_sync_battles` with the locked
+`teamId` to flush buffered local games, official results and replay attachments.
+Check `battle_status.metrics` for recording failures; a timeout or error does not
+confirm persistence. This sync is bounded and performs no battle action or replay
+upload; a failed replay attachment can reread its already verified saved URL.
+An older/disabled recorder requires explicit
+`team_metrics_import` from its saved logs or `team_metrics_import_replays` from
+existing saved URLs. Do not restart the signed-in client merely to gain sync.
+All these operations are MCP tools; no manual terminal import is required.
+
+Then use `team_metrics_agent_report` for the exact
 locked team ID before completing the private review or starting the next
 authorized search. Verify the full cached team sheet, data cutoff, refresh
 warnings, filters and included/excluded sample counts. Confirm this parent's

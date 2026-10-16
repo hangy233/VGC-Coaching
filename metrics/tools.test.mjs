@@ -108,10 +108,18 @@ test('MCP tools expose strict local-only schemas and no battle controls',async()
   const {registerMetricsTools}=await import('./mcp-tools.mjs');
   const registrations=new Map();
   registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace:process.cwd()});
-  for(const name of ['team_metrics_list','team_metrics_report','team_metrics_agent_report','team_metrics_register_team','team_metrics_game_evidence','team_metrics_finalize_bo3','team_metrics_import','team_metrics_import_replays','team_metrics_export'])assert(registrations.has(name));
-  for(const [name,{settings}] of registrations)assert.equal(settings.annotations.openWorldHint,['team_metrics_import_replays','team_metrics_finalize_bo3'].includes(name));
+  for(const name of ['team_metrics_list','team_metrics_report','team_metrics_agent_report','team_metrics_register_team','team_metrics_sync_battles','team_metrics_game_evidence','team_metrics_finalize_bo3','team_metrics_import','team_metrics_import_replays','team_metrics_export'])assert(registrations.has(name));
+  for(const [name,{settings}] of registrations)assert.equal(settings.annotations.openWorldHint,['team_metrics_import_replays','team_metrics_finalize_bo3','team_metrics_sync_battles'].includes(name));
   assert.equal(registrations.get('team_metrics_report').settings.annotations.readOnlyHint,true);
   assert.equal(registrations.get('team_metrics_import').settings.annotations.readOnlyHint,false);
+  assert.equal(registrations.get('team_metrics_finalize_bo3').settings.annotations.destructiveHint,true);
+  const create=registrations.get('team_metrics_register_team').settings.inputSchema;
+  assert.equal(create.safeParse({teamText:'Pasted team export'}).success,true);
+  assert.equal(create.safeParse({teamFile:'teams/team.txt'}).success,true);
+  for(const args of [{},{teamText:'text',teamFile:'teams/team.txt'},{teamText:''},{teamText:'a'.repeat(128*1024+1)}])assert.equal(create.safeParse(args).success,false);
+  const sync=registrations.get('team_metrics_sync_battles').settings.inputSchema;
+  assert.deepEqual(sync.parse({}),{});assert.equal(sync.safeParse({teamId:id}).success,true);
+  for(const args of [{teamId:'latest'},{confirmed:true},{teamText:'replacement'}])assert.equal(sync.safeParse(args).success,false);
   const schema=registrations.get('team_metrics_report').settings.inputSchema;
   assert.equal(schema.safeParse({teamId:id,includeOperational:true}).success,true);
   assert.equal(schema.safeParse({teamId:id,confirmed:true}).success,false);
@@ -144,6 +152,26 @@ test('MCP tools expose strict local-only schemas and no battle controls',async()
   assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom',teamId:id}).success,true);
   assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom'}).success,false);
   assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom',teamId:id,teamFile:'teams/team.txt'}).success,false);
+});
+
+test('MCP live report sync rejects the wrong team before writing and surfaces recorder failures',async()=>{
+  const {registerMetricsTools}=await import('./mcp-tools.mjs');
+  const registrations=new Map(),commands=[];
+  let enabled=true,fail=false;
+  registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace:process.cwd(),call:async(_descriptor,command)=>{
+    commands.push(command.op);
+    return command.op==='metrics-status'?{ok:true,result:{enabled,teamId:id,state:'ready'}}:{ok:!fail,error:'Persistence not confirmed',result:{enabled:true,teamId:id,state:'error'}};
+  }});
+  const tool=registrations.get('team_metrics_sync_battles');
+  const invoke=args=>tool.handler(tool.settings.inputSchema.parse(args));
+  let response=await invoke({teamId:'b'.repeat(64)});
+  assert.equal(response.isError,true);assert.match(response.content[0].text,/does not match/);assert.deepEqual(commands,['metrics-status']);
+  enabled=false;commands.length=0;response=await invoke({});
+  assert.equal(response.isError,true);assert.match(response.content[0].text,/disabled/);assert.deepEqual(commands,['metrics-status']);
+  enabled=true;fail=true;commands.length=0;response=await invoke({});
+  assert.equal(response.isError,true);assert.match(response.content[0].text,/Persistence not confirmed/);assert.deepEqual(commands,['metrics-status','metrics-sync']);
+  fail=false;response=await invoke({});
+  assert.equal(response.isError,true);assert.match(response.content[0].text,/did not confirm/);
 });
 
 test('MCP report filters, refresh metadata and CSV export work through real local storage',async t=>{

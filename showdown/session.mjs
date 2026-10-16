@@ -70,6 +70,7 @@ export async function runSession({username,teamFile,authorizedSets=1,autoReady=t
       const metricRoot=metricsWorkspace||(basename(dirname(descriptorPath))==='cache'?resolve(dirname(descriptorPath),'..'):dirname(descriptorPath));
       let warned=false;
       recorder=attachMetricsRecorder(client,{workspace:metricRoot,username,teamId:expectedTeamHash,team,name:basename(teamFile,'.txt'),session,onError:()=>{if(!warned){warned=true;output.write('Team metrics could not be saved; battle controls remain available.\n');}}});
+      session.attachMetricsRecorder(recorder);
     }
     let onDisconnected;
     const disconnected=new Promise(resolvePromise=>{onDisconnected=resolvePromise;client.once('disconnected',onDisconnected);});

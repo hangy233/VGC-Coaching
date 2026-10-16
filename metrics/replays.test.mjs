@@ -4,9 +4,10 @@ import {mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile} from 'node:fs
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
+import {gunzipSync} from 'node:zlib';
 import {importReplayUrls} from './replays.mjs';
 import {registerTeamFromFile} from './import.mjs';
-import {listBattles} from './store.mjs';
+import {getTeamReport, listBattles} from './store.mjs';
 
 const ID = 'gen9championsvgc2026regmcbo3-123';
 const URL = `https://replay.pokemonshowdown.com/${ID}`;
@@ -35,10 +36,17 @@ test('imports official saved replay JSON with bounded credential-free fetch and 
   const records = await listBattles({workspace: args.workspace});
   assert.equal(records[0].roomId, 'battle-' + ID);
   assert.equal(records[0].pokemon.find(p => p.species === 'Golisopod').moves.find(m => m.move === 'Protect').uses, 1);
+  assert.equal(records[0].metadata.replay.url, URL);
+  assert.equal(result.replays[0].replay.url, URL);
+  assert.equal(result.battles[0].record.metadata.replay.url, URL);
+  assert.equal((await getTeamReport({workspace: args.workspace, teamId: result.teamId})).games[0].replay.url, URL);
+  assert.match(await readFile(result.stableReport.path, 'utf8'), /Watch replay/);
+  const evidence = gunzipSync(await readFile(join(args.workspace, records[0].metadata.replay.evidencePath))).toString();
+  assert.equal(evidence, LOG + '\n');
   await assert.rejects(readFile(join(args.workspace, 'cache/team-metrics/sources/registry.json')), {code: 'ENOENT'});
 });
 
-test('private capabilities are used transiently but never cached or returned', async t => {
+test('private replay URL is retained only as the intended report link and never in cached protocol or evidence', async t => {
   const args = await fixture(t), capability = '-mysecrettokenpw';
   let requested;
   const result = await importReplayUrls({...args, urls: [URL, URL + capability], fetchImpl: async url => {
@@ -46,13 +54,54 @@ test('private capabilities are used transiently but never cached or returned', a
     return response({id: ID + capability, password: capability, log: `>battle-${ID}${capability}\n${LOG}\n|c|Opponent|${URL}${capability}\n|-message|Room battle-${ID}${capability}`});
   }});
   assert.equal(requested, URL + capability + '.json');
-  assert.doesNotMatch(JSON.stringify(result), /mysecrettokenpw/);
+  assert.equal(result.replays[0].replay.url, URL + capability);
   const directory = join(args.workspace, 'cache/team-metrics/replays'), names = await readdir(directory);
   assert.deepEqual(names, [createHash('sha256').update(ID).digest('hex') + '.json']);
   const cached = await readFile(join(directory, names[0]), 'utf8');
   assert.doesNotMatch(cached, /mysecrettokenpw|password|\|c\|/);
   assert.equal(JSON.parse(cached).id, ID);
-  assert.doesNotMatch(JSON.stringify(await listBattles({workspace: args.workspace})), /mysecrettokenpw/);
+  const [record] = await listBattles({workspace: args.workspace});
+  assert.equal(record.metadata.replay.url, URL + capability);
+  const replayMetadata = {...record.metadata.replay}; delete replayMetadata.url;
+  assert.doesNotMatch(JSON.stringify({...record, metadata: {...record.metadata, replay: replayMetadata}}), /mysecrettokenpw/);
+  const evidence = gunzipSync(await readFile(join(args.workspace, record.metadata.replay.evidencePath))).toString();
+  assert.doesNotMatch(evidence, /mysecrettokenpw|password|\|c\|/);
+  const report = await getTeamReport({workspace: args.workspace, teamId: result.teamId});
+  assert.equal(report.games[0].replay.url, URL + capability);
+  assert.ok((await readFile(result.stableReport.path, 'utf8')).includes(URL + capability));
+});
+
+test('repeated replay append retains one game, unchanged evidence and one fetch per supplied replay', async t => {
+  const args = await fixture(t); let calls = 0;
+  const fetchImpl = async () => { calls++; return response(); };
+  const first = await importReplayUrls({...args, fetchImpl});
+  const before = (await listBattles({workspace: args.workspace}))[0];
+  const evidence = await readFile(join(args.workspace, before.metadata.replay.evidencePath));
+  const second = await importReplayUrls({...args, teamFile: undefined, teamId: first.teamId, fetchImpl});
+  const report = await getTeamReport({workspace: args.workspace, teamId: first.teamId});
+  assert.equal(calls, 2); assert.equal(report.games.length, 1); assert.equal(report.totals.games, 1);
+  assert.equal(second.replays[0].status, 'unchanged');
+  assert.equal(report.games[0].replay.verifiedAt, before.metadata.replay.verifiedAt);
+  assert.deepEqual(await readFile(join(args.workspace, report.games[0].replay.evidencePath)), evidence);
+  assert.equal(report.pokemon.find(p => p.species === 'Golisopod').moves.find(m => m.move === 'Protect').uses, 1);
+});
+
+test('a new replay appends to the registered report while a changed verified game is rejected before writes', async t => {
+  const args = await fixture(t);
+  const first = await importReplayUrls({...args, fetchImpl: async () => response()});
+  const registered = {...args, teamFile: undefined, teamId: first.teamId};
+  const nextId = ID.replace('123', '124'), nextUrl = URL.replace('123', '124');
+  await importReplayUrls({...registered, urls: [nextUrl], fetchImpl: async () => response({id: nextId, log: LOG})});
+  const report = await getTeamReport({workspace: args.workspace, teamId: first.teamId});
+  assert.equal(report.totals.games, 2);
+  assert.deepEqual(report.games.map(game => game.replay.url).sort(), [URL, nextUrl]);
+  const before = await readFile(first.stableReport.path, 'utf8');
+  const [cached] = (await readdir(join(args.workspace, 'cache/team-metrics/replays'))).filter(name => name === createHash('sha256').update(ID).digest('hex') + '.json');
+  const cachedPath = join(args.workspace, 'cache/team-metrics/replays', cached), cachedBefore = await readFile(cachedPath, 'utf8');
+  await assert.rejects(importReplayUrls({...registered, fetchImpl: async () => response({id: ID, log: LOG.replace('|turn|1', '|turn|2')})}), /could not be fetched or validated/);
+  assert.equal(await readFile(first.stableReport.path, 'utf8'), before);
+  assert.equal(await readFile(cachedPath, 'utf8'), cachedBefore);
+  assert.equal((await getTeamReport({workspace: args.workspace, teamId: first.teamId})).games.find(game => game.roomId === 'battle-' + ID).turns, 1);
 });
 
 test('rejects external, insecure, credentialed, queried and malformed URLs before fetching', async t => {
@@ -74,6 +123,8 @@ test('redirects, wrong identity, wrong player and oversized responses fail witho
     () => new Response('x'.repeat(8 * 1024 * 1024 + 1)),
     () => ({ok: true, redirected: true, url: 'https://evil.test/private-secretpw'}),
     () => ({ok: true, redirected: false, url: 'https://evil.test/private-secretpw'}),
+    () => response({id: ID.replace('123', '124'), log: LOG + '\n|win|Opponent'}),
+    () => response({id: ID.replace('123', '124'), log: LOG.replace('|win|Fixture', '|win|UnrelatedPlayer')}),
   ];
   for (const bad of invalid) {
     let calls = 0;
@@ -131,6 +182,7 @@ test('incomplete rereads cannot downgrade a complete cached replay or its stored
   assert.match(await readFile(join(args.workspace, 'cache/team-metrics/replays', cached), 'utf8'), /win/);
   const records = await listBattles({workspace: args.workspace});
   assert.equal(records.length, 1); assert.equal(records[0].completed, true); assert.equal(records[0].turns, 1);
+  assert.equal(records[0].metadata.replay.url, URL);
 });
 
 test('concurrent imports for one replay preserve the complete observation', async t => {
