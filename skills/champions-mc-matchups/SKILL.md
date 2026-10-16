@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-15.7**. Read the bundled
+Cycle revision: **2026-10-15.8**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and

@@ -68,12 +68,16 @@ export async function battlePreflight({workspace,teamId,parentId,call=callLocalS
     if(runtime.matchesSource===false)warnings.push('The loaded client differs from the current AgentSession source. Keep its advertised capabilities distinct from changes waiting for the next normal start.');
     if(status.metrics?.enabled)check('recorder',status.metrics.state==='ready'&&!status.metrics.lastError,'Recording is not ready; sync or inspect its errors before a new search.');
     else check('recorder',false,'Direct recording is unavailable; explicitly preserve and import the existing client’s logs.',false);
+    if(status.replayPolicy){
+      check('replay-preservation',!status.replayPolicy.active&&Array.isArray(status.replayPolicy.pendingParents)&&status.replayPolicy.pendingParents.length===0,'Authorized replay preservation must finish before another search; inspect replayPolicy and retry the existing parent without repeating uploads.');
+      if(status.replayPolicy.enabled)check('replay-policy-capability',status.replayPolicy.capable===true&&status.metrics?.enabled===true,'The enabled replay policy needs a loaded preservation verifier and live metrics recorder.');
+    }
     // A requested old parent is diagnostic input, never an override for the
     // newest owned set's mandatory checkpoint.
     latestOwned=(status.rooms||[]).filter(room=>room.ended&&PARENT.test(room.id)).at(-1);
     latestParent=latestOwned?.id;
     if(latestOwned?.teamId&&HASH.test(latestOwned.teamId))reviewTeamId=latestOwned.teamId;
-    session={sessionId:status.sessionId,connected:status.connected,authenticated:status.authenticated,stopped:status.stopped,teamId:status.teamSha256,remainingSets:remaining,idle,capabilities,runtime,metrics:status.metrics||null};
+    session={sessionId:status.sessionId,connected:status.connected,authenticated:status.authenticated,stopped:status.stopped,teamId:status.teamSha256,remainingSets:remaining,idle,capabilities,runtime,metrics:status.metrics||null,replayPolicy:status.replayPolicy||null};
   }
   const skills=skill.status==='fulfilled'?skill.value:null;
   check('skill-sync',skills?.synchronized===true,'The maintained and installed matchup skill must match; inspect skill status and sync reviewed changes.');

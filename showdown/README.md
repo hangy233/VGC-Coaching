@@ -85,6 +85,7 @@ The same MCP exposes the remaining private BO3 workflow:
 | `battle_note_decision` / `battle_decision_notes` | Save optional intent against an observed action token, then query private notes by exact team, canonical child room and optional turn range. |
 | `battle_calculation_evidence` | Retrieve the recorded inputs and outputs of an actual MCP calculation by exact team and receipt `id`. Performs no new calculation. |
 | `battle_switch_team` | Apply an explicitly approved full legal team while idle, prepare its report and preserve the signed-in account and remaining allowance. |
+| `battle_set_replay_policy` | Explicitly enable saved-replay capture for future owned sets, or disable it for future acquisitions; inspect preservation status before another search. |
 
 Every BO3 still requires the private review and skill checkpoint before another
 authorized search, including wins, forfeits and the final set. Prefer these MCP
@@ -94,6 +95,47 @@ review saves validate their stated contracts; `battle_start` does not implement 
 runtime review guard, and no tool can establish tactical correctness from prose.
 Do not search, authenticate, change the roster, publish replays or commit merely
 to validate a skill or these APIs.
+
+### Authorized replay preservation policy
+
+Replay publication defaults off. Within the user's explicit replay-saving scope,
+call `battle_set_replay_policy({enabled:true, confirmed:true, commandId:"replay-policy"})`
+while the server confirms idle. A personally started terminal can opt in with
+`--save-replays` instead. The choice remains active throughout this signed-in
+session, including later explicitly authorized allowance extensions. Enabling it
+does not upload historical sets, change room privacy, authenticate or search.
+
+For each subsequently acquired owned BO3, the session waits for the official
+parent result, finished trusted children and server idle, then makes one bounded
+save/verify/preserve attempt. It flushes the recorder and independently checks
+the exact team/parent child manifest, report replay links, compressed replay
+hashes and complete canonical game evidence. `battle_status.replayPolicy` exposes
+safe per-set progress and failures; private URLs remain in manual save results
+and ignored reports. The next search or team switch is blocked while a set
+acquired under this policy lacks confirmed preservation. A successful save never
+starts another match or completes the required private decision review.
+
+After an uncertain send, wait for existing server evidence and retry
+`battle_save_replays` for the same parent using a new command ID only when a new
+verification attempt is intended. Reuse the original command ID to recover its
+original result. Requests already reserved by the client are never uploaded
+again; a late returned URL can be verified without repeating publication. A
+failed report write returns available verified URLs with `complete:false` and
+`requiresReplayImport:true`; keep local evidence, repair/import that exact team,
+and verify again. Disabling the policy affects future sets and does not erase
+an existing required preservation obligation.
+
+An explicitly requested manual save outside the policy remains nonrequired
+status and does not create a permanent next-search guard. In particular, a
+historical parent saved after a team switch returns its original team ID and
+available URLs. Import those URLs into that old report when needed; a later save
+verification can confirm its durable evidence without flushing the new team's
+recorder. Automatic policy status never authorizes historical publication.
+
+Loaded capability feature fields `recordingSchemaVersion` and
+`previewDecisionEvidence` come from the attached recorder's actual status, and
+`authorizedReplayPolicy` identifies the preservation helper. An AgentSession
+source fingerprint alone does not establish adoption of these dependencies.
 
 ### Optional decision notes and retained calculations
 

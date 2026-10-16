@@ -140,7 +140,9 @@ user's authorization and preserves the login; verify the official result and idl
 state. `battle_stop` disconnects and does not forfeit.
 Request stats are server observations, not effective-Speed
 calculations. Use current action tokens and distinguish sent/accepted/resolved
-actions; no automatic extra queue or replay publication follows a result.
+actions. No automatic extra queue follows a result. Replay publication defaults
+off; an explicitly authorized session replay policy can preserve future completed
+sets. Inspect its verification status and follow the required cycle.
 
 Verified with installed `@smogon/calc` 0.12.0: **numeric `gen: 0` means Champions**
 for `calculate_damage`. The validation format remains the string

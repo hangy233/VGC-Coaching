@@ -67,6 +67,11 @@ does not change calculator mechanics or fill unknown investments. Use
 Use fresh requests and observe acceptance and execution separately. Update a
 compact board/plan note after consequential reveals so a handoff can resume
 without reconstructing the entire log. Give one operator exclusive controls.
+At preview, retain the submitted four and their order separately from the four
+later revealed by requests. Inspect the recorded preview phase: a server-selected
+four is not an intentional selection, and a sent choice without acknowledgment
+leaves acceptance unknown. Missing preview history does not prove a default.
+Keep these distinctions in selection-quality and execution review.
 Treat a short observed deadline or depleted total bank as urgent: skip optional
 explanations, history scans and extra calculations, then submit a current legal
 paired action while there is time to verify it. A stale attempt is not a fallback.
@@ -98,6 +103,17 @@ reply against the client state rather than issuing another publication request
 blindly. Record each completed child's server-returned replay URL and verification
 status. A guessed URL, live watch URL, send acknowledgment, or upload popup alone
 does not prove that a completed replay can be retrieved.
+
+An updated client can apply `battle_set_replay_policy` with `enabled: true`,
+`confirmed: true` and a unique `commandId` while idle, or start with the explicit
+`--save-replays` option, within the user's existing replay-saving authorization.
+The default is off. The policy covers future owned sets, including authorized
+allowance extensions; enabling it does not backfill historical uploads. After an
+official result and server-confirmed idle, it attempts replay saving and verifies
+report preservation. Inspect its status before the next search; authorized but
+unfinished preservation blocks search/team switching. Reconcile/retry failures
+through the existing replay operation without duplicating an uncertain upload.
+This automates preservation only, never tactical review or another search.
 
 Keep the full private access URL only in ignored private reports/checkpoints.
 Never put its access suffix in shared skill guidance or a commit. Attach confirmed

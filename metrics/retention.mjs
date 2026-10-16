@@ -14,7 +14,7 @@ const ROOM = /^battle-gen9championsvgc2026regmc(?:bo3)?-[1-9]\d*$/u;
 const PARENT = /^(?:game-)?bestof3-gen9championsvgc2026regmc(?:bo3)?-[1-9]\d*$/u;
 const PROTOCOL = new Set(['player', 'poke', 'start', 'turn', 'upkeep', 'switch', 'drag', 'replace', 'detailschange', 'swap', 'move', 'cant', 'faint', 'win', 'tie', 'gen', 'gametype', 'tier', 'teamsize', 'teampreview']);
 const MINOR = new Set(['-damage', '-heal', '-sethp', '-status', '-curestatus', '-cureteam', '-boost', '-unboost', '-setboost', '-swapboost', '-invertboost', '-clearboost', '-clearallboost', '-clearpositiveboost', '-clearnegativeboost', '-copyboost', '-weather', '-fieldstart', '-fieldend', '-sidestart', '-sideend', '-swapsideconditions', '-start', '-end', '-singleturn', '-singlemove', '-activate', '-fail', '-miss', '-notarget', '-immune', '-crit', '-supereffective', '-resisted', '-ohko', '-hitcount', '-nothing', '-combine', '-waiting', '-prepare', '-mustrecharge', '-recharge', '-anim', '-item', '-enditem', '-ability', '-endability', '-transform', '-formechange', '-mega', '-primal', '-burst', '-zpower', '-zbroken', '-terastallize', '-block']);
-const STATUSES = new Set(['selected', 'sent', 'accepted', 'rejected', 'executed', 'execution-observed', 'server-defaulted', 'defaulted', 'unsubmitted', 'stale', 'expired', 'inactivity']);
+const STATUSES = new Set(['selected', 'sent', 'accepted', 'rejected', 'executed', 'execution-observed', 'server-defaulted', 'defaulted', 'unsubmitted', 'unknown', 'stale', 'expired', 'inactivity']);
 const safeError = message => new Error(`Game evidence: ${message}`);
 const sha256 = content => createHash('sha256').update(content).digest('hex');
 const slash = value => value.replaceAll('\\', '/');
@@ -85,6 +85,7 @@ function sanitizeSheets(sheets) {
 function sanitizeDecision(value, turn) {
   if (!['action-status', 'choice-status', 'decision', 'choice'].includes(value?.event) || !STATUSES.has(value.status)) return null;
   const result = { status: value.status, event: value.event, turn: Number.isSafeInteger(value.turn) && value.turn >= 0 ? value.turn : turn };
+  if(value.phase==='preview')result.phase='preview';
   for (const field of ['at', 'rqid']) if (time(value[field]) !== undefined) result[field] = value[field];
   for (const field of ['selected', 'accepted', 'executed', 'submitted', 'serverDefaulted']) if (typeof value[field] === 'boolean') result[field] = value[field];
   for (const field of ['commandId', 'choice', 'reason']) if (typeof value[field] === 'string') result[field] = safeText(value[field], 1000);
@@ -93,11 +94,12 @@ function sanitizeDecision(value, turn) {
     const clean = {};
     for (const field of ['type', 'move', 'target', 'slot', 'pokemon']) if (typeof action?.[field] === 'string' || Number.isSafeInteger(action?.[field])) clean[field] = safeText(action[field], 200);
     if (typeof action?.mega === 'boolean') clean.mega = action.mega;
+    if(action?.type==='team'&&Array.isArray(action.order)&&action.order.length>=1&&action.order.length<=6&&new Set(action.order).size===action.order.length&&action.order.every(slot=>Number.isInteger(slot)&&slot>=1&&slot<=6))clean.order=[...action.order];
     return clean;
   });
   if (value.evidence && typeof value.evidence === 'object') {
     result.evidence = {};
-    for (const field of ['type', 'move', 'slot', 'turn']) if (typeof value.evidence[field] === 'string' || Number.isSafeInteger(value.evidence[field])) result.evidence[field] = safeText(value.evidence[field], 200);
+    for (const field of ['type', 'move', 'slot', 'turn', 'transition']) if (typeof value.evidence[field] === 'string' || Number.isSafeInteger(value.evidence[field])) result.evidence[field] = safeText(value.evidence[field], 200);
     if (typeof value.evidence.executed === 'boolean') result.evidence.executed = value.evidence.executed;
   }
   return result;

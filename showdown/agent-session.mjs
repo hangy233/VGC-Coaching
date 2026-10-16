@@ -14,7 +14,7 @@ const EVENTS = ['request','battle-event','sheet','timer','result','ready','serve
 
 /** One explicitly bounded local session. It never logs in or chooses strategy. */
 export class AgentSession extends EventEmitter {
-  constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter} = {}) {
+  constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter,replayPolicy=false,replayPreservationVerifier} = {}) {
     super();
     check(typeof username === 'string' && normalized(username), 'Username required');
     check(typeof packed === 'string' && packed.length > 10, 'Approved packed team required');
@@ -24,6 +24,8 @@ export class AgentSession extends EventEmitter {
     this.authorizedSets = authorizedSets; this.autoReady = autoReady; this.now = now;
     check(typeof replayFetchImpl==='function' && Number.isInteger(replayBudgetMs) && replayBudgetMs>0 && replayBudgetMs<=25000,'Invalid replay transport configuration');
     this.replayFetchImpl=replayFetchImpl;this.replayBudgetMs=replayBudgetMs;this.savingReplays=false;
+    check(typeof replayPolicy==='boolean'&&(replayPreservationVerifier===undefined||typeof replayPreservationVerifier==='function'),'Invalid replay preservation policy');
+    this.replayPreservationVerifier=replayPreservationVerifier;this.replayPolicy={enabled:replayPolicy,configuredAt:replayPolicy?new Date(this.now()).toISOString():null,fromSearch:1};this.replayPreservation=new Map();this.replayTasks=new Map();
     this.id = randomUUID(); this.revision = 0; this.searchesSent = 0; this.stopped = false;
     this.commands = new Map(); this.readySent = new Set(); this.notices = []; this.listeners = [];
     this.ownedRooms = new Set(); this.ownedParents = new Set(); this.roomParents = new Map(); this.awaitingSet = false;
@@ -40,6 +42,7 @@ export class AgentSession extends EventEmitter {
         this.captureRooms();
         this.revision++; this.emit('change', {revision:this.revision,event});
         if (this.autoReady && ['ready','search-state','request'].includes(event)) this.confirmPendingReady();
+        if(['result','search-state','room-renamed'].includes(event)||event==='battle-event'&&client.rooms.get(value.room)?.ended)queueMicrotask(()=>this.maybePreserveReplays());
       };
       client.on(event, listener); this.listeners.push([event,listener]);
     }
@@ -51,6 +54,8 @@ export class AgentSession extends EventEmitter {
     if(this.ownedParents.delete(oldRoom))this.ownedParents.add(room);
     const parent=this.roomParents.get(oldRoom);this.roomParents.delete(oldRoom);
     if(this.roomTeams.has(oldRoom)){this.roomTeams.set(room,this.roomTeams.get(oldRoom));this.roomTeams.delete(oldRoom);}
+    if(this.replayPreservation.has(oldRoom)){const entry=this.replayPreservation.get(oldRoom);entry.parentId=room;this.replayPreservation.set(room,entry);this.replayPreservation.delete(oldRoom);}
+    if(this.replayTasks.has(oldRoom)){this.replayTasks.set(room,this.replayTasks.get(oldRoom));this.replayTasks.delete(oldRoom);}
     for(const context of this.actionContexts.values())if(context.room===oldRoom)context.room=room;
     if(parent)this.roomParents.set(room,parent===oldRoom?room:parent);
     for(const [child,owner] of this.roomParents)if(owner===oldRoom)this.roomParents.set(child,room);
@@ -61,7 +66,7 @@ export class AgentSession extends EventEmitter {
     if(this.awaitingSet) {
       const candidates=Object.keys(this.client.searchState?.games || {}).filter(room=>/^game-bestof3-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(room) && !this.ownedParents.has(room));
       // An ambiguous set list never grants control over an arbitrary battle.
-      if(candidates.length===1){this.ownedParents.add(candidates[0]);this.ownedRooms.add(candidates[0]);this.roomParents.set(candidates[0],candidates[0]);this.roomTeams.set(candidates[0],this.client.expectedTeamHash);this.awaitingSet=false;if(this.cancellation)this.cancellation.status='match-observed';}
+      if(candidates.length===1){this.ownedParents.add(candidates[0]);this.ownedRooms.add(candidates[0]);this.roomParents.set(candidates[0],candidates[0]);this.roomTeams.set(candidates[0],this.client.expectedTeamHash);this.awaitingSet=false;if(this.cancellation)this.cancellation.status='match-observed';if(this.replayPolicy.enabled)this.replayPreservation.set(candidates[0],{parentId:candidates[0],teamId:this.client.expectedTeamHash,status:'awaiting-completion',required:true,attempted:false,verifiedChildIds:[],preservedChildIds:[],failures:[]});}
     }
     // Private sets may advertise only their ID while child requests arrive
     // independently. Join the acquired parent to obtain its trusted child links.
@@ -78,7 +83,7 @@ export class AgentSession extends EventEmitter {
     }
   }
   roomTeamId(room){return this.roomTeams.get(this.client.resolveRoom(room))||this.client.expectedTeamHash;}
-  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory},sourceChangesRequireNewSession:true};}
+  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
   rememberAction(action){
     const state=this.client.rooms.get(action.room),turn=state?.battle?.turn;
     if(!this.actionContexts.has(action.token))this.actionContexts.set(action.token,{room:action.room,teamId:this.roomTeamId(action.room),rqid:action.rqid,turn:Number(turn)||0,sessionId:this.id,token:action.token,lastObservedStatus:state?.lastAction?.rqid===action.rqid?state.lastAction.status:'unsubmitted'});
@@ -150,6 +155,7 @@ export class AgentSession extends EventEmitter {
       sessionId:this.id,revision:this.revision,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,
       username:this.username,teamSha256:this.client.expectedTeamHash,authorizedSets:this.authorizedSets,searchesSent:this.searchesSent,autoReady:this.autoReady,
       savingReplays:this.savingReplays,awaitingSet:this.awaitingSet,searchPending:!!this.client.searchPending,
+      replayPolicy:this.replayPolicySnapshot(),
       switchingTeam:this.switchingTeam,capabilities:this.capabilities(),
       metrics:this.metricsStatus(),
       search:this.client.searchState || null,cancellation:this.cancellation || null,actions:this.actions(),notices:this.notices,
@@ -179,6 +185,7 @@ export class AgentSession extends EventEmitter {
   assertIdleForTeamSwitch(){
     this.assertLive();const c=this.client;
     check(!this.savingReplays,'Finish replay preservation before switching teams');
+    this.assertReplayPreserved();
     check(!this.awaitingSet&&!c.searchPending&&c.searchState&&!c.searchState.searching.length&&!Object.keys(c.searchState.games||{}).length,'Server must confirm idle with no pending search or match before switching teams');
     check(![...this.ownedParents].some(room=>!c.rooms.get(room)?.ended),'Finish the owned BO3 before switching teams');
   }
@@ -221,12 +228,69 @@ export class AgentSession extends EventEmitter {
   metricsStatus() {
     return this.metricsRecorder?.status()||{enabled:false,teamId:this.client.expectedTeamHash,state:'disabled',pending:0,lastSavedAt:null,lastError:null,stableReport:null,message:'Live metrics recording is unavailable in this session. Use report imports or enable recording on the next normal client start.'};
   }
-  async syncMetrics() {
+  replayPolicySnapshot(){
+    const sets=[...this.replayPreservation.values()].map(entry=>({...entry,parentId:entry.parentId.replace(/-[a-z0-9]+pw$/u,''),verifiedChildIds:entry.verifiedChildIds.map(room=>room.replace(/-[a-z0-9]+pw$/u,'')),preservedChildIds:entry.preservedChildIds.map(room=>room.replace(/-[a-z0-9]+pw$/u,''))}));
+    return {...this.replayPolicy,scope:'Future owned BO3s acquired after enabling; existing room privacy is preserved.',requiresPreservationBeforeNextSearch:true,sets,pendingParents:sets.filter(entry=>entry.required&&entry.status!=='complete').map(entry=>entry.parentId),attentionParents:sets.filter(entry=>entry.status==='attention-required').map(entry=>entry.parentId),active:this.replayTasks.size>0,capable:!!this.replayPreservationVerifier};
+  }
+  replayPolicyChanged(){this.emit('change',{revision:++this.revision,event:'replay-policy'});}
+  assertReplayPreserved(){check(![...this.replayPreservation.values()].some(entry=>entry.required&&entry.status!=='complete'),'Finish authorized completed-set replay preservation before another search or team switch; inspect replayPolicy and retry battle_save_replays without repeating uploads.');}
+  setReplayPolicy(enabled){
+    this.assertIdleForTeamSwitch();check(typeof enabled==='boolean','Replay policy enabled must be boolean');
+    if(enabled){check(this.replayPreservationVerifier,'Reliable replay preservation is unavailable in this loaded session; use its next normal start');check(this.metricsStatus().enabled,'Replay policy requires the live metrics recorder and retained report evidence');}
+    this.replayPolicy={enabled,configuredAt:new Date(this.now()).toISOString(),fromSearch:this.searchesSent+1};this.replayPolicyChanged();
+    return {...this.replayPolicySnapshot(),queued:false,uploaded:false,authorizedSets:this.authorizedSets,searchesSent:this.searchesSent};
+  }
+  maybePreserveReplays(){
+    if(this.stopped||!this.client.connected||!this.client.authenticated||this.savingReplays||this.switchingTeam||this.replayTasks.size)return;
+    for(const [parent,entry]of this.replayPreservation){
+      if(entry.attempted||entry.status==='complete'||!this.client.rooms.get(parent)?.ended)continue;
+      if(entry.status!=='awaiting-idle'){entry.status='awaiting-idle';this.replayPolicyChanged();}
+      const c=this.client;
+      if(this.awaitingSet||c.searchPending||!c.searchState||c.searchState.searching.length||Object.keys(c.searchState.games||{}).length)return;
+      const children=c.rooms.get(parent)?.children;
+      if(!Array.isArray(children)||!children.length||children.length>3||children.some(room=>!this.ownedRooms.has(room)||this.roomParents.get(room)!==parent||!c.rooms.get(room)?.ended||!['win','tie'].includes(c.rooms.get(room)?.result?.type))){if(entry.status!=='awaiting-child-results'){entry.status='awaiting-child-results';this.replayPolicyChanged();}return;}
+      void this.preserveSetReplays(parent,{automatic:true}).catch(()=>{});return;
+    }
+  }
+  async preserveSetReplays(parent,{automatic=false}={}){
+    if(this.replayTasks.has(parent))return this.replayTasks.get(parent);
+    if(!this.replayPreservationVerifier)return this.saveSetReplays(parent);
+    check(this.ownedParents.has(parent)&&this.ownedRooms.has(parent)&&this.roomParents.get(parent)===parent,'BO3 parent is not owned by this authorized session');
+    check(this.client.rooms.get(parent)?.ended&&['win','tie'].includes(this.client.rooms.get(parent)?.result?.type),'Official BO3 parent result is not confirmed');
+    let entry=this.replayPreservation.get(parent);
+    if(!entry){entry={parentId:parent,teamId:this.roomTeamId(parent),status:'saving',required:false,attempted:false,verifiedChildIds:[],preservedChildIds:[],failures:[]};this.replayPreservation.set(parent,entry);}
+    const task=(async()=>{
+      const deadline=Date.now()+this.replayBudgetMs;entry.status='saving';entry.attempted=true;entry.automatic=automatic;entry.lastAttemptAt=new Date(this.now()).toISOString();entry.failures=[];this.replayPolicyChanged();
+      let saved;
+      try{
+        saved=await this.saveSetReplays(parent,{deadline});entry.verifiedChildIds=saved.replays.map(replay=>replay.roomId);entry.failures=saved.failures.map(failure=>({roomId:failure.roomId.replace(/-[a-z0-9]+pw$/u,''),reason:failure.error}));
+        entry.status='preserving';this.replayPolicyChanged();
+        const withinBudget=async operation=>{let timer;try{check(deadline>Date.now(),'Replay preservation budget exhausted; retain local evidence and retry the existing request');return await Promise.race([Promise.resolve().then(operation),new Promise((_resolve,reject)=>{timer=setTimeout(()=>reject(new Error('Replay report preservation did not complete within its bounded budget; retain local evidence')),Math.max(1,deadline-Date.now()));})]);}finally{clearTimeout(timer);}};
+        // A historical parent keeps its original report identity. External
+        // exact-team imports can satisfy preservation without the current recorder.
+        if(!saved.requiresReplayImport)await withinBudget(()=>this.syncMetrics({timeoutMs:Math.max(1,Math.min(25000,deadline-Date.now()))}));
+        const parentState=this.client.rooms.get(this.client.resolveRoom(parent)),children=parentState?.children;
+        check(Array.isArray(children)&&children.length>0&&children.length<=3,'Completed parent child coverage is unavailable; retain local evidence');
+        const officialOutcome=parentState.result.type==='tie'?'tie':normalized(parentState.result.winner)===normalized(this.username)?'win':'loss';
+        const preservation=await withinBudget(()=>this.replayPreservationVerifier({teamId:entry.teamId,parentId:this.client.resolveRoom(parent),roomIds:children,officialOutcome}));
+        check(preservation?.teamId===entry.teamId&&preservation.parentId===this.client.resolveRoom(parent).replace(/-[a-z0-9]+pw$/u,''),'Replay report preservation identity was not confirmed');
+        entry.preservedChildIds=preservation.preserved||[];entry.status=saved.complete&&preservation.complete?'complete':'attention-required';entry.failures.push(...(preservation.failures||[]));entry.completedAt=entry.status==='complete'?new Date(this.now()).toISOString():null;this.replayPolicyChanged();
+        return {...saved,transportComplete:saved.complete,preservation,complete:entry.status==='complete',requiresReplayImport:!preservation.complete};
+      }catch{
+        entry.status='attention-required';entry.failures.push({reason:'Saved replay/report preservation is incomplete. Retain local evidence, inspect existing replay requests and retry battle_save_replays; no automatic upload retry was scheduled.'});this.replayPolicyChanged();
+        if(saved)return {...saved,transportComplete:saved.complete,complete:false,requiresReplayImport:true,preservation:{teamId:entry.teamId,parentId:this.client.resolveRoom(parent).replace(/-[a-z0-9]+pw$/u,''),complete:false,preserved:[],missing:entry.verifiedChildIds,failures:entry.failures}};
+        throw new Error('Replay preservation is incomplete; inspect replayPolicy and retained evidence before the next search. Retry battle_save_replays for the same parent without repeating uploads.');
+      }
+    })();
+    this.replayTasks.set(parent,task);try{return await task;}finally{for(const [key,value]of this.replayTasks)if(value===task)this.replayTasks.delete(key);this.replayPolicyChanged();this.maybePreserveReplays();}
+  }
+  async syncMetrics({timeoutMs=25000}={}) {
     check(this.metricsRecorder,'Live metrics recording is unavailable in this session; use report imports or enable recording on the next normal client start');
+    check(Number.isInteger(timeoutMs)&&timeoutMs>0&&timeoutMs<=25000,'Metrics sync requires a bounded timeout');
     let timer;
     try {
       const result=await Promise.race([this.metricsRecorder.flush({savePending:true}),new Promise((_resolve,reject)=>{
-        timer=setTimeout(()=>reject(new Error('Metrics sync did not finish within 25 seconds. Recording continues in the background; inspect metrics status before cleanup.')),25000);
+        timer=setTimeout(()=>reject(new Error('Metrics sync did not finish within its bounded budget. Recording continues in the background; inspect metrics status before cleanup.')),timeoutMs);
       })]);
       check(result.state!=='error' && result.state!=='closed','Team metrics persistence is not confirmed. Retain local battle evidence and inspect metrics status before cleanup.');
       return result;
@@ -255,7 +319,7 @@ export class AgentSession extends EventEmitter {
     const task = Promise.resolve().then(()=>this.dispatch(command)).then(result=>({id:command.id,ok:true,result}),error=>({id:command.id,ok:false,error:error.message}));
     this.commands.set(command.id,task);return task;
   }
-  async saveSetReplays(parent) {
+  async saveSetReplays(parent,{deadline:outerDeadline=Infinity}={}) {
     const c=this.client;
     check(!this.savingReplays,'A completed-set replay operation is already running');
     check(typeof parent==='string' && /^game-bestof3-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(parent),'Expected a completed authorized BO3 parent room');
@@ -265,7 +329,7 @@ export class AgentSession extends EventEmitter {
     const children=[...this.roomParents].filter(([child,owner])=>owner===parent && child!==parent && this.ownedRooms.has(child)).map(([child])=>child);
     check(children.length>0 && children.length<=3,'Completed BO3 must have one to three known owned child battles');
     this.savingReplays=true;this.emit('change',{revision:++this.revision,event:'replays-started'});
-    const replays=[],failures=[],deadline=Date.now()+this.replayBudgetMs;
+    const replays=[],failures=[],deadline=Math.min(outerDeadline,Date.now()+this.replayBudgetMs);
     try {
       for(const child of children) {
         const roomId=c.resolveRoom(child),state=c.rooms.get(roomId);
@@ -305,9 +369,10 @@ export class AgentSession extends EventEmitter {
     check(confirmed === true, 'Explicit session control confirmation required');
     if (op === 'stop') { this.stopped=true;c.close();this.revision++;this.emit('change',{revision:this.revision,event:'stopped'});return {stopped:true}; }
     this.assertLive();
+    if(op==='set-replay-policy')return this.setReplayPolicy(command.enabled);
     if(op==='switch-team')return this.switchTeam(command);
     if(['start','authorize-sets','save-replays'].includes(op))check(!this.switchingTeam,'Finish the approved team switch before this operation');
-    if(op==='save-replays')return this.saveSetReplays(c.resolveRoom(room));
+    if(op==='save-replays')return this.preserveSetReplays(c.resolveRoom(room));
     if(op==='forfeit'){
       const parent=c.resolveRoom(room);
       check(typeof parent==='string' && /^game-bestof3-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(parent), 'Expected the current authorized BO3 parent room');
@@ -326,6 +391,9 @@ export class AgentSession extends EventEmitter {
     }
     if (op === 'start') {
       check(!this.savingReplays,'Finish completed-set replay preservation before starting another set');
+      check(!this.replayTasks.size,'Finish completed-set replay report preservation before starting another set');
+      this.assertReplayPreserved();
+      if(this.replayPolicy.enabled)check(this.replayPreservationVerifier&&this.metricsStatus().enabled&&this.metricsStatus().state==='ready','Authorized replay policy needs a ready live recorder and preservation verifier before searching');
       check(this.searchesSent < this.authorizedSets, 'Authorized set limit reached');
       check(!c.searchPending && (!c.searchState || !c.searchState.searching.length && !Object.keys(c.searchState.games || {}).length), 'Search or set is still active or unacknowledged');
       if (!c.teamHash) { c.authorize('upload-team',{confirmed:true});c.uploadTeam(this.packed); }

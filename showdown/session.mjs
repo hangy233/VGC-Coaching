@@ -7,6 +7,7 @@ import {attachTerminalLog} from './terminal-log.mjs';
 import {attachMetricsRecorder} from '../metrics/recorder.mjs';
 import {saveDecisionNote} from './decision-notes.mjs';
 import {recreateDeletedMetricsTeam} from '../metrics/catalog.mjs';
+import {verifySetReplayPreservation} from './replay-preservation.mjs';
 import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
@@ -30,7 +31,7 @@ function eventOnce(client,event,predicate,timeoutMs) {
 
 /** The explicit saved-login option does not grant permission to queue battles. */
 export function parseSessionArgs(argv) {
-  const args=[...argv], username=args.shift();let teamFile,authorizedSets=1,autoReady=true,loginMethod='terminal';
+  const args=[...argv], username=args.shift();let teamFile,authorizedSets=1,autoReady=true,loginMethod='terminal',saveReplays=false;
   const valueFor=()=>{const value=args.shift();if(!value || value.startsWith('--'))throw new Error('Missing session option value');return value;};
   while(args.length){
     const key=args.shift();
@@ -38,17 +39,19 @@ export function parseSessionArgs(argv) {
     else if(key==='--sets')authorizedSets=Number(valueFor());
     else if(key==='--manual-ready')autoReady=false;
     else if(key==='--saved-login')loginMethod='windows-credential-manager';
+    else if(key==='--save-replays')saveReplays=true;
     else throw new Error('Unknown session option');
   }
   if(!/^[A-Za-z0-9 _-]{1,18}$/.test(username || '') || !teamFile || !Number.isInteger(authorizedSets) || authorizedSets<1 || authorizedSets>100)
-    throw new Error('Usage: node --use-env-proxy showdown/session.mjs USERNAME --team TEAM_FILE [--sets 1] [--manual-ready] [--saved-login]');
-  return {username,teamFile:resolve(teamFile),authorizedSets,autoReady,loginMethod};
+    throw new Error('Usage: node --use-env-proxy showdown/session.mjs USERNAME --team TEAM_FILE [--sets 1] [--manual-ready] [--saved-login] [--save-replays]');
+  return {username,teamFile:resolve(teamFile),authorizedSets,autoReady,loginMethod,saveReplays};
 }
 
 /** Login stays in a visible user terminal; MCP controls only the authenticated object. */
-export async function runSession({username,teamFile,authorizedSets=1,autoReady=true,loginMethod='terminal',input=process.stdin,output=process.stderr,signals=process,clientFactory=options=>new ShowdownClient(options),brokerFactory,descriptorPath=join(workspace,'cache','showdown-session.json'),metrics=true,metricsWorkspace}={}) {
+export async function runSession({username,teamFile,authorizedSets=1,autoReady=true,loginMethod='terminal',saveReplays=false,input=process.stdin,output=process.stderr,signals=process,clientFactory=options=>new ShowdownClient(options),brokerFactory,descriptorPath=join(workspace,'cache','showdown-session.json'),metrics=true,metricsWorkspace}={}) {
   if(!/^[A-Za-z0-9 _-]{1,18}$/.test(username || '') || !teamFile || !Number.isInteger(authorizedSets) || authorizedSets<1 || authorizedSets>100) throw new Error('Supply a valid username, team file and set limit (1–100)');
   if(!['terminal','windows-credential-manager'].includes(loginMethod))throw new Error('Unsupported login method');
+  if(typeof saveReplays!=='boolean'||saveReplays&&!metrics)throw new Error('Authorized replay policy requires enabled local metrics recording');
   if(!input.isTTY || !output.isTTY || typeof input.setRawMode!=='function')throw new Error('Run this command in a visible user-operated terminal; password pipes and redirects are not supported');
   const {Teams,TeamValidator}=require('pokemon-showdown');
   const team=Teams.import(await readFile(teamFile,'utf8'));
@@ -73,7 +76,7 @@ export async function runSession({username,teamFile,authorizedSets=1,autoReady=t
       let warned=false;
       return attachMetricsRecorder(client,{workspace:metricRoot,username,teamId,team,name,session:owner,onError:()=>{if(!warned){warned=true;output.write('Team metrics could not be saved; battle controls remain available.\n');}}});
     };
-    session=new AgentSession(client,{username,packed,authorizedSets,autoReady,recorderFactory,decisionNoteWriter:args=>saveDecisionNote({workspace:metricRoot,...args})});
+    session=new AgentSession(client,{username,packed,authorizedSets,autoReady,recorderFactory,decisionNoteWriter:args=>saveDecisionNote({workspace:metricRoot,...args}),replayPolicy:saveReplays,replayPreservationVerifier:args=>verifySetReplayPreservation({workspace:metricRoot,...args})});
     if(metrics){
       recorder=await recorderFactory({team,teamId:expectedTeamHash,name:basename(teamFile,'.txt'),session});
       session.attachMetricsRecorder(recorder);
@@ -87,7 +90,7 @@ export async function runSession({username,teamFile,authorizedSets=1,autoReady=t
     try {
       bridge=await serveLocalSession(session,{descriptorPath});
       if(client.connected && client.authenticated){
-        output.write(`Signed in. MCP battle controls are ready; live battle events will appear here.\nFormat: ${FORMAT}. Auto-ready within the authorized set: ${autoReady ? 'on' : 'off'}. Ctrl-C closes the session.\n`);
+        output.write(`Signed in. MCP battle controls are ready; live battle events will appear here.\nFormat: ${FORMAT}. Auto-ready within the authorized set: ${autoReady ? 'on' : 'off'}. Save completed BO3 replays with existing privacy: ${saveReplays?'authorized/on':'off'}. Ctrl-C closes the session.\n`);
         await disconnected;
       }
     }finally{client.off('disconnected',onDisconnected);}

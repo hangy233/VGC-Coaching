@@ -88,6 +88,27 @@ guidance or these tools.
    The session enforces its set limit and binds one expected M-C BO3 parent and
    server-linked children. It does not acquire unrelated account battles.
 
+When completed-replay publication is already authorized, configure
+`battle_set_replay_policy({enabled:true,confirmed:true,commandId:"replay-policy"})`
+while idle before the next search, or use `--save-replays` on the next deliberately
+started terminal session. Default is off. It applies only to future owned sets
+and preserves their current privacy; it grants no search or allowance. After an
+official parent and all linked children finish and the server confirms idle,
+one bounded attempt saves/verifies replays, flushes the recorder and independently
+checks the exact report links, official child manifest and local replay/canonical
+evidence. Inspect `battle_status.replayPolicy` and its `pendingParents` before the
+next search. Required incomplete preservation blocks search/team switching;
+disabling future capture does not clear an existing obligation.
+
+Failures retain local evidence and require reconciliation. `battle_save_replays`
+can reverify existing requests or late server-returned URLs without another
+upload. Reuse a command ID for the same result; use a new ID for an intentional
+verification retry. Available URLs are returned even when report preservation
+fails. For a historical parent after a team switch, import them with its original
+`teamId` and retry verification; the new team's recorder is not used for the old
+report. Manual saves outside the policy do not create a required future-search
+obligation. None of this replaces the per-BO3 review and skill checkpoint.
+
 The loaded capabilities include schema, operations, optional feature flags,
 load time and a fingerprint of the AgentSession module loaded by this process.
 The fingerprint does not attest all dependencies. Source updates or an MCP

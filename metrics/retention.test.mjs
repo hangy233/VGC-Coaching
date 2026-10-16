@@ -49,6 +49,21 @@ test('canonical evidence retains state, sheets and explicit decision phases whil
   assert.ok(window.events.some(event => event.type === 'player')); assert.ok(!window.events.some(event => event.type === 'turn' && event.data[0] === '1')); assert.ok(window.events.some(event => event.type === 'turn' && event.data[0] === '2')); assert.equal(window.decisions.length, 0);
 });
 
+test('preview journals retain legal team order and unknown acceptance without inventing execution or defaults',async t=>{
+  const dir=await workspace(t),events=values();
+  events.splice(4,0,
+    {room:ROOM,event:'decision',phase:'preview',status:'selected',turn:0,rqid:1,selected:true,actions:[{type:'team',order:[4,2,1,3],password:'NEVER-PERSIST'}]},
+    {room:ROOM,event:'decision',phase:'preview',status:'sent',turn:0,rqid:1,submitted:true,actions:[{type:'team',order:[4,2,1,3]}]},
+    {room:ROOM,event:'decision',phase:'preview',status:'unknown',turn:0,rqid:1,submitted:true,reason:'Server acceptance was not observed.',evidence:{type:'preview-transition',transition:'battle-start',assertion:'NEVER-PERSIST'}},
+  );
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});
+  const read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,fromTurn:2,toTurn:2});
+  assert.deepEqual(read.decisions.map(value=>value.status),['selected','sent','unknown']);assert(read.decisions.every(value=>value.phase==='preview'&&value.turn===0));
+  assert.deepEqual(read.decisions[0].actions,[{type:'team',order:[4,2,1,3]}]);
+  assert.equal(read.decisions[2].accepted,undefined);assert.equal(read.decisions[2].executed,undefined);assert.equal(read.decisions[2].serverDefaulted,undefined);
+  assert.equal(read.decisions[2].evidence.transition,'battle-start');assert(!JSON.stringify(read).includes('NEVER-PERSIST'));
+});
+
 test('partial evidence can complete but cannot downgrade completed evidence or rewrite conflicting history', async t => {
   const dir = await workspace(t);
   const partial = await saveGameEvidence({ workspace: dir, teamId: TEAM, roomId: ROOM, events: values().slice(0, -1) }); assert.equal(partial.complete, false);

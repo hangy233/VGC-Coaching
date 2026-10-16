@@ -19,6 +19,15 @@ An executed use is a protocol move announcement. A submitted choice, a rejected 
 
 Selection and leads come from the private team-selection evidence when available. Unknown reserve choices stay unknown; a fainted or switched Pokémon is not sufficient evidence of the entire selected four. Uncertain KO attribution remains unassigned rather than being guessed. Weather, recoil and other indirect damage do not become direct move KOs.
 
+An observed selected four is not proof of preview intent or submission. The
+loaded recorder advertises `recordingSchemaVersion: 2` and
+`features.previewDecisionEvidence: true` when it retains preview phase, exact
+submitted order and sent/accepted/rejected/unknown states in the canonical action
+journal. A transition after an observed unsubmitted or rejected preview is
+operationally excluded. Missing preview history and an unacknowledged sent choice
+remain unknown; neither establishes a confirmed default or acceptance. Inspect
+retained preview evidence separately from later observed selection.
+
 Incomplete and operationally compromised games are excluded by default. Their exclusion counts remain visible; opt in explicitly when investigating client behavior. If any stored child game is flagged operational, its whole parent set is excluded from the default set win rate, including when another child was played cleanly. These are observations from your games, not controlled estimates of a team's strength.
 
 Reviewed manual exclusions are separate from protocol quality flags. They require an audited reason and never rewrite the original result, moves or counters. A manually excluded child also excludes its entire parent from default set performance, even when a filter hides that child. `includeManuallyExcluded: true` opts these games and parents back into the requested sample; it does not clear their audit history.
@@ -95,6 +104,28 @@ Reports describe the recorded sample and do not prove that a move, lead or team 
 ## Replay links and cleanup after each BO3
 
 With the user's replay-saving authorization, `battle_save_replays` requests each completed owned child's saved replay from Showdown and verifies the returned URL and completed log. Supply the ended parent as `room`, `confirmed: true` and a unique `commandId`; reuse the ID after an uncertain reply. This preserves the rooms' existing privacy and does not start another set. BO3 finalization attaches confirmed links to the Games table and machine-readable records; missing or failed replay states remain explicit rather than using guessed URLs. A live battle watch URL is separate from a saved replay. The currently open older client receives the transport operation on its next normal deliberate start; its present connection and authentication stay unchanged.
+
+For future sets on a capable signed-in session, explicitly enable
+`battle_set_replay_policy({enabled:true,confirmed:true,commandId:"replay-policy"})`
+while idle, or opt in with `--save-replays` at its next deliberate terminal start.
+Publication defaults off. This future-only policy remains active across allowance
+extensions and never changes privacy or uploads historical parents on enabling.
+After the official parent, trusted child results and idle state are confirmed,
+one bounded attempt saves/verifies replays, flushes the recorder and verifies
+the exact team report links, official child manifest, local replay hashes and
+complete canonical evidence. Inspect `battle_status.replayPolicy`; a set acquired
+under this policy must be preserved before the next search or team switch.
+
+An incomplete attempt retains local evidence and reports its failure without an
+automatic upload retry. `battle_save_replays` reuses reserved requests, including
+an uncertain send, and can verify a late server-returned URL without publishing
+the child again. Available URLs are returned even if local report preservation
+fails. A manual historical save after a team switch can return
+`requiresReplayImport:true`; import into the returned original `teamId`, then
+retry verification without using the new team's recorder. Manual saves outside
+the policy remain nonrequired status rather than adding a next-search obligation.
+The policy does not complete a decision review, authorize more sets or permit
+cleanup when any required evidence remains unverified.
 
 After reading the new set's exact-team report, complete its private decision review and skill-sync checkpoint, including `expectedChildIds`. Then call `team_metrics_finalize_bo3` with `teamId`, `parentId` and `checkpointFile`. Explicit `sourceFiles` identify source logs to archive; `cleanupFiles` identify disposable closed run artifacts. While a client remains open, `closedFiles` must list only candidates whose short-lived writer closure the operator observed. That attestation cannot override active-path or shared-source protection. The default `dryRun: true` never uploads, writes evidence or deletes. With `confirmed: true` and `dryRun: false`, it may save replays when `saveReplays: true` and apply only verified cleanup candidates. Existing user authorization covers this workflow; the dry run is a reviewable plan, not another password or battle prompt.
 

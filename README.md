@@ -368,6 +368,7 @@ and do not require live downloads.
 | `battle_switch_team` | Apply an approved legal six while server-confirmed idle, preserving login and allowance; creates/reuses its exact-version report. |
 | `battle_cancel_search`, `battle_stop` | Cancel matchmaking or close the signed-in local session. |
 | `battle_authorize_sets`, `battle_forfeit`, `battle_save_replays` | Extend an explicitly authorized allowance, forfeit an owned set, or save its completed replays. |
+| `battle_set_replay_policy` | Opt in to saving future owned BO3 replays after official completion and server idle; verify report preservation before another search. Defaults off. |
 | `team_metrics_register_team` | Create an exact-version team report from pasted `teamText` or a local `teamFile`. |
 | `team_metrics_delete_team` | Preview or permanently remove a team's report, summaries, evidence, exports and owned closed logs; retained files and blockers remain explicit. |
 | `team_metrics_sync_battles` | Append/update the live client's observations and confirm local report persistence. |
@@ -407,6 +408,11 @@ Battle and report tools share the same MCP server. After a game or BO3, use
 readiness and failures appear in `battle_status.metrics`; older running clients
 continue to use saved-log or replay imports until their next normal start.
 See the [report API](metrics/README.md) for creation, appending, querying and storage.
+When the user has authorized replay saving, configure `battle_set_replay_policy`
+while idle or explicitly add `--save-replays` at session startup. It preserves
+future completed sets without automatically starting another battle. Preview
+decision evidence keeps submitted order, acceptance and observed selections
+separate so defaulted or unknown choices do not become intentional selections.
 Run `npm run test:all` for MCP and client tests. The original transport completed
 one authorized live BO3 on October 15, 2026. The new MCP bridge, structured state,
 Speed tool and log streaming are verified with isolated fixtures and public MCP

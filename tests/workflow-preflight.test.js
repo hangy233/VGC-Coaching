@@ -71,3 +71,10 @@ test('immutable saved-ID source bindings are healthy while changed or unreadable
     assert.equal(result.warnings.some(message=>/remembered team source/u.test(message)),!['saved-id-only','matches-exact-team'].includes(binding),binding);
   }
 });
+
+test('preflight exposes incomplete authorized replay preservation even after server idle',async()=>{
+  for(const replayPolicy of [{enabled:true,capable:true,active:true,pendingParents:[PARENT]},{enabled:false,capable:true,active:false,pendingParents:[PARENT]},{enabled:true,capable:false,active:false,pendingParents:[]}]){
+    const result=await battlePreflight(dependencies({replayPolicy}));assert.equal(result.ready,false);assert.deepEqual(result.session.replayPolicy,replayPolicy);
+  }
+  const result=await battlePreflight(dependencies({replayPolicy:{enabled:true,capable:true,active:false,pendingParents:[]}}));assert.equal(result.ready,true);
+});

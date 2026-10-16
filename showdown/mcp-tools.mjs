@@ -37,6 +37,9 @@ export function registerBattleTools(server, {workspace, call = callLocalSession}
   register('battle_authorize_sets','Extend the signed-in session’s set budget only after an explicit user request. Requires live, server-confirmed idle state with no pending match; keeps the same account and team, and never queues a search. Total budget is at most 100 sets.',{
     confirmed,commandId,additionalSets:z.number().int().min(1).max(100),
   },args=>invoke('authorize-sets',args));
+  register('battle_set_replay_policy','Explicitly enable or disable saved-replay publication for future owned BO3s in this signed-in session while idle. Default is off. Enabling requires existing user authorization to save completed child replays with their current privacy; it never changes visibility, signs in, uploads old sets or queues. After each official parent ends and the server confirms idle, the client makes one bounded save/verify/preserve attempt, flushes its recorder and verifies exact report links plus local replay/canonical evidence. Policy persists through allowance extensions. Incomplete authorized preservation blocks the next search/team switch; retry the same parent with battle_save_replays, which reuses uncertain requests instead of uploading a child twice. Disabling affects future sets and does not clear existing incomplete obligations.',{
+    confirmed,commandId:commandId.unwrap(),enabled:z.boolean(),
+  },args=>invoke('set-replay-policy',args));
   register('battle_choose','Send a complete doubles decision for a current action token. Returns sent status; inspect server acceptance and execution evidence separately. No automatic battle choices.',{
     confirmed,commandId,token,actions:z.array(action).min(1).max(2),validForMs:z.number().int().min(100).max(30000).default(10000),
   },args=>invoke('choose',args));

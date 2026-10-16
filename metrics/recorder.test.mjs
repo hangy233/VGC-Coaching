@@ -1,11 +1,104 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
+import {createHash} from 'node:crypto';
+import {createRequire} from 'node:module';
 import {mkdtemp,mkdir,rm,rmdir,writeFile,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {attachMetricsRecorder} from './recorder.mjs';
 import {getTeamReport} from './store.mjs';
+import {readGameEvidence} from './retention.mjs';
+
+const {Teams}=createRequire(import.meta.url)('pokemon-showdown');
+
+async function previewFixture(){
+  const workspace=await mkdtemp(join(tmpdir(),'vgcm-preview-')),client=new EventEmitter(),room='battle-gen9championsvgc2026regmcbo3-60',state={sheets:{}};
+  const team=[['Sylveon','Pixilate'],['Farigiraf','Armor Tail'],['Politoed','Drizzle'],['Golisopod','Emergency Exit'],['Kommo-o','Soundproof'],['Rillaboom','Grassy Surge']].map(([species,ability])=>({species,ability,level:50,nature:'Modest',evs:{hp:32,spa:32,spd:2},moves:['Protect']}));
+  const teamId=createHash('sha256').update(Teams.pack(team)).digest('hex');
+  client.state=()=>state;
+  const recorder=attachMetricsRecorder(client,{workspace,username:'Fixture',teamId,team});
+  const emit=(type,...data)=>client.emit('battle-event',{room,type,data});
+  const pokemon=['Sylveon','Farigiraf','Politoed','Golisopod','Kommo-o','Rillaboom'].map((species,index)=>({ident:`p1: ${species}`,details:species+', L50',active:index<2,condition:'100/100'}));
+  const request=request=>client.emit('request',{room,request});
+  const preview=()=>request({rqid:1,teamPreview:true,maxChosenTeamSize:4,side:{id:'p1',name:'Fixture',pokemon}});
+  const action=(status,actions=[{type:'team',order:[4,2,1,3]}],rqid=1)=>{state.lastAction={rqid,actions};client.emit('action-status',{room,status});};
+  emit('gametype','doubles');emit('player','p1','Fixture');emit('player','p2','Opponent');
+  const start=()=>{emit('start');emit('switch','p1a: Sylveon','Sylveon, L50','100/100');emit('switch','p1b: Farigiraf','Farigiraf, L50','100/100');emit('switch','p2a: Target','Pikachu, L50','100/100');emit('turn','1');request({rqid:2,active:[],side:{id:'p1',name:'Fixture',pokemon:pokemon.slice(0,4)}});};
+  const finish=async()=>{action('sent',[{type:'move',slot:1},{type:'move',slot:1}],2);action('accepted',[{type:'move',slot:1},{type:'move',slot:1}],2);emit('move','p1a: Sylveon','Protect','p1a: Sylveon');emit('win','Fixture');await recorder.flush();return {report:await getTeamReport({workspace,includeOperational:true}),evidence:await readGameEvidence({workspace,teamId,roomId:room})};};
+  return {workspace,client,room,teamId,recorder,emit,request,pokemon,preview,action,start,finish,close:async()=>{await recorder.close();await rm(workspace,{recursive:true,force:true});}};
+}
+
+test('preview choice order and selected/sent/accepted phases survive duplicate requests and canonical recording',async()=>{
+  const f=await previewFixture();try{
+    f.preview();f.action('sent');f.action('accepted');f.preview();
+    f.start();const {report,evidence}=await f.finish(),preview=evidence.decisions.filter(value=>value.phase==='preview');
+    assert.deepEqual(preview.map(value=>value.status),['selected','sent','accepted','accepted']);
+    assert.deepEqual(preview[0].actions[0].order,[4,2,1,3]);assert(preview.every(value=>value.turn===0));
+    assert.equal(preview.at(-1).evidence.type,'preview-transition');assert.equal(preview.at(-1).accepted,true);assert(!preview.some(value=>value.executed===true));
+    assert.equal(report.games[0].quality.operational,false);assert.equal(report.selection.gamesWithSelection,1);
+    assert.equal(f.recorder.status().recordingSchemaVersion,2);assert.equal(f.recorder.status().features.previewDecisionEvidence,true);
+  }finally{await f.close();}
+});
+
+test('unsubmitted or rejected previews remain operational when later moves were promptly submitted',async()=>{
+  for(const mode of ['unsubmitted','rejected']){
+    const f=await previewFixture();try{
+      f.preview();if(mode==='rejected'){f.action('sent');f.action('rejected');}
+      f.start();const {report,evidence}=await f.finish(),transition=evidence.decisions.find(value=>value.phase==='preview'&&value.evidence?.type==='preview-transition');
+      assert.equal(transition.status,mode);assert.notEqual(transition.serverDefaulted,true);
+      assert.equal(report.games[0].quality.operational,true);assert.equal((await getTeamReport({workspace:f.workspace})).totals.games,0);
+      assert(evidence.decisions.some(value=>value.rqid===2&&value.status==='accepted'));assert.equal(report.selection.gamesWithSelection,1);
+    }finally{await f.close();}
+  }
+});
+
+test('a sent preview without acknowledgment has unknown acceptance rather than a confirmed default',async()=>{
+  const f=await previewFixture();try{
+    f.preview();f.action('sent');f.start();const {report,evidence}=await f.finish();
+    const transition=evidence.decisions.find(value=>value.phase==='preview'&&value.evidence?.type==='preview-transition');
+    assert.equal(transition.status,'unknown');assert.equal(transition.submitted,true);assert.equal(transition.accepted,undefined);assert.equal(transition.serverDefaulted,undefined);
+    assert.match(transition.reason,/not a confirmed server default/);assert.equal(report.games[0].quality.operational,false);
+    assert(report.games[0].quality.warnings.some(value=>/acceptance.*not observed/.test(value)));
+  }finally{await f.close();}
+});
+
+test('accepted retry clears preview rejection and forced replacements keep separate provenance',async()=>{
+  const f=await previewFixture();try{
+    f.preview();f.action('sent');f.action('rejected');f.action('sent',[{type:'team',order:[1,2,3,4]}]);f.action('accepted',[{type:'team',order:[1,2,3,4]}]);f.start();
+    f.request({rqid:3,forceSwitch:[true,false],side:{id:'p1',name:'Fixture',pokemon:f.pokemon.slice(0,4)}});
+    f.emit('switch','p1a: Politoed','Politoed, L50','100/100');
+    const {report,evidence}=await f.finish(),transition=evidence.decisions.find(value=>value.phase==='preview'&&value.evidence?.type==='preview-transition');
+    assert.equal(transition.status,'accepted');assert.deepEqual(transition.actions[0].order,[1,2,3,4]);
+    assert.equal(report.games[0].quality.operational,true);assert(!report.games[0].quality.warnings.some(value=>/after a rejected preview/.test(value)));
+  }finally{await f.close();}
+});
+
+test('missing preview history and untracked choice acknowledgments remain explicit unknowns',async()=>{
+  for(const observed of [false,true]){
+    const f=await previewFixture();try{
+      if(observed){f.preview();f.client.emit('choice-status',{room:f.room,submitted:true});}
+      f.start();const {report,evidence}=await f.finish(),transition=evidence.decisions.find(value=>value.phase==='preview'&&value.evidence?.type==='preview-transition');
+      assert.equal(transition.status,'unknown');assert.equal(transition.serverDefaulted,undefined);assert.equal(report.games[0].quality.operational,false);
+    }finally{await f.close();}
+  }
+});
+
+test('late preview and unidentified acknowledgments cannot count as submitting the following turn',async()=>{
+  for(const source of ['previous-preview','unidentified']){
+    const f=await previewFixture();try{
+      f.preview();f.action('sent');f.start();
+      if(source==='previous-preview')f.action('accepted');
+      else{f.client.state(f.room).lastAction=null;f.client.emit('action-status',{room:f.room,status:'accepted'});}
+      f.client.emit('choice-status',{room:f.room,submitted:true});
+      f.emit('move','p1a: Sylveon','Protect','p1a: Sylveon');f.emit('win','Fixture');await f.recorder.flush();
+      const report=await getTeamReport({workspace:f.workspace,includeOperational:true}),evidence=await readGameEvidence({workspace:f.workspace,teamId:f.teamId,roomId:f.room});
+      assert.equal(report.games[0].quality.operational,true);
+      assert.equal(evidence.decisions.find(value=>value.evidence?.type==='preview-transition').status,'unknown');
+      assert(!evidence.decisions.some(value=>value.rqid===2&&value.status==='accepted'));
+    }finally{await f.close();}
+  }
+});
 
 test('live recorder saves observation metrics and official parent result without sending or authenticating',async()=>{
   const workspace=await mkdtemp(join(tmpdir(),'vgcm-recorder-')),client=new EventEmitter();
@@ -118,7 +211,7 @@ test('observed resolution without a submission is flagged separately from an ack
       const emit=(type,...data)=>client.emit('battle-event',{room,type,data});
       emit('player','p1','Fixture');emit('player','p2','Opponent');emit('start');emit('switch','p1a: Sylveon','Sylveon, L50','202/202');emit('turn','1');
       client.emit('request',{room,request:{rqid:3,active:[],side:{id:'p1',name:'Fixture',pokemon:[{ident:'p1: Sylveon',details:'Sylveon, L50',active:true}]}}});
-      if(submitted)client.emit('action-status',{room,status:'sent'});
+      if(submitted){client.state=()=>({lastAction:{rqid:3,actions:[{type:'move',slot:1}]}});client.emit('action-status',{room,status:'sent'});}
       emit('move','p1a: Sylveon','Protect','p1a: Sylveon');emit('win','Fixture');await recorder.flush();
       assert.equal((await getTeamReport({workspace})).totals.games,submitted?1:0);
       const all=await getTeamReport({workspace,includeOperational:true});assert.equal(all.totals.games,1);assert.equal(all.pokemon[0].moves[0].uses,1);
