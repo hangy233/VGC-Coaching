@@ -106,6 +106,9 @@ function sanitizeDecision(value, turn) {
   return result;
 }
 /** Bounded control telemetry only: never retain commands, errors, URLs or secrets. */
+const CONTROL_TRACE_TIMES=['at','elapsedMs','latencyMs','planningDeadlineAt','cutoffAt','emergencyAt','hardDeadlineAt','turnDeadlineAt','bankDeadlineAt','unknownCutoffAt','clockObservedAt','recoveryStartedAt','timerDisabledAt'];
+const CONTROL_TRACE_LABELS=['controllerId','source','status','kind','reasonCode','clockSource','observedClockSource','deadlineBasis'];
+const CONTROL_TRACE_FLAGS=['clockFreshForRequest','emergencyEligible','controlFailure','recovering'];
 export function sanitizeControlTrace(value, turn = 0) {
   if (value?.event !== 'control-trace' || typeof value.type !== 'string' || !/^[A-Za-z0-9_.:-]{1,80}$/u.test(value.type)) return null;
   const room = canonicalRoom(value.room);
@@ -114,8 +117,9 @@ export function sanitizeControlTrace(value, turn = 0) {
   const observedTurn = Number.isSafeInteger(value.turn) && value.turn >= 0 ? value.turn : turn;
   if (Number.isSafeInteger(observedTurn) && observedTurn >= 0) result.turn = observedTurn;
   for (const field of ['seq', 'rqid', 'revision', 'generation']) if (Number.isSafeInteger(value[field]) && value[field] >= 0) result[field] = value[field];
-  for (const field of ['at', 'elapsedMs', 'latencyMs']) if (time(value[field]) !== undefined) result[field] = value[field];
-  for (const field of ['controllerId', 'source', 'status', 'kind', 'reasonCode']) if (typeof value[field] === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/u.test(value[field])) result[field] = value[field];
+  for (const field of CONTROL_TRACE_TIMES) if (time(value[field]) !== undefined) result[field] = value[field];
+  for (const field of CONTROL_TRACE_LABELS) if (typeof value[field] === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/u.test(value[field])) result[field] = value[field];
+  for (const field of CONTROL_TRACE_FLAGS) if (typeof value[field] === 'boolean') result[field] = value[field];
   return result;
 }
 function mergeControlTrace(previous = [], incoming = []) {
@@ -395,7 +399,7 @@ async function canonicalSourceCoverage(workspace, content, extension, records, p
       }
       if (['action-status', 'choice-status', 'decision', 'choice'].includes(value.event) && !sanitizeDecision(value, 0)) return 'An unsupported action journal entry remains in the source.';
       if (value.event === 'control-trace') {
-        const allowed = new Set(['event', 'type', 'room', 'turn', 'seq', 'at', 'elapsedMs', 'rqid', 'revision', 'controllerId', 'generation', 'source', 'status', 'kind', 'latencyMs', 'reasonCode']);
+        const allowed = new Set(['event','type','room','turn','seq','rqid','revision','generation',...CONTROL_TRACE_TIMES,...CONTROL_TRACE_LABELS,...CONTROL_TRACE_FLAGS]);
         const trace = sanitizeControlTrace(value, 0);
         if (!trace || Object.keys(value).some(key => !allowed.has(key) || !(key in trace))) return 'An unsupported or unarchived control observation remains in the source.';
       }

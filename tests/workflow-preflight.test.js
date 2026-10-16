@@ -80,7 +80,7 @@ test('preflight exposes incomplete authorized replay preservation even after ser
 });
 
 test('production safety capabilities require one owner and enabled non-halted deadline protection',async()=>{
-  const protectedSession={capabilities:{operations:['start','choose','ready','metrics-sync','control-claim','control-release','set-control-policy','stage-fallback','turn-status','control-trace'],features:{controllerLease:true,deadlineSupervisor:true}},controller:{required:true,owner:'batch-operator',generation:3,claimedAt:1000},controlPolicy:{enabled:true,forfeitIfStuck:false,planningMs:20000,safetyMarginMs:5000,unknownClockMs:20000,halted:false,haltReason:null,disposed:false}};
+  const protectedSession={capabilities:{operations:['start','choose','ready','metrics-sync','control-claim','control-release','set-control-policy','stage-fallback','turn-status','control-trace'],features:{controllerLease:true,deadlineSupervisor:true,deadlinePlanningRecovery:true,compactTurnBoard:true}},controller:{required:true,owner:'batch-operator',generation:3,claimedAt:1000},controlPolicy:{enabled:true,forfeitIfStuck:false,planningMs:20000,safetyMarginMs:5000,unknownClockMs:20000,halted:false,haltReason:null,disposed:false}};
   const ready=await battlePreflight(dependencies(protectedSession));assert.equal(ready.ready,true);assert.deepEqual(ready.session.controller,protectedSession.controller);assert.deepEqual(ready.session.controlPolicy,protectedSession.controlPolicy);
   for(const change of [
     {controller:null},
@@ -93,9 +93,11 @@ test('production safety capabilities require one owner and enabled non-halted de
     {controlPolicy:{enabled:true}},
     {controlPolicy:{...protectedSession.controlPolicy,disposed:true}},
     {capabilities:{...protectedSession.capabilities,features:{controllerLease:true}}},
+    {capabilities:{...protectedSession.capabilities,features:{...protectedSession.capabilities.features,deadlinePlanningRecovery:false}}},
+    {capabilities:{...protectedSession.capabilities,features:{...protectedSession.capabilities.features,compactTurnBoard:false}}},
     {capabilities:{...protectedSession.capabilities,operations:['start','choose','ready','metrics-sync']}},
   ]){
-    const result=await battlePreflight(dependencies({...protectedSession,...change}));assert.equal(result.ready,false,JSON.stringify(change));assert(result.blockers.some(message=>/controller|deadline|fallback/iu.test(message)));
+    const result=await battlePreflight(dependencies({...protectedSession,...change}));assert.equal(result.ready,false,JSON.stringify(change));assert(result.blockers.some(message=>/controller|deadline|fallback|compact/iu.test(message)));
   }
 });
 

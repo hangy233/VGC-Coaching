@@ -78,6 +78,8 @@ export async function battlePreflight({workspace,teamId,parentId,call=callLocalS
     check('deadline-protection-capability',watchdog,'The loaded client has no advertised deadline watchdog. Do not assume automatic fallback submission or stuck containment exists; source changes require its next normal authorized startup.',enforcedLease);
     if(enforcedLease){
       check('loaded-control-operations',Array.isArray(operations)&&controlOperations.every(operation=>operations.includes(operation)),'The loaded client must advertise exclusive control, fallback staging, deadline policy and compact safety evidence operations.');
+      check('deadline-recovery-capability',capabilities?.features?.deadlinePlanningRecovery===true,'The loaded client must distinguish a missed planning target from a verified server emergency deadline; restart the repaired client before another search.');
+      check('compact-turn-board-capability',capabilities?.features?.compactTurnBoard===true,'The loaded client must provide the current board and legal choices together in compact turn status; source changes do not update an older process.');
       check('controller-owner',controls.controller?.required===true&&typeof controls.controller.owner==='string'&&controls.controller.owner.trim().length>0,'Claim one exclusive controller with battle_control_claim before starting another set; retain its private lease for mutations.');
       check('deadline-protection',controls.controlPolicy?.enabled===true&&controls.controlPolicy.halted===false&&controls.controlPolicy.disposed!==true,'Enable non-halted deadline protection with battle_set_control_policy while idle before starting another set; review a safety halt before deliberately resetting it.');
     }

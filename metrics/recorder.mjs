@@ -126,7 +126,7 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
     const b=get(value.room);if(!b)return;
     const trace=sanitizeControlTrace({...value,event:'control-trace'},null);if(!trace)return;
     append(value.room,trace);
-    if(['fallback-sent','watchdog-forfeit','watchdog-uncertain'].includes(trace.type))b.operational=true;
+    if(trace.controlFailure===true||['fallback-sent','watchdog-forfeit','watchdog-uncertain'].includes(trace.type))b.operational=true;
     // A post-result recovery observation is useful evidence too. An idle flush
     // must not leave it solely in a disposable log until the client closes.
     if(client.state?.(value.room)?.ended)save(b);

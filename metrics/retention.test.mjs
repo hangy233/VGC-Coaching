@@ -100,7 +100,7 @@ test('later recording preserves earlier control traces, including a late partial
 });
 
 test('cleanup protects unarchived or unsupported control traces until canonical coverage exists', async t => {
-  const dir=await prepared(t),trace={room:ROOM,event:'control-trace',type:'watchdog-uncertain',seq:1,at:300,rqid:33,revision:1};
+  const dir=await prepared(t),trace={room:ROOM,event:'control-trace',type:'watchdog-recovery-started',seq:1,at:300,rqid:33,revision:1,planningDeadlineAt:250,emergencyAt:900,hardDeadlineAt:1000,timerDisabledAt:200,clockObservedAt:250,clockSource:'server-timer-observation',deadlineBasis:'observed-server-clock',clockFreshForRequest:true,emergencyEligible:true,controlFailure:true,recovering:true};
   const events=[...values(),trace];await write(dir,target,events.map(value=>JSON.stringify(value)).join('\n')+'\n');
   let plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,false);assert.match(plan.files[0].reason,/control observations absent/);
   await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});

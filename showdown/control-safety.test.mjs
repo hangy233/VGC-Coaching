@@ -49,11 +49,13 @@ test('S6 rqid31: staged pair submits during operator silence, acknowledgment pre
     assert(f.session.controlTrace.some(entry=>entry.type==='accepted'));
   }finally{f.session.dispose();}
 });
-test('S5 rqid6 and S6 new-request silence: no staged choice uses authorized containment and halts searches',async()=>{
+test('fresh-request planning silence recovers before a verified server emergency permits containment',async()=>{
   for(const rqid of [6,31]){
     const f=await fixture();try{
-      await f.start();f.own();f.request({rqid});f.timer.advance(20000);
+      await f.start();f.own();f.request({rqid});f.client.receive(`>${room}\n|inactive|Time left: 55 sec this turn | 300 sec total`);f.timer.advance(20000);
       assert.equal(f.sent.filter(line=>line.includes('/choose')).length,0);
+      assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);assert.equal(f.session.supervisor.status().pending[0].recovering,true);
+      f.timer.advance(30000);
       assert.deepEqual(f.sent.filter(line=>line.includes('/forfeit')),[`${parent}|/forfeit`]);
       assert.equal(f.session.supervisor.status().halted,true);
       f.client.receive(`>${room}\n|win|Opponent\n>${parent}\n|win|Opponent`);f.client.receive('|updatesearch|{"searching":[],"games":null}');
@@ -72,14 +74,16 @@ test('S6 rqid33: sole living reserve resolves by identity to slot4 with a legal 
     assert(f.sent.includes(`${room}|/choose switch 4, pass|33`));
   }finally{f.session.dispose();}
 });
-test('takeover revokes pending commands and staged fallback without extending request deadline',async()=>{
+test('takeover revokes the old lease while missing-plan recovery still permits a fresh staged pair',async()=>{
   const f=await fixture();try{
     await f.start();f.own();f.request();const action=f.session.actions()[0];await f.execute({op:'stage-fallback',token:action.token,actions:pair});f.timer.advance(5000);
     assert.equal((await f.raw({op:'control-claim',controllerId:'recovery',takeover:true,expectedGeneration:0})).ok,false);
     const takeover=await f.raw({op:'control-claim',controllerId:'recovery',takeover:true,expectedGeneration:1});assert.equal(takeover.ok,true);
     assert.equal((await f.execute({op:'choose',token:action.token,actions:pair})).ok,false);
     assert.equal(f.session.supervisor.status().pending[0].hasFallback,false);
-    f.timer.advance(15000);assert.equal(f.sent.filter(line=>line.includes('/choose')).length,0);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,1);
+    f.timer.advance(15000);assert.equal(f.sent.filter(line=>line.includes('/choose')).length,0);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);assert.equal(f.session.supervisor.status().halted,true);
+    assert.equal((await f.raw({op:'stage-fallback',controllerLease:takeover.result.controllerLease,token:action.token,actions:pair})).ok,true);f.timer.advance(0);
+    assert.equal(f.sent.filter(line=>line.includes('/choose')).length,1);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);
   }finally{f.session.dispose();}
 });
 test('uncertain socket write halts future search without forfeiting a possibly delivered choice',async()=>{
@@ -122,6 +126,19 @@ test('short total bank overrides turn clock and fresh request invalidates old fa
     await f.start();f.own();f.request();let action=f.session.actions()[0];await f.execute({op:'stage-fallback',token:action.token,actions:pair});
     f.request({rqid:33});f.client.receive(`>${room}\n|inactive|Time left: 60 sec this turn | 8 sec total`);action=f.session.actions()[0];assert.equal(action.clock.bankRemainingMs,8000);
     f.timer.advance(3000);assert.equal(f.sent.filter(line=>line.includes('/choose')).length,0);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,1);
+  }finally{f.session.dispose();}
+});
+
+test('actual timer protocol replaces a provisional unknown budget and preserves rescue after planning misses',async()=>{
+  const f=await fixture();try{
+    assert.equal((await f.execute({op:'set-control-policy',enabled:true,forfeitIfStuck:true,planningMs:30000,unknownClockMs:20000})).ok,true);
+    await f.start();f.own();f.request();const action=f.session.actions()[0];assert.equal(action.clock.source,'unavailable');assert.equal(f.session.supervisor.status().pending[0].cutoffAt,21000);
+    f.timer.advance(4000);f.client.receive(`>${room}\n|inactive|Time left: 90 sec this turn | 300 sec total`);
+    const known=f.session.supervisor.status().pending[0];assert.equal(known.cutoffAt,31000);assert.equal(known.hardDeadlineAt,95000);assert.equal(known.clockObservedAt,5000);assert.equal(known.emergencyAt,90000);
+    f.timer.advance(16000);assert.equal(f.session.supervisor.status().halted,false);f.timer.advance(10000);assert.equal(f.session.supervisor.status().halted,true);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);
+    f.timer.advance(10000);assert.equal((await f.execute({op:'stage-fallback',token:action.token,actions:pair})).ok,true);f.timer.advance(0);
+    assert.equal(f.sent.filter(line=>line.includes('/choose')).length,1);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);f.timer.advance(100000);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);
+    const recovery=f.session.readControlTrace().entries.find(event=>event.type==='watchdog-planning-recovery');assert.equal(recovery.planningDeadlineAt,31000);assert.equal(recovery.emergencyAt,90000);assert.equal(recovery.clockObservedAt,5000);assert.equal(recovery.controlFailure,true);
   }finally{f.session.dispose();}
 });
 test('command IDs cannot collide with different actions or reveal another command result',async()=>{

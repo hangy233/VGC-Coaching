@@ -34,6 +34,8 @@ not matching a prescribed move or a string in the skill.
 | Optional research consumes the turn | Identify the complete legal pair first, use the early-commit buffers and total bank, verify send, refresh after a new request | Finishing every calculation before choosing, treating an observer alert as submission, or sending the old pair after a forced replacement |
 | Preview advances while a large status response is rendering | Immediately extract the fresh current board/token/legality, count request age and tool latency, stage/send before optional URLs or history; retain full observations internally | Reprinting sheets/history until the unsubmitted first turn times out, or treating rendering completion as a new planning window |
 | Operator pauses after staging, or before any fallback exists | Inspect enabled policy; stage the exact current legal pair before optional work; independently reconcile watchdog send or authorized stuck-forfeit and halt | Treating staging as acceptance, inventing a generic move, retrying an uncertain send, or queuing again after containment |
+| Local planning target passes while server time remains | Enter recovery attention, preserve legal current-set staging, halt future searches, and use verified turn/bank emergency evidence for automatic forfeiture | Forfeiting merely because 20 or 30 local seconds passed, or treating an unavailable clock as a server expiry |
+| Timer observation arrives late or the timer is explicitly disabled | Replace only provisional unknown bounds with fresh real evidence; revoke cancelled timer eligibility; retain provenance and reject stale observations | Latching an early unknown bound as a server deadline or forfeiting at a timer deadline that was cancelled |
 | Valid preview, move or replacement sent while the opponent waits beyond five seconds | Preserve its send reservation; ordinary live acknowledgment is absent; wait for observed progress without automatic halt, resend or forfeit | Treating no acknowledgment as a missed own turn or forfeiting an otherwise waiting set |
 | Socket write is uncertain, then a fresh request arrives | Bounded reconciliation and attention, future-search halt, no blind resend or automatic forfeit from missing acknowledgment; still stage/submit fresh requests | Treating uncertainty as acceptance, treating a halt as permission to abandon current turns, or forfeiting solely from an acknowledgment timeout |
 | Party order changes after a server default | Fresh forced request, named replacement identity, complete switch/pass combinations and final legality validation | Reusing an earlier index or counting a rejected switch as sent |
@@ -73,6 +75,15 @@ not matching a prescribed move or a string in the skill.
   than hiding consequential information to make the output small. It preserves
   MCP-only numerical checks, the existing cutoff and the distinction between a
   successful sent choice waiting for the opponent and a fresh unsubmitted turn.
+- **Planning and emergency:** Supply a 90-second preview, a missed 30-second
+  planning target and a legal pair staged at 40 seconds. A passing controller
+  rescues the current request, records the planning failure and keeps future
+  searches halted for review. Contrast a genuinely verified short turn/bank
+  emergency, an unknown clock, a timer explicitly disabled after recovery began,
+  and an observation failure: only the verified current emergency permits the
+  authorized automatic forfeit. Unknown or failed reads need bounded attention,
+  without a hot retry loop or invented deadline. A sent choice waiting for the
+  opponent remains reserved throughout.
 - **Replacement and takeover:** Supply a forced request with one live reserve in
   party slot four, then a later reordered request and two claimants using the
   same observed generation. A passing operator selects a fresh named legal

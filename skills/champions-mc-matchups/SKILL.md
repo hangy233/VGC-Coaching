@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-16.16**. Read the bundled
+Cycle revision: **2026-10-16.17**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -174,6 +174,10 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
   A successful local send can remain acceptance-unknown while the opponent
   plans: ordinary choices do not normally receive a live acknowledgment.
   Missing acknowledgment alone warrants neither a resend nor a forfeit.
+  Missing the local planning target triggers attention and recovery; it is not
+  proof that the server deadline expired. A repaired client allows a fresh legal
+  pair during recovery and reserves automatic stuck-forfeit for a verified
+  current server turn or bank emergency. Unknown clocks remain unknown.
   Reconcile an uncertain write separately and keep fresh requests protected;
   the cycle distinguishes that attention state from an unsubmitted request.
   After a context lapse or timeout, repair this workflow before another queue.

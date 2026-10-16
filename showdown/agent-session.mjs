@@ -5,6 +5,7 @@ import {createRequire} from 'node:module';
 import {ControllerLease} from './controller-lease.mjs';
 import {DeadlineSupervisor} from './deadline-supervisor.mjs';
 import {replacementOptions,legalReplacementPairs} from './choice-validation.mjs';
+import {compactTurnBoard} from './turn-board.mjs';
 
 const {Teams,TeamValidator}=createRequire(import.meta.url)('pokemon-showdown');
 const RUNTIME_REVISION=createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
@@ -13,6 +14,12 @@ const LOADED_AT=new Date().toISOString();
 const normalized = text => String(text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function publishedSheet(packed){
+  const columns=String(packed).split(']').map(set=>set.split('|'));
+  return (Teams.unpack(packed)||[]).map((set,index)=>({species:set.species,item:set.item||null,ability:set.ability||null,moves:set.moves,
+    nature:columns[index]?.[5]?set.nature:null,level:columns[index]?.[10]?set.level:null,
+    gender:columns[index]?.[7]?set.gender:null,shiny:!!set.shiny}));
+}
 const EVENTS = ['request','battle-event','sheet','timer','result','ready','server-error','choice-status','action-status','forfeit-status','search-state','room-renamed','replay-url','replay-verified','replay-failed','disconnected'];
 
 /** One explicitly bounded local session. It never logs in or chooses strategy. */
@@ -56,8 +63,9 @@ export class AgentSession extends EventEmitter {
   }
   recordControlTrace(entry){
     const controller=this.controller.status(),record={seq:++this.controlSequence,at:this.now(),elapsedMs:Math.max(0,this.monotonicNow()-this.controlStartedAt),controllerId:controller.owner?.replace(/[^A-Za-z0-9_.:-]/g,'_')||'none',generation:controller.generation};
-    for(const key of ['type','source','status','kind','reasonCode'])if(typeof entry[key]==='string')record[key]=entry[key].replace(/[^A-Za-z0-9_.:-]/g,'_').slice(0,80);
-    for(const key of ['rqid','revision','latencyMs'])if(Number.isFinite(entry[key]))record[key]=entry[key];
+    for(const key of ['type','source','status','kind','reasonCode','clockSource','observedClockSource','deadlineBasis'])if(typeof entry[key]==='string')record[key]=entry[key].replace(/[^A-Za-z0-9_.:-]/g,'_').slice(0,80);
+    for(const key of ['rqid','revision','latencyMs','planningDeadlineAt','cutoffAt','emergencyAt','hardDeadlineAt','turnDeadlineAt','bankDeadlineAt','unknownCutoffAt','clockObservedAt','timerDisabledAt','recoveryStartedAt'])if(Number.isFinite(entry[key]))record[key]=entry[key];
+    for(const key of ['clockFreshForRequest','emergencyEligible','controlFailure','forfeited','retried','recovering'])if(typeof entry[key]==='boolean')record[key]=entry[key];
     if(typeof entry.room==='string'&&this.ownedRooms.has(this.client.resolveRoom(entry.room)))record.room=this.client.resolveRoom(entry.room);
     this.controlTrace.push(record);if(this.controlTrace.length>2000)this.controlTrace.shift();
     this.client.emit('control-trace',record);return record;
@@ -113,7 +121,15 @@ export class AgentSession extends EventEmitter {
     c.authorize('forfeit',{room:parent,confirmed:true});return c.forfeitSet(parent);
   }
   turnSnapshot(){
-    return {sessionId:this.id,revision:this.revision,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),actions:this.actions(),choices:[...this.client.rooms.values()].filter(room=>this.ownedRooms.has(room.id)&&!room.ended&&room.lastAction).map(room=>({room:room.id,...room.lastAction}))};
+    const rooms=[...this.client.rooms.values()].filter(room=>this.ownedRooms.has(room.id)&&!room.ended&&!this.client.rooms.get(this.roomParents.get(room.id))?.ended);
+    const actions=this.actions(),previewRooms=new Set(actions.filter(action=>action.kind==='preview').map(action=>action.room));
+    const boards=rooms.filter(room=>room.id.startsWith('battle-')).map(room=>({room:room.id,parentId:this.roomParents.get(room.id),
+      requestAgeMs:Number.isFinite(room.receivedAt)?Math.max(0,this.now()-room.receivedAt):null,clock:this.clock(room,room.request?.teamPreview?'preview':'turn'),
+      ...compactTurnBoard(this.client.battleSnapshot?.(room.id),{request:room.request,events:room.battleLog}),
+      ...(previewRooms.has(room.id)?{opponentSheets:Object.fromEntries(Object.entries(room.sheets||{}).filter(([side])=>side!==room.request.side?.id).map(([side,packed])=>[side,publishedSheet(packed)])),opponentSheetUncertainty:'Registered six and published sets only; selected four, stat investments and next actions are unknown.'}:{})}));
+    return {sessionId:this.id,revision:this.revision,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),actions,
+      boards,
+      choices:rooms.filter(room=>room.lastAction).map(room=>({room:room.id,...room.lastAction}))};
   }
   controlPolicySnapshot(){const {recentEvents,...policy}=this.supervisor.status();return policy;}
   readControlTrace({room,limit=50}={}){
@@ -157,7 +173,7 @@ export class AgentSession extends EventEmitter {
     }
   }
   roomTeamId(room){return this.roomTeams.get(this.client.resolveRoom(room))||this.client.expectedTeamHash;}
-  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,namedReplacements:true,controlTrace:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
+  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,compactTurnBoard:true,namedReplacements:true,controlTrace:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
   rememberAction(action){
     const state=this.client.rooms.get(action.room),turn=state?.battle?.turn;
     if(!this.actionContexts.has(action.token))this.actionContexts.set(action.token,{room:action.room,teamId:this.roomTeamId(action.room),rqid:action.rqid,turn:Number(turn)||0,sessionId:this.id,token:action.token,lastObservedStatus:state?.lastAction?.rqid===action.rqid?state.lastAction.status:'unsubmitted'});
@@ -178,6 +194,7 @@ export class AgentSession extends EventEmitter {
     });
     // A timer-off observation cancels earlier countdown evidence.
     const timerOff = [...r.timers].reverse().find(entry => entry.type === 'inactiveoff');
+    if(timerOff && timerOff.at >= (r.receivedAt || 0) && (!observation || timerOff.at >= observation.at))return {source:'server-timer-disabled',observedAt:timerOff.at,deadlineAt:null,remainingMs:null,bankDeadlineAt:null,bankRemainingMs:null};
     if (!observation || timerOff && timerOff.at >= observation.at) return {source:'unavailable',deadlineAt:null,remainingMs:null,bankDeadlineAt:null,bankRemainingMs:null};
     const match = observation.text.match(/^Time left: (\d+) sec this turn/) || observation.text.match(/ has (\d+) seconds /);
     const deadlineAt = observation.at + Number(match[1]) * 1000;

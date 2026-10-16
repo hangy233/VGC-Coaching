@@ -36,6 +36,8 @@ of skill files, review reports, and chat.
    grant no new battles, replay publication or roster changes. Source edits do
    not update an existing process; adopt these capabilities at the next authorized
    startup. Retain the current valid lease between sets rather than claiming anew.
+   The repaired client advertises `compactTurnBoard` and
+   `deadlinePlanningRecovery`; verify the loaded flags before relying on them.
 5. Run `battle_preflight` and inspect its blockers and warnings: existing
    authentication, exact team, remaining authorization, actual idle state,
    loaded capabilities, prior review, skill adoption and report health. A source
@@ -118,15 +120,26 @@ With the enabled deadline policy, stage that exact pair using
 `battle_stage_fallback` before calculator calls, history reads or optional notes.
 This also applies to the first actionable request immediately after preview and
 after a forced replacement; optional reporting cannot occupy that transition.
-Use `battle_turn_status` for compact current requests, choice state, controller
-owner and safety state. Staging is neither a send nor acceptance: the client can
+Use `battle_turn_status` for the compact current board, legal request, choice,
+controller and safety state. Its preview includes the published opposing sheet;
+later turns omit repeated sheets and history. Treat the current request's four
+as our selected team, rather than old preview entries still visible in history.
+Staging is neither a send nor acceptance: the client can
 submit it at its bounded cutoff if the operator stalls. Improve it through an
 ordinary timely `battle_choose` when justified. Every fallback belongs to its
 exact token; request change, disconnect, lease release or takeover invalidates it.
 For a fresh unsubmitted request with no usable fallback at its planning cutoff,
-an enabled `forfeitIfStuck` policy makes a bounded whole-set forfeit attempt and
-halts further searches; it invents no attack. A successful sent choice is not
-such an unsubmitted request, even when its acceptance remains unknown.
+the repaired policy marks recovery attention and halts future searches. Submit or
+stage a fresh legal pair promptly: current-set recovery remains available during
+that halt, and staging an overdue pair can cause an immediate fallback send.
+Reconcile the resulting send before an ordinary choose or retry.
+The local planning target is not an automatic-forfeit deadline. Only verified
+current server turn/bank evidence can make an enabled `forfeitIfStuck` emergency
+attempt eligible; an unknown clock permits attention, not an invented expiry.
+The first real clock can replace a provisional unknown budget. An explicit fresh
+timer-off observation revokes its old deadline; generic missing clock data does
+not prove the timer was cancelled. A successful sent choice is not an unsubmitted
+request, even when acceptance remains unknown. The client invents no attack.
 Inspect its send uncertainty, official result and idle state. Reset a safety halt
 only through deliberate policy configuration while idle, after the control review.
 An uncertain socket write retains its reservation and receives bounded
@@ -175,6 +188,10 @@ when stuck, use the owned whole-BO3 `battle_forfeit`, then verify the parent res
 server idle. `battle_stop` only disconnects. Never assume a fallback was staged
 or deadline protection enabled: inspect the actually loaded client's safety state.
 
+Prepare a focused operator context between BO3s when the current context is large;
+automatic context restoration can consume a live request's remaining time.
+Do not reconstruct long history before staging the fresh pair. A focused context
+still needs the required guidance, locked team and verified working controls.
 Prepare a deliberate operator handoff between BO3s when possible. Before a new
 search or transfer, the receiving operator must read the current guidance and
 successfully call `battle_status` through its own MCP connection, verifying the

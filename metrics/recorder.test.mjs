@@ -41,15 +41,16 @@ test('preview choice order and selected/sent/accepted phases survive duplicate r
   }finally{await f.close();}
 });
 
-test('watchdog fallback, forfeit and uncertain traces are durable operational evidence without changing official results',async()=>{
-  for(const type of ['fallback-sent','watchdog-forfeit','watchdog-uncertain']){
+test('watchdog fallback, forfeit, uncertainty and recovered planning failures retain operational evidence without changing official results',async()=>{
+  for(const type of ['fallback-sent','watchdog-forfeit','watchdog-uncertain','watchdog-recovery-started']){
     const f=await previewFixture();try{
       f.preview();f.action('sent');f.action('accepted');f.start();
-      f.client.emit('control-trace',{room:f.room+'-privatepw',type,seq:4,at:1234,elapsedMs:120,rqid:2,revision:1,controllerId:'fixture-operator',generation:1,source:'watchdog',status:'sent-not-acknowledged',reasonCode:'DEADLINE_REACHED',password:'NEVER-PERSIST',command:'NEVER-PERSIST'});
+      f.client.emit('control-trace',{room:f.room+'-privatepw',type,seq:4,at:1234,elapsedMs:120,rqid:2,revision:1,controllerId:'fixture-operator',generation:1,source:'watchdog',status:'sent-not-acknowledged',reasonCode:'DEADLINE_REACHED',controlFailure:type==='watchdog-recovery-started',planningDeadlineAt:1200,emergencyAt:9000,clockSource:'server-timer-observation',emergencyEligible:true,password:'NEVER-PERSIST',command:'NEVER-PERSIST'});
       const {report,evidence}=await f.finish();
       assert.equal(report.games[0].outcome,'win');assert.equal(report.games[0].quality.operational,true);
       assert.equal((await getTeamReport({workspace:f.workspace})).totals.games,0);
       assert.equal(evidence.controlTrace.length,1);assert.equal(evidence.controlTrace[0].type,type);assert.equal(evidence.controlTrace[0].at,1234);assert.equal(evidence.controlTrace[0].turn,1);
+      assert.equal(evidence.controlTrace[0].planningDeadlineAt,1200);assert.equal(evidence.controlTrace[0].emergencyAt,9000);assert.equal(evidence.controlTrace[0].emergencyEligible,true);
       assert(!JSON.stringify(evidence.controlTrace).includes('NEVER-PERSIST'));assert(!JSON.stringify(evidence.controlTrace).includes('privatepw'));
       assert.equal(f.recorder.status().features.controlTraceEvidence,true);
     }finally{await f.close();}

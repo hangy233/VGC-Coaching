@@ -58,7 +58,7 @@ Manager. Saved login does not authorize matchmaking, extend the set allowance,
 or enable background reconnects. After a disconnect, a new explicitly started
 session may use `--saved-login` again within the user's authorized battle scope.
 
-MCP tools `battle_status` and `battle_wait` return compact observed state, open sheets, current action tokens, legal actions and observed countdowns. `battle_turn_status` returns only the fresh action, choice, controller and safety information needed for an urgent decision. `battle_start` uploads the locked team and sends one search. `battle_choose` consumes a fresh token plus complete doubles actions. `battle_ready`, `battle_cancel_search`, `battle_forfeit` and `battle_stop` handle the remaining controls. Production control mutations require an exclusive lease from `battle_control_claim`; see below. Each action remains subject to the user's actual scope; the default hard limit is one matchmaking search. The session only acquires its expected-format BO3 parent and server-linked children, not unrelated battles on the account.
+MCP tools `battle_status` and `battle_wait` return compact observed state, open sheets, current action tokens, legal actions and observed countdowns. `battle_turn_status` returns the current board, fresh legal request, choice, controller and recovery deadlines in one bounded response; the full published opposing sheet appears only during actionable preview. `battle_start` uploads the locked team and sends one search. `battle_choose` consumes a fresh token plus complete doubles actions. `battle_ready`, `battle_cancel_search`, `battle_forfeit` and `battle_stop` handle the remaining controls. Production control mutations require an exclusive lease from `battle_control_claim`; see below. Each action remains subject to the user's actual scope; the default hard limit is one matchmaking search. The session only acquires its expected-format BO3 parent and server-linked children, not unrelated battles on the account.
 
 ### Exclusive controller and deadline watchdog
 
@@ -90,10 +90,13 @@ not a send or acceptance; ordinary `battle_choose` remains the prompt preferred
 submission. A changed request, disconnect, release or takeover invalidates the
 fallback. The client invents neither strategy nor calculations.
 
-When a fresh unsubmitted request has no usable fallback at its planning cutoff
-and `forfeitIfStuck` is enabled, a bounded recovery timeout attempts to forfeit
-the owned BO3 and halts further searches. Preserve that as a
-control failure, verify the official result and server idle, and finish the review.
+When a fresh unsubmitted request has no usable fallback at its planning cutoff,
+the client enters recovery attention and halts future searches. Current-set legal
+staging remains available; an overdue staged pair can send promptly. Automatic
+stuck-forfeit requires verified current server turn/bank emergency evidence and
+`forfeitIfStuck`; an unknown clock never invents an expiry. Fresh timer-off evidence
+revokes the cancelled timer's deadline. Preserve a missed planning target as a
+control failure even if recovered, and finish the eventual official result review.
 Only deliberate idle policy configuration clears the halt. Read
 `battle_control_trace({room:OPTIONAL_OWNED_ROOM,limit:50})` for bounded request,
 stage, send, rejection, acknowledgement and advancement evidence. Separate agent
