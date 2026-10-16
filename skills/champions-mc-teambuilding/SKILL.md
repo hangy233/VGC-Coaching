@@ -116,6 +116,28 @@ or the structure lacks a reasonable plan; do not prescribe a Dark type, a weathe
 setter, or a stock support Pokemon after every isolated loss. When proposing a
 replacement, identify the role gained, the role lost, and a matchup that worsens.
 
+When local battle history exists, read `team_metrics_agent_report` for the exact
+team ID being evaluated. Match its cached full team sheet to that version; keep
+changed versions separate. Read the report's data cutoff, refresh warnings,
+filters, included/excluded counts and known-versus-unknown selection coverage
+before interpreting rates. The private `cache/team-metrics/reports/teams/TEAM_ID.agent.json`
+and `.agent.md` are agent-readable fallbacks; record their freshness limitations
+when a fresh MCP query is unavailable. Use `includeGames: true`, the detailed
+`team_metrics_report`, and referenced game/parent/source records to inspect the
+turns and decision traces behind a potential adjustment.
+
+Compare each member's intended job with observed selections, leads, Mega use,
+executed moves, failures/action denial, attributed knockouts and confirmed item
+removals. Treat unused moves, low selection and conditional win rates as review
+questions, not proof that a slot should change. Unknown reserves are not bench
+choices, and executed moves are not necessarily agent-selected moves. Separate
+operational exclusions, piloting and variance from repeated structural gaps;
+inspect opportunities and lost coverage before proposing the smallest useful
+change. Cite supporting private evidence in the review and verify any proposed
+damage or Speed benchmark through the actual MCP. Do not promote private player
+names, match logs or exact results into shared skill guidance, or change a saved
+roster outside the user's requested or already accepted scope.
+
 Separate building from testing: a legal, calculated team is a starting build,
 not a ladder-tested or tournament-proven team. Use replay evidence to compare
 each member's intended role with its actual contribution and revise the weakest

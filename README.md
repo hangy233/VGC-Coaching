@@ -9,6 +9,9 @@ A specialized Model Context Protocol (MCP) server designed for competitive Poké
 - **Usage Statistics**: Fetch Smogon format-wide usage and moveset reports, plus Champions ladder species rankings and set distributions from Pokémon Champions Battle Data, with source and period metadata.
 - **Type Effectiveness**: Instant multiplier calculations for any type combination.
 - **Damage Calculation**: Integrated Smogon-calc for precise battle scenario modeling.
+- **Private team metrics**: Keep ten recent team versions with separate reports. Record moves, knockouts, item removals, selections and results automatically from the client or import saved replay URLs. Includes a live dashboard, agent-readable evidence reports for skill/team reviews, and CSV/JSON exports. See [team metrics](metrics/README.md).
+
+Private battle records, session files, metrics databases, compressed evidence and generated reports belong under the ignored `cache/` directory. New personal team exports and notes under `teams/`, local logs, database files, temporary files and environment secrets are also ignored. Previously published example teams remain tracked. Do not force-add private data or replay access links to Git.
 
 ## Getting Started
 
@@ -110,6 +113,24 @@ expert guides and verified M-C rules. Copy each complete folder into
 `$CODEX_HOME/skills` (normally `~/.codex/skills`) for Codex discovery. Invoke them
 as `$champions-mc-teambuilding` and `$champions-mc-matchups`; automatic selection
 also remains enabled.
+
+For the matchup skill, use the whole-folder sync helper instead of copying just
+`SKILL.md`:
+
+```powershell
+node skills/champions-mc-matchups/scripts/sync-skill.mjs --check
+node skills/champions-mc-matchups/scripts/sync-skill.mjs --install --backup cache/skill-sync-before-install
+node skills/champions-mc-matchups/scripts/sync-skill.mjs --check
+```
+
+The installer backs up overwritten files, never deletes destination-only files,
+and verifies all content hashes. Read the updated skill after syncing. Before each
+new authorized BO3, its [required cycle](skills/champions-mc-matchups/references/headless-battle-cycle.md)
+requires the previous set's private decision review, a supported lesson or explicit
+no-change reason, relevant validation and verified skill sync. This applies after
+the final set too. Project `AGENTS.md`, the skill entrypoint/default prompt and MCP
+`battle_start` description expose the requirement; review completion is an agent
+responsibility, not a runtime restriction enforced by the transport.
 
 The guide research and rules baseline were checked on October 2, 2026. Historical
 VGC guides contribute methodology only; recommendations must pass Champions M-C
@@ -326,6 +347,10 @@ and do not require live downloads.
 | `get_champions_pokemon_usage` | Champions ladder Pokémon set percentages and teammate ranks for a battle type/season/date. |
 | `get_type_effectiveness` | Calculates multiplier for an attack vs defender types. |
 | `calculate_damage` | Advanced damage calculation using Smogon-calc. |
+| `calculate_speed` | Native Champions raw stats, effective Speed, same-priority order and ties for 1–6 explicit snapshots. |
+| `battle_status`, `battle_wait` | Compact state, current action tokens, observed clocks and event-driven waiting on the terminal-owned session. |
+| `battle_start`, `battle_choose`, `battle_ready` | Guarded M-C BO3 search, complete doubles decisions and readiness within the authorized set limit. |
+| `battle_cancel_search`, `battle_stop` | Cancel matchmaking or close the signed-in local session. |
 
 ## License
 
@@ -333,10 +358,23 @@ ISC
 
 ## Headless Showdown client
 
-The Node 24 client provides persistent WebSocket and JSON-lines control for an
-agent, with user-operated hidden TTY login, guarded doubles choices, BO3/OTS
-state and verified replay uploads. No battle UI is required after authentication.
-It is a transport, not a strategy engine; all damage analysis stays in the MCP.
+The Node 24 client keeps authentication in a user-operated terminal. The MCP
+controls the same client over OS-local IPC, with compact observed battle state,
+fresh action tokens, BO3 readiness, and a readable live log in that terminal.
+All numerical damage and Speed analysis stays in the MCP.
+
+Build/restart the MCP server, then start the terminal session from this repository:
+
+```powershell
+npm.cmd run battle:session -- YOUR_USERNAME --team YOUR_TEAM.txt --sets 1
+```
+
+Enter the password directly in the hidden prompt. Login does not queue; an
+authorized `battle_start` call searches for one set. The team is validated and
+locked for that process. Automatic readiness only advances games inside its
+authorized BO3. `--manual-ready` disables it. No browser battle UI is needed.
 See [setup/API](showdown/README.md) and [play → conclude → update](showdown/AGENT-WORKFLOW.md).
-Run `npm run test:all` for MCP and client tests. Live authenticated play remains
-unverified; fixtures do not establish end-to-end live reliability.
+Run `npm run test:all` for MCP and client tests. The original transport completed
+one authorized live BO3 on October 15, 2026. The new MCP bridge, structured state,
+Speed tool and log streaming are verified with isolated fixtures and public MCP
+calls; no additional live battle was queued to test these changes.

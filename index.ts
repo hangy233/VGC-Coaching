@@ -9,6 +9,9 @@ import { Generations } from '@pkmn/data';
 import { Classifier, Parser } from '@pkmn/stats';
 import { getSmogonUsage, getSmogonPokemonUsage } from './usage/smogon.js';
 import { getChampionsUsage, getChampionsPokemonUsage } from './usage/champions.js';
+import { registerSpeedTools } from './speed/tools.js';
+// @ts-ignore -- this project does not enable global Node type declarations.
+import { fileURLToPath } from 'node:url';
 
 const { Teams, TeamValidator } = (PS as any).default || PS;
 const gens = new Generations(Dex as any);
@@ -17,6 +20,12 @@ const formatSchema = z.string().default(CURRENT_FORMAT)
   .describe("Showdown format ID (default: Champions VGC 2026 Regulation M-C)");
 
 const server = new McpServer({ name: "smogon-vgc", version: "1.0.0" });
+registerSpeedTools(server);
+// The terminal-owned transport remains source .mjs; it shares the same local workspace.
+const { registerBattleTools } = await import(new URL('../showdown/mcp-tools.mjs', import.meta.url).href);
+registerBattleTools(server, {workspace:fileURLToPath(new URL('..', import.meta.url))});
+const { registerMetricsTools } = await import(new URL('../metrics/mcp-tools.mjs', import.meta.url).href);
+registerMetricsTools(server, {workspace:fileURLToPath(new URL('..', import.meta.url))});
 
 // Classify a team's playstyle and attributes
 server.tool(

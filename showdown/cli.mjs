@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createInterface} from 'node:readline';
+import {attachTerminalLog} from './terminal-log.mjs';
 const require = createRequire(import.meta.url);
 const argv = process.argv.slice(2);
 let expectedTeamHash = FIXED_TEAM_SHA256;
@@ -45,7 +46,8 @@ if (mode === 'pack-team') {
         await acknowledgement;
       } finally { clearTimeout(loginTimer); client.off('identity',identityListener); }
       console.log(JSON.stringify({event:'authenticated',authenticated:true}));
-      await runControl(client);
+      const detachLog=attachTerminalLog(client);
+      try {await runControl(client);}finally{detachLog();}
     }
     if (mode === 'control') await runControl(client);
     if (mode === 'observe') {

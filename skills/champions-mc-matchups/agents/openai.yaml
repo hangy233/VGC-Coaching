@@ -1,4 +1,6 @@
 interface:
   display_name: "Champions M-C Matchups"
-  short_description: "Plan leads and review Champions M-C battles"
-  default_prompt: "Use $champions-mc-matchups to choose my four, plan leads, and review my Champions M-C matchup."
+  short_description: "Plan M-C battles; review and sync after every BO3"
+  default_prompt: "Use $champions-mc-matchups to plan my M-C battle, then review each BO3, update supported lessons, and verify skill sync before the next authorized search."
+policy:
+  allow_implicit_invocation: true

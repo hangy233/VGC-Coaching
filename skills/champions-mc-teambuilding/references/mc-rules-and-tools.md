@@ -49,6 +49,7 @@ snapshot; do not confuse that with the official 45-second ranked limit.
 | Showdown ladder usage | `get_usage_stats`, `get_pokemon_usage`, with explicit M-C, period, and rating. Missing data is not zero usage. |
 | Champions ladder data | `get_champions_usage_stats`, `get_champions_pokemon_usage`, with battle type, season, and snapshot date. Species ranks are not usage percentages. |
 | Damage | `calculate_damage`, with the native Champions mode below. |
+| Stats and effective Speed | `calculate_speed`, native Champions current-state snapshots; ties and unsupported order effects remain explicit. |
 
 ### Usage sources and provenance
 
@@ -114,6 +115,18 @@ Do not update packages merely
 to answer a matchup question unless that work is requested or actually necessary.
 
 ## Native Champions calculations
+
+For numerical Speed comparisons use actual MCP `calculate_speed` calls, never
+mental arithmetic or a direct local stat helper. It accepts 1–6 `pokemon` entries
+with explicit `species` (current form), `nature`, `ability`, `statPoints`, held
+`item`, `boosts`, `status`, `tailwind` and conditional ability state. Its `field`
+models weather/terrain, suppression, Magic Room and Trick Room; numeric `gen:0`
+is native Champions. The installed native Champions engine owns stat/modifier
+calculations and rounding. Results include raw stats, effective Speed, ordering
+groups and unresolved ties. Omitted points/stages mean zero, not an unknown set;
+label assumed opposing spreads. It compares within one priority bracket only
+and does not settle Quick Claw, Quash or other non-Speed ordering effects. If the
+MCP cannot model the relevant state, leave the comparison unverified.
 
 Verified with installed `@smogon/calc` 0.12.0: **numeric `gen: 0` means Champions**
 for `calculate_damage`. The validation format remains the string

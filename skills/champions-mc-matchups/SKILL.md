@@ -1,12 +1,34 @@
 ---
 name: champions-mc-matchups
-description: Plan team preview, leads, reserves, and battle decisions or review replays for Pokemon Champions Regulation M-C doubles. Use for opposing-team matchups and counterplay with an existing team; roster construction is a separate task.
+description: Plan previews, leads, reserves and battle decisions, review replays, and run authorized Pokemon Champions Regulation M-C doubles BO3 cycles with a review and skill-sync checkpoint after each set. Use with an existing team; roster construction is a separate task.
 ---
 
 # Champions M-C matchups
 
 Explain how the user's existing six can reach a favorable position against the
 opposing team. Distinguish playing the team better from changing its composition.
+
+## Required cycle for live BO3 play
+
+Cycle revision: **2026-10-15.4**. Read the bundled
+[BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
+including when resuming another agent's session. Before each new search, verify
+the active installed skill matches this repository's complete skill folder and
+the previous BO3's private review checkpoint is complete. Authorization and an
+idle server alone do not complete this checkpoint.
+
+After **every BO3**, including a win, forfeit, or final set in a batch: verify the
+official parent result; save and verify each completed child's replay within the
+user's sharing authorization; read the exact locked team's `team_metrics_agent_report`
+and the new set's evidence as specified in the cycle; review decisions separately
+from execution and variance; update supported reusable guidance or record why no
+rule change is warranted;
+check relevant regressions; sync changed files and read them into the active
+context. Complete the cycle's durable-evidence and bounded cleanup checkpoint
+before another authorized queue. Report a brief **review complete / lesson or no
+change / sync verified**, plus replay coverage and any retained cleanup blockers.
+Never invent a new rule merely to show activity.
+This is an agent workflow requirement, not a review check enforced by `battle_start`.
 
 Read [M-C rules and tool usage](references/mc-rules-and-tools.md) before mechanics
 or calculation work. Read [source notes](references/sources.md) for the expert
@@ -30,6 +52,10 @@ Mega use, reserves, and weather/terrain/speed-control turns from the supplied
 evidence. Do not infer an item solely from moving first, an ability solely from a
 Seed activating, or a chosen move that never appears because its user fainted.
 A single observed move order can be a speed tie. Missing details are not zeros.
+Open sheets reveal the registered six and their published moves/items/abilities;
+use nature and level only when supplied. They do not reveal the selected four,
+unrevealed reserves, investments, or the next action. An empty observed-reserves
+list does not establish that only the two active opponents remain.
 
 For Perish or trapping positions, track each Pokemon's counter, the current trap
 source and ability, switching eligibility, usable reserves, and latest safe
@@ -69,7 +95,15 @@ A compact matchup entry can use:
 Run these checks before finalizing a live recommendation; report only the checks
 that change the play. Prepare the threat-to-answer map at preview and update it
 after consequential reveals. Use the [battle regression cases](references/battle-regression-cases.md)
-when reviewing these failure modes or testing changes to the skill.
+when reviewing these failure modes or testing changes to the skill. Read the
+[live-battle lessons](references/live-battle-lessons.md) when preparing a live
+cycle or reviewing the documented denial, weather, protection, and clock failures.
+
+Make the read explicit: **plausible opposing paired action -> our paired response
+-> main risk and alternative**. Use the open sheet and observed responses to form
+these branches; use MCP damage and Speed to check their feasibility. A damage
+maximum does not select the plan. Keep the note short, and submit first when the
+clock cannot support optional explanation or additional calculations.
 
 - **Switch-aware legality:** Evaluate the field when moves resolve, including
   plausible opposing switch-ins. Recheck priority, target eligibility, terrain,
@@ -153,6 +187,13 @@ solely because the previous game was won.
 
 ## Review a replay without hindsight
 
+For a saved team's history, use `team_metrics_agent_report` with its exact team
+ID before drawing cross-game conclusions. The compact report includes the cached
+team sheet, sample sizes, exclusions, descriptive observations and evidence links;
+the cycle explains its freshness checks and private saved-file fallback. Use
+`includeGames: true` or `team_metrics_report` when the relevant game evidence is
+needed. Do not combine changed team versions or treat review questions as findings.
+
 Reconstruct decisive changes first, then assess selection and the opening. For
 each important turn, record what was knowable before the action, the observed
 result, and a feasible alternative from that exact position. A Pokemon switching
@@ -188,21 +229,11 @@ or the simulator establish a guaranteed win against unknown opposing sets.
 
 ## Play → conclude → update
 
-For headless play use the [agent client workflow](../../showdown/AGENT-WORKFLOW.md).
-The agent supplies strategy; the transport has no autonomous move policy.
-
-1. **Play:** establish the bounded authorized set count, stopping conditions and
-   fixed team version. Validate legality, read full OTS before choosing four,
-   calculate damage only through MCP, and submit both actions from current
-   requests before a conservative deadline. Verify submission and execution.
-2. **Conclude:** verify every authorized replay upload and keep access-bearing
-   private URLs out of public artifacts. Review decision quality separately
-   from outcome, timer/default errors, opponent mistakes and variance. Record
-   selected versus executed moves, effective healing, and partner progress.
-3. **Update:** turn supported evidence into a small reusable rule with explicit
-   uncertainty and counterexamples, not a named match diary or a single-game
-   guarantee. Run relevant regression checks and validate the revision before
-   the next authorized queue. Preserve useful decisions even after losses.
-4. Team changes are a separate approval and teambuilding step: validate and pin
-   the new version rather than silently changing it during an evaluation.
-   Stop when the authorized cycle ends; review does not authorize another set.
+Follow the bundled [BO3 cycle and checkpoint](references/headless-battle-cycle.md).
+Locate the active VGC project's `showdown/AGENT-WORKFLOW.md` for its client API;
+that project file is not relative to a globally installed skill. The agent supplies
+strategy; the transport has no autonomous move policy. Review does not authorize
+another set, a roster change, replay publication, or a new authentication attempt.
+Honor an existing user request to save replays and clean completed BO3 artifacts;
+do not ask again for that already authorized scope. Preserve room privacy and
+keep private replay access URLs in ignored reports and checkpoints.
