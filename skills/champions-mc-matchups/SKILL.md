@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-16.15**. Read the bundled
+Cycle revision: **2026-10-16.16**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -160,7 +160,13 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
   the loaded client supports the enabled deadline policy. Hold the exclusive
   controller lease; a handoff requires an explicit generation-checked takeover.
   Follow the cycle's early-commit procedure and inspect `battle_turn_status`;
-  an unverified numerical benchmark does not require delaying every legal play.
+  immediately after preview, extract the current board and legal request in
+  compact form and stage/send the pair before optional watch-URL messages,
+  history reads or full-state output. Read full open sheets at preview; while
+  live, render only the needed current board, legality and short new events.
+  Preserve full observations internally and bound any newly essential mechanics
+  read. Tool/output latency consumes the deadline from request arrival.
+  An unverified numerical benchmark does not require delaying every legal play.
   Revalidate the pair after state changes. Check both the current-turn deadline
   and the total game bank: repeated animation reads, calculations, and context restoration consume
   the latter even when earlier turns were submitted. Keep a compact current-board

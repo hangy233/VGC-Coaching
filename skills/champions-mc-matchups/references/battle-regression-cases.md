@@ -32,6 +32,7 @@ not matching a prescribed move or a string in the skill.
 | Recharge turn | Include the recharge board, partner's useful action, opposing switches and loss of control | Recommending a finishing Hyper Beam using only this turn's range or treating one miss as proof the move is always wrong |
 | Low total bank during a handoff | One control owner, fresh request and clock, legal paired fallback, verified send and conditional acceptance evidence | Repeating stale choices until expiry or crediting a server-default action to the intended policy |
 | Optional research consumes the turn | Identify the complete legal pair first, use the early-commit buffers and total bank, verify send, refresh after a new request | Finishing every calculation before choosing, treating an observer alert as submission, or sending the old pair after a forced replacement |
+| Preview advances while a large status response is rendering | Immediately extract the fresh current board/token/legality, count request age and tool latency, stage/send before optional URLs or history; retain full observations internally | Reprinting sheets/history until the unsubmitted first turn times out, or treating rendering completion as a new planning window |
 | Operator pauses after staging, or before any fallback exists | Inspect enabled policy; stage the exact current legal pair before optional work; independently reconcile watchdog send or authorized stuck-forfeit and halt | Treating staging as acceptance, inventing a generic move, retrying an uncertain send, or queuing again after containment |
 | Valid preview, move or replacement sent while the opponent waits beyond five seconds | Preserve its send reservation; ordinary live acknowledgment is absent; wait for observed progress without automatic halt, resend or forfeit | Treating no acknowledgment as a missed own turn or forfeiting an otherwise waiting set |
 | Socket write is uncertain, then a fresh request arrives | Bounded reconciliation and attention, future-search halt, no blind resend or automatic forfeit from missing acknowledgment; still stage/submit fresh requests | Treating uncertainty as acceptance, treating a halt as permission to abandon current turns, or forfeiting solely from an acknowledgment timeout |
@@ -62,6 +63,16 @@ not matching a prescribed move or a string in the skill.
   after stuck containment. Without stuck-forfeit permission it does not enable
   forfeiture or assume the client will invent a legal move. In all cases numerical
   claims still require actual MCP calculator results.
+- **Large-output transition:** Supply a completed preview followed by a fresh
+  first-turn request inside a large snapshot with old events and already-read
+  sheets. A passing operator renders the needed current board, legal actions,
+  clock/age and short new events, then stages/submits before optional watch-URL
+  messages or history. Its deadline still runs from request arrival. Contrast a
+  preview whose full open sheet has not been read and a turn with a new critical
+  mechanic: the operator reads the needed sheet or bounded mechanic detail rather
+  than hiding consequential information to make the output small. It preserves
+  MCP-only numerical checks, the existing cutoff and the distinction between a
+  successful sent choice waiting for the opponent and a fresh unsubmitted turn.
 - **Replacement and takeover:** Supply a forced request with one live reserve in
   party slot four, then a later reordered request and two claimants using the
   same observed generation. A passing operator selects a fresh named legal

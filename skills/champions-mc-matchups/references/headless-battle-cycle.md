@@ -57,6 +57,30 @@ Read the full open sheet before choosing four. Separate its registered six from
 the opponent's unknown selected four. Map each opposing win condition to an
 available answer and backup, including the required HP, weather or speed control.
 
+After submitting preview, switch immediately to compact current-request and board
+extraction. The first turn can arrive while a tool response is being returned or
+rendered; its planning window starts at request arrival, not when the agent begins
+reading it. Inspect freshness and stage/send a complete legal pair before optional
+watch-URL messages, history, repeated sheets or a full-state dump. A read-only
+observer can relay an already authorized watch URL independently; the controller
+must keep the live request first. Do not increase the planning cutoff to absorb
+output latency within a request. Keep the operator's early-commit target even
+when the configured watchdog cutoff is longer; a local policy budget is not the
+server's turn clock or remaining game bank, and an unknown clock stays unknown.
+
+Keep full received observations available internally, including the preview's
+complete open sheets, but render only what changes the current decision: current
+actives/reserves, HP/status/boosts, relevant field state, current token and legal
+actions/replacements, clock/age, choice/safety status and a short list of new
+events. If a wait/status tool returns the full snapshot, extract those fields
+before displaying its result; do not print thousands of historical events or
+repeat all six opposing sets on each poll. A compact view must retain critical
+new reveals and action legality rather than silently dropping them. When preview
+still needs its full open sheet, read it; when a new consequential mechanic is
+unresolved, make a bounded targeted read, then stage/send promptly. This is an
+output and timing discipline, not permission to skip required information, invent
+numerical benchmarks, generate automatic moves or weaken the deadline protection.
+
 For meaningful turns, keep a short note: plausible opposing paired action -> our
 paired response -> risk and alternative. Cover protection, switches, setup and
 move denial when shown on the sheet. MCP damage and Speed verify feasibility;
@@ -92,6 +116,8 @@ resend, halt or forfeit merely because no acknowledgment or advancement arrived.
 From each fresh actionable request, identify a complete legal pair immediately.
 With the enabled deadline policy, stage that exact pair using
 `battle_stage_fallback` before calculator calls, history reads or optional notes.
+This also applies to the first actionable request immediately after preview and
+after a forced replacement; optional reporting cannot occupy that transition.
 Use `battle_turn_status` for compact current requests, choice state, controller
 owner and safety state. Staging is neither a send nor acceptance: the client can
 submit it at its bounded cutoff if the operator stalls. Improve it through an
