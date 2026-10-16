@@ -10,6 +10,8 @@ import {updateTeamReport} from './live-reports.mjs';
 import {getAgentTeamReport} from './agent-service.mjs';
 import {readGameEvidence} from './retention.mjs';
 import {finalizeBo3} from './finalize.mjs';
+import {deleteTeamReport} from './team-cleanup.mjs';
+import {listMetricsTeamDeletions} from './catalog.mjs';
 
 const teamId=z.string().regex(/^[a-f0-9]{64}$/).describe('Exact team fingerprint from team_metrics_list.');
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}(?:T.*)?$/).refine(value=>Number.isFinite(Date.parse(value)),'Use an ISO date or timestamp.');
@@ -23,7 +25,7 @@ const filters={
   from:date.optional(),to:date.optional(),
 };
 
-export function registerMetricsTools(server,{workspace,replayImporter=importReplayUrls,bo3Finalizer=finalizeBo3,call=callLocalSession}={}) {
+export function registerMetricsTools(server,{workspace,replayImporter=importReplayUrls,bo3Finalizer=finalizeBo3,teamDeleter=deleteTeamReport,call=callLocalSession}={}) {
   if (!workspace) throw new Error('A workspace is required for private team metrics.');
   const result=async action=>{
     try { return {content:[{type:'text',text:JSON.stringify(await action(),null,2)}]}; }
@@ -33,18 +35,24 @@ export function registerMetricsTools(server,{workspace,replayImporter=importRepl
     description,inputSchema:teamChoice?z.strictObject(schema).refine(value=>Boolean(value.teamFile)!==Boolean(value.teamId),{message:'Supply exactly one of teamFile or teamId.'}):teamInput?z.strictObject(schema).refine(value=>Boolean(value.teamFile)!==Boolean(value.teamText),{message:'Supply exactly one of teamFile or teamText.'}):z.strictObject(schema),
     annotations:{readOnlyHint:readOnly,destructiveHint:destructive,openWorldHint:openWorld,idempotentHint:readOnly},
   },handler);
-  register('team_metrics_list','List up to 10 active exact team versions in last-used order, sample sizes and profile metadata. Include archived versions to find recoverable older teams. Listing does not change usage order. Refreshes remembered local logs only; never logs in, searches, publishes or changes a battle.',{
+  register('team_metrics_list','List up to 10 active exact team versions in last-used order, sample sizes and profile metadata. Capacity eviction permanently cleans the oldest report and its owned data. pendingCleanupTeams exposes deletions already in progress; includeArchived also shows capacity evictions whose cleanup has not begun because of blockers. Listing does not change usage order. Refreshes remembered local logs only; never logs in, searches, publishes or changes a battle.',{
     includeArchived:z.boolean().default(false),
-  },true,args=>result(async()=>{const refresh=await refreshMetricsSources({workspace});const all=await listTeams({workspace,includeArchived:true});const teams=await addTeamProfileLinks({workspace,teams:args.includeArchived?all:all.filter(team=>team.active!==false)});return {teams,capacity:{maxActiveTeams:MAX_ACTIVE_TEAMS,activeTeams:all.filter(team=>team.active!==false).length,archivedTeams:all.filter(team=>team.archived).length},refresh};}));
-  register('team_metrics_report','Report selection/leads, game and set results, executed move uses, direct and attributed indirect knockouts, and observed item removals by Pokémon. Failed/missed/blocked counts can overlap executed uses. Unknown selections and excluded incomplete/operational games remain explicit. Access marks this exact team version recently used, restores an archived version if requested, and refreshes its stable profile. Omitted teamId works only with one active team.',filters,true,args=>result(async()=>{const refresh=await refreshMetricsSources({workspace});const report=await getTeamReport({workspace,...args});const stableReport=report.team?.teamId?await updateTeamReport({workspace,teamId:report.team.teamId}):null;return {...report,stableReport,refresh};}));
+  },true,args=>result(async()=>{const refresh=await refreshMetricsSources({workspace});const [all,pendingCleanupTeams]=await Promise.all([listTeams({workspace,includeArchived:true}),listMetricsTeamDeletions({workspace})]);const teams=await addTeamProfileLinks({workspace,teams:args.includeArchived?all:all.filter(team=>team.active!==false)});return {teams,pendingCleanupTeams,capacity:{maxActiveTeams:MAX_ACTIVE_TEAMS,activeTeams:all.filter(team=>team.active!==false).length,archivedTeams:all.filter(team=>team.archived).length},refresh};}));
+  register('team_metrics_report','Report selection/leads, game and set results, executed move uses, direct and attributed indirect knockouts, and observed item removals by Pokémon. Failed/missed/blocked counts can overlap executed uses. Unknown selections and excluded incomplete/operational games remain explicit. Access marks this exact team version recently used and refreshes its stable profile. Purged versions cannot be recovered by reading a report. Omitted teamId works only with one active team.',filters,true,args=>result(async()=>{const refresh=await refreshMetricsSources({workspace});const report=await getTeamReport({workspace,...args});const stableReport=report.team?.teamId?await updateTeamReport({workspace,teamId:report.team.teamId}):null;return {...report,stableReport,refresh};}));
   register('team_metrics_agent_report','Read an evidence-backed team review brief for an AI or agent: exact team version and immutable set snapshot, sample sizes and exclusions, metric definitions, descriptive review signals and supporting game IDs. Use filters to investigate matchups and includeGames for the included per-game observations. Read the cited turns and open sheets before attributing a loss or changing skills or a roster; use actual MCP calculate_damage and calculate_speed for numerical battle advice. This report does not make or authorize those changes. Refreshes remembered local logs, marks the requested team recently used and updates its stable profile; never authenticates, searches or publishes.',{
     ...filters,
     includeGames:z.boolean().default(false).describe('Include per-game measured observations in addition to the compact brief and cited game IDs.'),
     maxEvidence:z.number().int().min(1).max(20).default(5).describe('Maximum supporting game references per review signal.'),
   },true,args=>result(async()=>{const refresh=await refreshMetricsSources({workspace});const brief=await getAgentTeamReport({workspace,...args});const stableReport=brief.team?.teamId?await updateTeamReport({workspace,teamId:brief.team.teamId}):null;return {...brief,stableReport,refresh};}));
-  register('team_metrics_register_team','Create a private stable report for a complete legal M-C team before its first game. Supply exactly one of inline teamText (Showdown export) or workspace-local teamFile. Save the returned exact teamId for later append/import and queries. Move, item or spread changes create another version; at most 10 versions stay active with recoverable archives. Never changes the signed-in battle team or starts a battle.',{
+  register('team_metrics_register_team','Create a private stable report for a complete legal M-C team before its first game. Supply exactly one of inline teamText (Showdown export) or workspace-local teamFile. Save the returned exact teamId for later append/import and queries. Move, item or spread changes create another version; at most 10 versions stay active and capacity eviction permanently cleans the oldest report and its owned data. Active or shared-file blockers remain explicit. Never changes the signed-in battle team or starts a battle.',{
     teamFile:z.string().min(1).max(2048).optional(),teamText:z.string().min(1).max(128*1024).optional(),name:z.string().min(1).max(120).optional(),
-  },false,args=>result(()=>args.teamText!==undefined?registerTeamFromText({workspace,...args}):registerTeamFromFile({workspace,...args})),{teamInput:true});
+  },false,args=>result(()=>args.teamText!==undefined?registerTeamFromText({workspace,...args}):registerTeamFromFile({workspace,...args})),{teamInput:true,destructive:true});
+  register('team_metrics_delete_team','Permanently remove one exact team report and its owned local data: game summaries, evidence, replay caches, saved team snapshot, human/agent reports, exports, source registrations and owned closed logs/reviews. Dry run is the default. Applying deletion requires dryRun:false and confirmed:true. Active sessions, shared files, unsafe paths or uncertain ownership remain explicit blockers; complete:false means data remains. Never stops a client, deletes the original user team export, publishes, authenticates or starts a battle.',{
+    teamId,dryRun:z.boolean().default(true),confirmed:z.literal(true).optional(),
+  },false,args=>result(()=>{
+    if(args.dryRun===false&&args.confirmed!==true)throw new Error('Permanent team deletion requires confirmed:true after inspecting the dry-run plan.');
+    return teamDeleter({workspace,...args,sessionCall:call});
+  }),{destructive:true});
   register('team_metrics_sync_battles','Append or update the existing terminal client’s observed games in its exact team report and wait for buffered recording to finish (up to 25 seconds). Returns recording status, current aggregate report and stable human/agent report paths. Duplicate syncs never add duplicate games. Optional teamId must match the locked live team. Call after a game or BO3, outside live turn/readiness deadlines, before querying or reviewing its report. Retries failed replay attachments by reading previously verified official saved URLs; never authenticates, searches, uploads replays, changes the roster or deletes logs. An older or disabled recorder returns an explicit error; saved logs and URLs can still be appended with team_metrics_import or team_metrics_import_replays.',{
     teamId:teamId.optional(),
   },false,args=>result(async()=>{
@@ -74,20 +82,20 @@ export function registerMetricsTools(server,{workspace,replayImporter=importRepl
     closedFiles:z.array(z.string().min(1).max(2048)).max(100).default([]).describe('Exact listed cleanup files whose separate writer is known to have closed. Needed for cleanup while the client stays open; never overrides active/shared source protections.'),
     dryRun:z.boolean().default(true),confirmed:z.literal(true).optional(),saveReplays:z.boolean().default(false),
   },false,args=>result(()=>bo3Finalizer({workspace,...args})),{openWorld:true,destructive:true});
-  register('team_metrics_import','Import existing local Showdown protocol/event logs into the private metrics store. Paths must resolve inside this workspace. Requires the owner username and exactly one of a saved teamId or a complete teamFile. Saved IDs resolve the immutable validated team snapshot. Optional ledger flags operational games and official set results. Reads no credentials and performs no battle or network actions.',{
+  register('team_metrics_import','Import existing local Showdown protocol/event logs into the private metrics store. Paths must resolve inside this workspace. Requires the owner username and exactly one of a saved teamId or a complete teamFile. Saved IDs resolve the immutable validated team snapshot. Optional ledger flags operational games and official set results. Creating an eleventh active team permanently cleans the least recently used report and owned data; blockers remain explicit. Reads no credentials and performs no battle or network actions.',{
     files:z.array(z.string().min(1).max(2048)).min(1).max(20),
     username:z.string().min(1).max(30),teamFile:z.string().min(1).max(2048).optional(),teamId:teamId.optional(),
     ledgerFile:z.string().min(1).max(2048).optional(),name:z.string().min(1).max(120).optional(),
     remember:z.boolean().default(true).describe('Remember these workspace-local source paths and refresh their metrics when list/report/export is requested.'),
-  },false,args=>result(()=>importBattleFiles({workspace,...args})),{teamChoice:true});
-  register('team_metrics_import_replays','Append existing Pokémon Showdown replay URLs to an exact local team report. Reimporting a room updates its row without adding a duplicate. Requires the owner username and exactly one of saved teamId or complete local M-C teamFile. Verified completed replay links and compact evidence are retained in the private report, including private access suffixes; sharing a report shares those links. Fetches only supported replay endpoints; never publishes a replay, authenticates or queues a battle.',{
+  },false,args=>result(()=>importBattleFiles({workspace,...args})),{teamChoice:true,destructive:true});
+  register('team_metrics_import_replays','Append existing Pokémon Showdown replay URLs to an exact local team report. Reimporting a room updates its row without adding a duplicate. Requires the owner username and exactly one of saved teamId or complete local M-C teamFile. Creating an eleventh active team permanently cleans the least recently used report and owned data; blockers remain explicit. Verified completed replay links and compact evidence are retained in the private report, including private access suffixes; sharing a report shares those links. Fetches only supported replay endpoints; never publishes a replay, authenticates or queues a battle.',{
     urls:z.array(z.string().min(1).max(2048)).min(1).max(20),
     username:z.string().min(1).max(30),teamFile:z.string().min(1).max(2048).optional(),teamId:teamId.optional(),
     ledgerFile:z.string().min(1).max(2048).optional(),name:z.string().min(1).max(120).optional(),
   },false,args=>result(async()=>{
     try{return await replayImporter({workspace,...args});}
     catch{throw new Error('Replay import failed. Check the supported replay URLs, owner username and saved team ID or local team file.');}
-  }),{openWorld:true,teamChoice:true});
+  }),{openWorld:true,teamChoice:true,destructive:true});
   register('team_metrics_export','Export a private standalone HTML dashboard, spreadsheet-friendly CSV, or JSON report. Writes a new file only in cache/team-metrics/reports, never overwrites files, and loads no network assets. Dashboard opponent/result filters recompute its aggregate summaries and all tables from the included game metrics.',{
     ...filters,format:z.enum(['html','csv','json']).default('html'),
     output:z.string().min(1).max(2048).optional().describe('Safe filename such as team-review.html in cache/team-metrics/reports; an existing file is never replaced.'),

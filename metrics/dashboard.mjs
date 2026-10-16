@@ -1,6 +1,7 @@
 import {lstat, mkdir, realpath, writeFile} from 'node:fs/promises';
 import {basename, dirname, isAbsolute, join, relative, resolve, sep} from 'node:path';
 import {replayUrlForGame} from './report-replays.mjs';
+import {acquireMetricsBattleLock} from './catalog.mjs';
 
 const CREDIT = 'https://devoncorp.press/resources/the-release-of-pasrs-7-0';
 const html = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -167,6 +168,8 @@ function within(root,path) { const rel=relative(root,path);return !isAbsolute(re
 /** Create only dedicated report directories, refusing symbolic links/junctions. */
 export async function exportReport({workspace,report,format='html',output}) {
   if (!['html','csv','json'].includes(format)) throw new Error('Export format must be html, csv or json.');
+  const release=await acquireMetricsBattleLock({workspace,teamId:report?.team?.teamId,roomId:'team-export'});
+  try{
   const root=await realpath(resolve(workspace));
   let dir=root;
   for (const part of ['cache','team-metrics','reports']) {
@@ -182,4 +185,5 @@ export async function exportReport({workspace,report,format='html',output}) {
   const content=format==='html'?renderDashboard(report):format==='csv'?renderCsv(report):JSON.stringify(report,null,2)+'\n';
   await writeFile(file,content,{encoding:'utf8',flag:'wx'});
   return {path:file,format,bytes:Buffer.byteLength(content),games:report.totals?.games??0};
+  }finally{await release();}
 }

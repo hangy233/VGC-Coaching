@@ -3,6 +3,7 @@ import { link, lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/p
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { gzip, gunzip } from 'node:zlib';
+import {acquireMetricsBattleLock,assertMetricsTeamWritable} from './catalog.mjs';
 
 const compress = promisify(gzip), decompress = promisify(gunzip);
 const ORIGIN = 'https://replay.pokemonshowdown.com';
@@ -131,10 +132,13 @@ async function evidenceDirectory(workspace) {
 export async function attachVerifiedReplay({ workspace, teamId, roomId, url, fetchImpl = globalThis.fetch } = {}) {
   if (!HASH.test(teamId)) throw bad();
   canonicalReplayUrl(url, { roomId });
+  await assertMetricsTeamWritable({workspace,teamId});
   const { listBattles, updateBattleMetadata } = await import('./store.mjs');
   const existing = (await listBattles({ workspace, includeArchived: true })).find(record => record.teamId === teamId && record.roomId === roomId);
   if (!existing) throw new Error('The game must already exist in the team metrics database.');
   const replay = await fetchVerifiedReplay({ url, roomId, username: existing.username, ownSide: existing.ownSide, outcome: existing.outcome, fetchImpl });
+  const release=await acquireMetricsBattleLock({workspace,teamId,roomId:roomId+'-replay'});
+  try{
   const directory = await evidenceDirectory(workspace), filename = `${roomId}--${teamId}.replay.log.gz`, path = join(directory.path, filename);
   async function matchesEvidence() {
     const stat = await lstat(path);
@@ -145,7 +149,7 @@ export async function attachVerifiedReplay({ workspace, teamId, roomId, url, fet
   let write = false;
   try { await matchesEvidence(); } catch (error) { if (error.code !== 'ENOENT') throw error; write = true; }
   if (write) {
-    const pending = join(directory.path, `.pending-${randomUUID()}.tmp`);
+    const pending = join(directory.path, `.pending-${teamId}-${randomUUID()}.tmp`);
     try {
       await writeFile(pending, await compress(replay.log, { level: 9 }), { flag: 'wx', mode: 0o600 });
       // Publish an immutable completed file without replacing another writer's
@@ -159,4 +163,5 @@ export async function attachVerifiedReplay({ workspace, teamId, roomId, url, fet
   if (existing.metadata.replay?.logSha256 === metadata.logSha256 && existing.metadata.replay.url === metadata.url && existing.metadata.replay.evidencePath === metadata.evidencePath) metadata.verifiedAt = existing.metadata.replay.verifiedAt;
   const saved = await updateBattleMetadata({ workspace, teamId, roomId, metadata: { replay: metadata } });
   return { roomId, teamId, replay: saved.record.metadata.replay, status: saved.status };
+  }finally{await release();}
 }

@@ -283,7 +283,7 @@ export async function saveBattle({ workspace, record, metadataOnly = false }) {
     }
     merged.updatedAt = new Date().toISOString();
     // Keep temporary names short: the workspace may already be near Windows MAX_PATH.
-    temporary = join(dir, `.pending-${randomUUID()}.tmp`);
+    temporary = join(dir, `.pending-${incoming.teamId}-${randomUUID()}.tmp`);
     await writeFile(temporary, `${JSON.stringify(merged, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
     await rename(temporary, path);
     temporary = undefined;
@@ -318,7 +318,9 @@ async function readAllBattles({ workspace }) {
   const records = [];
   for (const name of names.sort()) {
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*--[a-f0-9]{64}\.json$/u.test(name)) fail('unexpected JSON file in metrics storage');
-    const record = await readRecord(join(dir, name));
+    let record;
+    try { record = await readRecord(join(dir, name)); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     if (filename(record) !== name) fail('stored battle identity does not match its filename');
     records.push(record);
   }
@@ -558,7 +560,7 @@ export async function getTeamReport({ workspace, teamId: requestedTeamId, oppone
   const parents = new Map(setMetrics.records.map(parent => [parent.parentId, parent]));
   return {
     schemaVersion: SCHEMA_VERSION, team,
-    catalog: { maxActiveTeams: MAX_ACTIVE_TEAMS, activeTeams: catalog.filter(entry => entry.active).length, archivedTeams: catalog.filter(entry => !entry.active).length, archivePolicy: 'Least recently used active teams are archived in place; their battle summaries and existing exports are retained.' },
+    catalog: { maxActiveTeams: MAX_ACTIVE_TEAMS, activeTeams: catalog.filter(entry => entry.active).length, archivedTeams: catalog.filter(entry => !entry.active).length, archivePolicy: 'Least recently used versions are permanently cleaned with their reports and stored data; protected artifacts remain explicit pending cleanup.' },
     filters: { teamId: chosen, opponentSpecies: opponentSpecies ?? null, selectedSpecies: selectedSpecies ?? null, outcome: outcome ?? null, includeIncomplete, includeOperational, from: fromDate ?? null, to: toDate ?? null },
     totals: { ...withRate(totalCounts), sets: setMetrics },
     quality, selection, pokemon: pokemonReport,

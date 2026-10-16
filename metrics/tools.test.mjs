@@ -89,6 +89,11 @@ test('CLI rejects unknown options, invalid team IDs and unsupported command opti
   assert.deepEqual(parseArguments(['import','--url','https://replay.pokemonshowdown.com/a','--url','https://replay.pokemonshowdown.com/b']).values.urls,['https://replay.pokemonshowdown.com/a','https://replay.pokemonshowdown.com/b']);
   assert.equal(parseArguments(['list','--include-archived']).values.includeArchived,true);
   assert.equal(parseArguments(['register','--team-file','team.txt']).command,'register');
+  assert.deepEqual(parseArguments(['delete','--team',id]).values,{files:[],urls:[],teamId:id});
+  assert.equal(parseArguments(['delete','--team',id,'--confirm']).values.confirmed,true);
+  assert.throws(()=>parseArguments(['report','--confirm']),/not supported/);
+  assert.throws(()=>parseArguments(['delete','--team',id,'--confirm','--confirm']),/Duplicate option/);
+  assert.throws(()=>parseArguments(['delete','--team-file','team.txt']),/not supported/);
   const review=parseArguments(['review','--team',id,'--opponent-species','Archaludon','--include-games','--max-evidence','10']);
   assert.equal(review.command,'review');assert.equal(review.values.teamId,id);assert.equal(review.values.includeGames,true);assert.equal(review.values.maxEvidence,10);assert.equal(review.values.opponentSpecies,'Archaludon');
   for(const value of ['0','21','-1','2.5','2e0','NaN','Infinity'])assert.throws(()=>parseArguments(['review','--max-evidence',value]),/integer from 1 to 20/);
@@ -108,11 +113,19 @@ test('MCP tools expose strict local-only schemas and no battle controls',async()
   const {registerMetricsTools}=await import('./mcp-tools.mjs');
   const registrations=new Map();
   registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace:process.cwd()});
-  for(const name of ['team_metrics_list','team_metrics_report','team_metrics_agent_report','team_metrics_register_team','team_metrics_sync_battles','team_metrics_game_evidence','team_metrics_finalize_bo3','team_metrics_import','team_metrics_import_replays','team_metrics_export'])assert(registrations.has(name));
+  for(const name of ['team_metrics_list','team_metrics_report','team_metrics_agent_report','team_metrics_register_team','team_metrics_delete_team','team_metrics_sync_battles','team_metrics_game_evidence','team_metrics_finalize_bo3','team_metrics_import','team_metrics_import_replays','team_metrics_export'])assert(registrations.has(name));
   for(const [name,{settings}] of registrations)assert.equal(settings.annotations.openWorldHint,['team_metrics_import_replays','team_metrics_finalize_bo3','team_metrics_sync_battles'].includes(name));
   assert.equal(registrations.get('team_metrics_report').settings.annotations.readOnlyHint,true);
   assert.equal(registrations.get('team_metrics_import').settings.annotations.readOnlyHint,false);
   assert.equal(registrations.get('team_metrics_finalize_bo3').settings.annotations.destructiveHint,true);
+  for(const name of ['team_metrics_register_team','team_metrics_import','team_metrics_import_replays'])assert.equal(registrations.get(name).settings.annotations.destructiveHint,true);
+  const deletion=registrations.get('team_metrics_delete_team');
+  assert.equal(deletion.settings.annotations.destructiveHint,true);
+  assert.equal(deletion.settings.annotations.readOnlyHint,false);
+  assert.equal(deletion.settings.annotations.openWorldHint,false);
+  assert.deepEqual(deletion.settings.inputSchema.parse({teamId:id}),{teamId:id,dryRun:true});
+  assert.equal(deletion.settings.inputSchema.safeParse({teamId:id,dryRun:false,confirmed:true}).success,true);
+  for(const args of [{teamId:'latest'},{teamId:id,confirmed:false},{teamId:id,files:['cache/anything.log']},{teamId:id,force:true}])assert.equal(deletion.settings.inputSchema.safeParse(args).success,false);
   const create=registrations.get('team_metrics_register_team').settings.inputSchema;
   assert.equal(create.safeParse({teamText:'Pasted team export'}).success,true);
   assert.equal(create.safeParse({teamFile:'teams/team.txt'}).success,true);
@@ -152,6 +165,80 @@ test('MCP tools expose strict local-only schemas and no battle controls',async()
   assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom',teamId:id}).success,true);
   assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom'}).success,false);
   assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom',teamId:id,teamFile:'teams/team.txt'}).success,false);
+});
+
+test('MCP permanent team deletion defaults to preview and requires confirmation before applying',async()=>{
+  const {registerMetricsTools}=await import('./mcp-tools.mjs');
+  const registrations=new Map(),calls=[],sessionCall=async()=>{throw new Error('No battle action expected');};
+  registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace:process.cwd(),call:sessionCall,teamDeleter:async args=>{calls.push(args);return {teamId:args.teamId,dryRun:args.dryRun,complete:false,removed:[],retained:[{reason:'Shared source retained'}]};}});
+  const tool=registrations.get('team_metrics_delete_team');
+  const preview=await tool.handler(tool.settings.inputSchema.parse({teamId:id}));
+  assert.equal(preview.isError,undefined);assert.equal(JSON.parse(preview.content[0].text).dryRun,true);
+  assert.equal(calls[0].sessionCall,sessionCall);
+  const unconfirmed=await tool.handler({teamId:id,dryRun:false});
+  assert.equal(unconfirmed.isError,true);assert.match(unconfirmed.content[0].text,/confirmed:true/);assert.equal(calls.length,1);
+  const applied=await tool.handler(tool.settings.inputSchema.parse({teamId:id,dryRun:false,confirmed:true}));
+  assert.equal(applied.isError,undefined);assert.equal(calls.length,2);assert.equal(calls[1].confirmed,true);assert.equal(calls[1].dryRun,false);
+  const result=JSON.parse(applied.content[0].text);assert.equal(result.complete,false);assert.equal(result.retained.length,1);
+});
+
+test('CLI team deletion previews by default, applies only with --confirm and never refreshes sources',async()=>{
+  const {runCli}=await import('./cli.mjs');
+  const calls=[],outputs=[],teamDeleter=async args=>{calls.push(args);return {teamId:args.teamId,dryRun:args.dryRun,complete:args.dryRun===false,removed:[],retained:[]};};
+  await runCli(['delete','--team',id],{teamDeleter,write:value=>outputs.push(JSON.parse(value))});
+  assert.equal(calls[0].dryRun,true);assert.equal(calls[0].confirmed,undefined);assert.equal(outputs[0].complete,false);
+  await runCli(['delete','--team',id,'--confirm'],{teamDeleter,write:value=>outputs.push(JSON.parse(value))});
+  assert.equal(calls[1].dryRun,false);assert.equal(calls[1].confirmed,true);assert.equal(outputs[1].complete,true);
+  await assert.rejects(runCli(['delete'],{teamDeleter,write:()=>{}}),/full team fingerprint/);
+  assert.equal(calls.length,2);
+});
+
+test('MCP and CLI lists expose started deletion tombstones separately from active reports',async t=>{
+  const workspace=await mkdtemp(join(tmpdir(),'team-metrics-pending-'));
+  t.after(()=>rm(workspace,{recursive:true,force:true}));
+  const {registerMetricsTeam,beginMetricsTeamDeletion}=await import('./catalog.mjs');
+  const {registerMetricsTools}=await import('./mcp-tools.mjs');
+  const {runCli}=await import('./cli.mjs');
+  await registerMetricsTeam({workspace,teamId:id,name:'Pending fixture',roster:['Golisopod']});
+  await beginMetricsTeamDeletion({workspace,teamId:id});
+  const registrations=new Map();
+  registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace});
+  const tool=registrations.get('team_metrics_list');
+  for(const includeArchived of [false,true]){
+    const response=await tool.handler(tool.settings.inputSchema.parse({includeArchived}));
+    assert.equal(response.isError,undefined);
+    const value=JSON.parse(response.content[0].text);
+    assert.deepEqual(value.teams,[]);assert.equal(value.pendingCleanupTeams.length,1);
+    assert.equal(value.pendingCleanupTeams[0].teamId,id);assert.equal(value.pendingCleanupTeams[0].state,'deleting');
+  }
+  const value=await runCli(['list','--workspace',workspace],{write:()=>{}});
+  assert.deepEqual(value.teams,[]);assert.equal(value.pendingCleanupTeams[0].teamId,id);
+});
+
+test('MCP team deletion cascades through real reports and exports without recreating the team on query',async t=>{
+  const workspace=await mkdtemp(join(tmpdir(),'team-metrics-delete-api-'));
+  t.after(()=>rm(workspace,{recursive:true,force:true}));
+  const {registerMetricsTeam,getTeamReport,listTeams}=await import('./store.mjs');
+  const {updateTeamReport}=await import('./live-reports.mjs');
+  const {registerMetricsTools}=await import('./mcp-tools.mjs');
+  await registerMetricsTeam({workspace,teamId:id,name:'Disposable fixture',format:'gen9championsvgc2026regmc',roster:['Golisopod']});
+  const stable=await updateTeamReport({workspace,teamId:id}),data=await getTeamReport({workspace,teamId:id,touch:false});
+  const exports=[];
+  for(const format of ['html','json','csv'])exports.push(await exportReport({workspace,report:data,format,output:'arbitrary-export-name.'+format}));
+  await mkdir(join(workspace,'teams'));const source=join(workspace,'teams','authored-team.txt');await writeFile(source,'Original user-maintained export');
+  const registrations=new Map();
+  registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace,call:async()=>{throw new Error('No session or battle request expected');}});
+  const invoke=async(name,args={})=>{const tool=registrations.get(name);return tool.handler(tool.settings.inputSchema.parse(args));};
+  const preview=await invoke('team_metrics_delete_team',{teamId:id});
+  assert.equal(preview.isError,undefined);assert.equal(JSON.parse(preview.content[0].text).dryRun,true);
+  assert.match(await readFile(stable.path,'utf8'),/report-data/);
+  const response=await invoke('team_metrics_delete_team',{teamId:id,dryRun:false,confirmed:true});
+  assert.equal(response.isError,undefined);const result=JSON.parse(response.content[0].text);assert.equal(result.complete,true);assert.equal(result.pending,false);
+  for(const path of [stable.path,stable.agentJsonPath,stable.agentMarkdownPath,...exports.map(value=>value.path)])await assert.rejects(readFile(path),{code:'ENOENT'});
+  assert.equal(await readFile(source,'utf8'),'Original user-maintained export');
+  assert.deepEqual(await listTeams({workspace,includeArchived:true}),[]);
+  const query=await invoke('team_metrics_report',{teamId:id});assert.equal(query.isError,true);assert.match(query.content[0].text,/unknown|deleted/);
+  const repeated=await invoke('team_metrics_delete_team',{teamId:id,dryRun:false,confirmed:true});assert.equal(JSON.parse(repeated.content[0].text).complete,true);
 });
 
 test('MCP live report sync rejects the wrong team before writing and surfaces recorder failures',async()=>{

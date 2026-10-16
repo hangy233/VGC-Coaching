@@ -9,7 +9,7 @@ A specialized Model Context Protocol (MCP) server designed for competitive Poké
 - **Usage Statistics**: Fetch Smogon format-wide usage and moveset reports, plus Champions ladder species rankings and set distributions from Pokémon Champions Battle Data, with source and period metadata.
 - **Type Effectiveness**: Instant multiplier calculations for any type combination.
 - **Damage Calculation**: Integrated Smogon-calc for precise battle scenario modeling.
-- **Private team metrics**: Keep ten recent team versions with separate reports. Record moves, knockouts, item removals, selections and results automatically from the client or import saved replay URLs. Includes a live dashboard, agent-readable evidence reports for skill/team reviews, and CSV/JSON exports. See [team metrics](metrics/README.md).
+- **Private team metrics**: Keep ten recent team versions with separate reports. Record moves, knockouts, item removals, selections and results automatically from the client or import saved replay URLs. Includes a live dashboard, agent-readable evidence reports for skill/team reviews, and CSV/JSON exports. Deleting or evicting a report permanently cleans its owned logs and data; blocked shared or active files remain explicit. See [team metrics](metrics/README.md).
 
 Private battle records, session files, metrics databases, compressed evidence and generated reports belong under the ignored `cache/` directory. New personal team exports and notes under `teams/`, local logs, database files, temporary files and environment secrets are also ignored. Previously published example teams remain tracked. Do not force-add private data or replay access links to Git.
 
@@ -353,6 +353,7 @@ and do not require live downloads.
 | `battle_cancel_search`, `battle_stop` | Cancel matchmaking or close the signed-in local session. |
 | `battle_authorize_sets`, `battle_forfeit`, `battle_save_replays` | Extend an explicitly authorized allowance, forfeit an owned set, or save its completed replays. |
 | `team_metrics_register_team` | Create an exact-version team report from pasted `teamText` or a local `teamFile`. |
+| `team_metrics_delete_team` | Preview or permanently remove a team's report, summaries, evidence, exports and owned closed logs; retained files and blockers remain explicit. |
 | `team_metrics_sync_battles` | Append/update the live client's observations and confirm local report persistence. |
 | `team_metrics_import`, `team_metrics_import_replays` | Append saved logs or replay URLs without duplicating existing games; verified replay links appear in the report. |
 | `team_metrics_list`, `team_metrics_report`, `team_metrics_agent_report` | Find team versions and query human/agent-readable metrics. |

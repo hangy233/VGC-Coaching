@@ -29,14 +29,15 @@ test('new games refresh one stable team report while another version stays separ
   }finally{await rm(workspace,{recursive:true,force:true});}
 });
 
-test('background report regeneration cannot restore a team evicted from the ten-team LRU',async()=>{
+test('background and explicit report reads cannot restore a team purged from the ten-team LRU',async()=>{
   const workspace=await mkdtemp(join(tmpdir(),'vgcm-archive-'));
   try{
     for(let i=0;i<11;i++)await registerMetricsTeam({workspace,teamId:i.toString(16).padStart(64,'0'),name:'Team '+i,format:'gen9championsvgc2026regmc',roster:['Sylveon']});
-    const archived='0'.repeat(64);assert.equal(await isMetricsTeamActive({workspace,teamId:archived}),false);
-    assert.equal((await updateTeamReport({workspace,teamId:archived})).archived,true);
-    assert.equal(await isMetricsTeamActive({workspace,teamId:archived}),false);
-    await ensureTeamReport({workspace,teamId:archived});assert.equal(await isMetricsTeamActive({workspace,teamId:archived}),true);
+    const purged='0'.repeat(64);assert.equal(await isMetricsTeamActive({workspace,teamId:purged}),null);
+    await assert.rejects(updateTeamReport({workspace,teamId:purged}),/not found|deleted/u);
+    assert.equal(await isMetricsTeamActive({workspace,teamId:purged}),null);
+    await assert.rejects(ensureTeamReport({workspace,teamId:purged}),/unknown|deleted/u);
+    assert.equal(await isMetricsTeamActive({workspace,teamId:purged}),null);
     assert.equal((await listTeams({workspace})).length,10);
   }finally{await rm(workspace,{recursive:true,force:true});}
 });

@@ -5,6 +5,7 @@ import {getTeamReport,isMetricsTeamActive} from './store.mjs';
 import {renderDashboard} from './dashboard.mjs';
 import {createAgentTeamReport} from './agent-service.mjs';
 import {renderAgentReportMarkdown} from './agent-report.mjs';
+import {acquireMetricsBattleLock,assertMetricsTeamWritable} from './catalog.mjs';
 
 const queues=new Map();
 const validTeam=teamId=>typeof teamId==='string'&&/^[a-f0-9]{64}$/.test(teamId);
@@ -12,6 +13,7 @@ const inside=(root,path)=>{const r=relative(root,path);return r!==''&&r!=='..'&&
 
 export async function teamReportPath({workspace,teamId,create=false,format='html'}) {
   if(!validTeam(teamId))throw new Error('Use an exact team fingerprint for a stable report');
+  if(create)await assertMetricsTeamWritable({workspace,teamId});
   const suffix={html:'.html',json:'.agent.json',markdown:'.agent.md'}[format];
   if(!suffix)throw new Error('Unsupported stable report format');
   const root=await realpath(workspace);let directory=root;
@@ -35,6 +37,8 @@ export async function updateTeamReport({workspace,teamId}={}) {
   if(!validTeam(teamId))throw new Error('Use an exact team fingerprint for a stable report');
   const key=workspace+'|'+teamId,previous=queues.get(key)||Promise.resolve();
   const action=previous.catch(()=>{}).then(async()=>{
+    const release=await acquireMetricsBattleLock({workspace,teamId,roomId:'team-report'});
+    try{
     const active=await isMetricsTeamActive({workspace,teamId});
     if(active===false)return {teamId,archived:true,path:null};
     if(active===null)throw new Error('Team report not found; register a legal team first');
@@ -50,10 +54,11 @@ export async function updateTeamReport({workspace,teamId}={}) {
     for(const [target,content]of [[path,data],[agentJsonPath,agentJson],[agentMarkdownPath,agentMarkdown]]){
       let current;try{current=await readFile(target,'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
       if(current===content)continue;
-      const temp=join(target.slice(0,target.lastIndexOf(sep)),'.report-'+randomUUID()+'.tmp');
+      const temp=join(target.slice(0,target.lastIndexOf(sep)),'.pending-'+teamId+'-'+randomUUID()+'.tmp');
       try{await writeFile(temp,content,{flag:'wx',mode:0o600});await rename(temp,target);changed=true;}finally{await rm(temp,{force:true});}
     }
     return {teamId,path,agentJsonPath,agentMarkdownPath,revision,changed,games:report.totals.games};
+    }finally{await release();}
   });
   queues.set(key,action);try{return await action;}finally{if(queues.get(key)===action)queues.delete(key);}
 }

@@ -7,6 +7,8 @@ import {importReplayUrls} from './replays.mjs';
 import {exportReport, addTeamProfileLinks} from './dashboard.mjs';
 import {updateTeamReport} from './live-reports.mjs';
 import {getAgentTeamReport} from './agent-service.mjs';
+import {deleteTeamReport} from './team-cleanup.mjs';
+import {listMetricsTeamDeletions} from './catalog.mjs';
 
 const help=`Private team metrics
 
@@ -18,6 +20,7 @@ const help=`Private team metrics
   node metrics/cli.mjs report [--team TEAM_ID] [filters]
   node metrics/cli.mjs review [--team TEAM_ID] [filters] [--include-games] [--max-evidence 5]
   node metrics/cli.mjs export [--team TEAM_ID] --format html|csv|json [--output review.html] [filters]
+  node metrics/cli.mjs delete --team TEAM_ID [--confirm]
 
 Filters: --opponent-species NAME --selected-species NAME --outcome win|loss|tie|unknown
          --from YYYY-MM-DD --to YYYY-MM-DD --include-incomplete --include-operational
@@ -26,6 +29,8 @@ Use --file or --url repeatedly, up to 20 inputs. These input types cannot be mix
 Imports remember local sources for query-time refresh; --no-remember disables this for that import.
 Review returns an evidence-backed JSON brief for agents. Its stable team profile includes agent JSON and Markdown.
 Manual exports write new files only in cache/team-metrics/reports. No login, battle search or upload.
+Delete previews the exact team's permanent cascade by default; --confirm applies it.
+The ten-team LRU permanently cleans evicted reports and owned data. Blocked cleanup remains explicit.
 `;
 
 export function parseArguments(argv) {
@@ -38,6 +43,7 @@ export function parseArguments(argv) {
     if (key==='--include-incomplete'||key==='--include-operational') {values[key==='--include-incomplete'?'includeIncomplete':'includeOperational']=true;continue;}
     if(key==='--include-archived'){values.includeArchived=true;continue;}
     if(key==='--include-games'){values.includeGames=true;continue;}
+    if(key==='--confirm'){if(Object.hasOwn(values,'confirmed'))throw new Error('Duplicate option: --confirm');values.confirmed=true;continue;}
     if(key==='--remember'||key==='--no-remember') {if(Object.hasOwn(values,'remember'))throw new Error('Use only one remember option.');values.remember=key==='--remember';continue;}
     if(key==='--help'||key==='-h') return {command:'help',values:{files:[],urls:[]}};
     if(!['--file','--url'].includes(key)&&!single.has(key)) throw new Error(`Unknown option: ${key}`);
@@ -61,7 +67,7 @@ export function parseArguments(argv) {
   for (const key of ['from','to']) if(values[key]&&!Number.isFinite(Date.parse(values[key]))) throw new Error(`Invalid --${key}.`);
   const common=['workspace'];
   const reportOptions=['teamId','opponentSpecies','selectedSpecies','outcome','from','to','includeIncomplete','includeOperational'];
-  const allowed={list:[...common,'includeArchived'],register:[...common,'teamFile','name'],report:[...common,...reportOptions],review:[...common,...reportOptions,'includeGames','maxEvidence'],export:[...common,...reportOptions,'format','output'],import:[...common,'username','teamFile','teamId','ledgerFile','name','remember']};
+  const allowed={list:[...common,'includeArchived'],register:[...common,'teamFile','name'],report:[...common,...reportOptions],review:[...common,...reportOptions,'includeGames','maxEvidence'],export:[...common,...reportOptions,'format','output'],import:[...common,'username','teamFile','teamId','ledgerFile','name','remember'],delete:[...common,'teamId','confirmed']};
   if(command!=='help'&&!allowed[command]) throw new Error(`Unknown command: ${command}`);
   if(command!=='help') for(const field of Object.keys(values)) {
     if(field==='files') {if(values.files.length&&command!=='import')throw new Error('--file is only supported by import.');}
@@ -71,15 +77,19 @@ export function parseArguments(argv) {
   return {command,values};
 }
 
-export async function runCli(argv,{write=value=>process.stdout.write(value+'\n'),replayImporter=importReplayUrls}={}) {
+export async function runCli(argv,{write=value=>process.stdout.write(value+'\n'),replayImporter=importReplayUrls,teamDeleter=deleteTeamReport}={}) {
   const {command,values}=parseArguments(argv);
   if(command==='help'||command==='--help'||command==='-h') {write(help);return;}
   const {workspace=resolve(fileURLToPath(new URL('..',import.meta.url))),files,urls,format='html',output,...args}=values;
   let result;
   let refresh;
   if(['list','report','review','export'].includes(command))refresh=await refreshMetricsSources({workspace});
-  if(command==='list'){const all=await listTeams({workspace,includeArchived:true});const teams=await addTeamProfileLinks({workspace,teams:args.includeArchived?all:all.filter(team=>team.active!==false)});result={teams,capacity:{maxActiveTeams:MAX_ACTIVE_TEAMS,activeTeams:all.filter(team=>team.active!==false).length,archivedTeams:all.filter(team=>team.archived).length},refresh};}
+  if(command==='list'){const [all,pendingCleanupTeams]=await Promise.all([listTeams({workspace,includeArchived:true}),listMetricsTeamDeletions({workspace})]);const teams=await addTeamProfileLinks({workspace,teams:args.includeArchived?all:all.filter(team=>team.active!==false)});result={teams,pendingCleanupTeams,capacity:{maxActiveTeams:MAX_ACTIVE_TEAMS,activeTeams:all.filter(team=>team.active!==false).length,archivedTeams:all.filter(team=>team.archived).length},refresh};}
   if(command==='register'){if(!args.teamFile)throw new Error('Register requires --team-file.');result=await registerTeamFromFile({workspace,...args});}
+  if(command==='delete'){
+    if(!args.teamId)throw new Error('Delete requires --team with the full team fingerprint.');
+    result=await teamDeleter({workspace,...args,dryRun:args.confirmed!==true});
+  }
   if(command==='import') {
     if((!files.length&&!urls.length)||!args.username||Boolean(args.teamFile)===Boolean(args.teamId)) throw new Error('Import requires --file or --url, --username and exactly one of --team or --team-file.');
     if(urls.length){try{result=await replayImporter({workspace,urls,...args});}catch{throw new Error('Replay import failed. Check the supported replay URLs, owner username and saved team ID or local team file.');}}

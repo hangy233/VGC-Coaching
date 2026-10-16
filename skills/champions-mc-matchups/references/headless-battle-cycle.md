@@ -219,3 +219,24 @@ Backfilled reviews must say they are retrospective. They repair future guidance
 but do not prove that this cycle was followed between past sets. Skill edits and
 reviews never authorize a roster change, replay publication, authentication,
 another set beyond the user's limit, or a Git commit/push.
+
+## Team report lifetime
+
+The user's database policy keeps the 10 most recently used exact team versions.
+Capacity eviction permanently cleans the evicted version's report and local data;
+it is not a recoverable archive. Explicit report removal uses the same cascade via
+`team_metrics_delete_team`: inspect its default dry run, then use confirmed
+deletion within the user's existing scope. This is separate from per-BO3 cleanup,
+which retains useful evidence while the team version remains stored.
+
+Whole-team cleanup covers generated reports/exports, saved sets, game summaries,
+compressed evidence, owned replay caches, source registrations, and exclusively
+owned cache logs/reviews. Active client ownership, shared or unrecognized sources,
+unsafe paths and changed files remain explicit pending cleanup. A false `complete`
+value is not full removal; inspect `retained`, `blockers` and
+`team_metrics_list.pendingCleanupTeams`, then retry after resolving those exact
+conditions. Do not close a signed-in client or delete another team's shared file
+to force completion. Background imports and ordinary report reads cannot recreate
+a deleted version; deliberate registration of the full legal team starts a fresh
+report without its old games. Team deletion does not remove published remote
+replays or copies outside managed local storage.

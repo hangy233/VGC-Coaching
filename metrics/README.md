@@ -7,7 +7,7 @@ The reference workbook has 27 tabs and uses the `REPLAYTODATA` Apps Script funct
 ## What is counted
 
 - Exact team versions have separate fingerprints, so move, item or spread changes do not silently mix samples.
-- Save a team before its first game, then add results to that exact version. The 10 most recently used versions stay active. Older versions are archived with their history retained; opening an archived version's report restores it and archives the current least recently used version. Listing teams does not change their order.
+- Save a team before its first game, then add results to that exact version. The 10 most recently used versions stay active. Capacity eviction permanently cleans the oldest team's report and owned data. Active writers, shared files and uncertain ownership block unsafe removal and remain visible as pending cleanup. Listing teams does not change their order.
 - Games and sets: wins, losses, ties, unknown results and sample sizes. Win rates use wins divided by wins plus losses; ties and unknown results remain separate.
 - Each Pokémon: selections, leads, win rate when selected, switch-ins, faints, inability to act, direct knockouts, attributed indirect knockouts and observed item removals.
 - Mega use counts only an observed Mega Evolution; having a stone or registering a Mega form does not count. Mega games and win rates appear separately from team selection.
@@ -29,6 +29,7 @@ After rebuilding and reloading the MCP server, use:
 | --- | --- |
 | `team_metrics_list` | List stored team versions and sample sizes. |
 | `team_metrics_register_team` | Create a report from inline `teamText` or a local `teamFile`, returning its exact version ID. |
+| `team_metrics_delete_team` | Preview or permanently delete an exact team's report and owned data, with explicit retained files and blockers. |
 | `team_metrics_sync_battles` | Append/update the existing client's observed games, await local recording, and return its report and recording status. |
 | `team_metrics_import` | Import saved local logs using owner username, a saved team ID or team export, and optional result ledger. |
 | `team_metrics_import_replays` | Read existing Showdown replay URLs and add their metrics to a saved team ID or supplied team export. |
@@ -38,7 +39,7 @@ After rebuilding and reloading the MCP server, use:
 | `team_metrics_finalize_bo3` | Retain a completed set's useful evidence, attach verified replay links, and dry-run or apply bounded cleanup after its review checkpoint. |
 | `team_metrics_export` | Save a standalone HTML dashboard, CSV or JSON report. |
 
-Report filters are `teamId`, `opponentSpecies`, `selectedSpecies`, `outcome`, `from`, `to`, `includeIncomplete` and `includeOperational`. Omit `teamId` only when exactly one active team exists. Filters recompute the report, including its sample sizes. List results expose active/archived status, last-used order, capacity and profile links; use `includeArchived: true` to find older versions. Imports require exactly one of `teamId` or `teamFile`; registration requires exactly one of inline `teamText` or local `teamFile`. Imported files must resolve inside the workspace. No metrics tool authenticates, queues a battle or reads saved credentials. Confirmed BO3 finalization can request replay saving through the existing signed-in battle client when `saveReplays: true`; it preserves the room's current privacy.
+Report filters are `teamId`, `opponentSpecies`, `selectedSpecies`, `outcome`, `from`, `to`, `includeIncomplete` and `includeOperational`. Omit `teamId` only when exactly one active team exists. Filters recompute the report, including its sample sizes. List results expose active status, last-used order, capacity and profile links. `pendingCleanupTeams` lists deletions already in progress; `includeArchived: true` also exposes capacity evictions whose cleanup could not begin because of blockers. Purged teams are not recoverable archives. Imports require exactly one of `teamId` or `teamFile`; registration requires exactly one of inline `teamText` or local `teamFile`. Imported files must resolve inside the workspace. No metrics tool authenticates, queues a battle or reads saved credentials. Confirmed BO3 finalization can request replay saving through the existing signed-in battle client when `saveReplays: true`; it preserves the room's current privacy.
 
 Battle control, report creation, append/import and report queries are registered together in this repository's MCP. For a new team, call `team_metrics_register_team` with its pasted Showdown export as `teamText`; keep the returned `teamId`. Registration never changes the terminal client's locked team. After a game or BO3 on an updated client, call `team_metrics_sync_battles({teamId: LOCKED_TEAM_ID})` outside action deadlines. This flushes the observer's buffered games and official results, then returns the current report and stable human/agent paths. Repeating it updates the same game identities. A different requested ID is rejected before syncing.
 
@@ -87,6 +88,16 @@ Registered shared sources always remain protected by this cleanup tool and requi
 
 Full private replay URLs can grant access to a private battle. They stay in ignored local records and private reports; sharing an export also shares those contained links. Shared skills retain anonymized lessons and game references without access suffixes.
 
+## Deleting a team report
+
+Team deletion is a permanent cascade, distinct from the per-BO3 cleanup that keeps useful review evidence. `team_metrics_delete_team({teamId: TEAM_ID})` returns a dry-run plan without deleting files. Apply the inspected plan with the same ID, `dryRun: false` and `confirmed: true`. Capacity eviction uses the same cascade for the least recently used team when an eleventh active version is added.
+
+The cascade includes the team's catalog and import signatures, game summaries, compressed state and replay evidence, cached team export, HTML and agent reports, generated manual exports, remembered-source registrations, and exclusively owned closed source logs and review checkpoints. A replay cache shared with another team version remains for that other report. The original user-maintained team export and unrelated workspace files are preserved.
+
+An active signed-in session using the team blocks deletion; the tool never closes that client. Shared logs, unsafe paths, unknown ownership and files that change during cleanup remain listed with their reasons. `complete: false` means related data remains; do not treat the report as fully cleaned. Resolve those specific blockers and retry. `team_metrics_list` and CLI `list` expose started deletions in `pendingCleanupTeams`; `includeArchived: true` or CLI `--include-archived` also includes capacity evictions whose cleanup has not started. These states remain visible instead of silently accumulating recoverable archives.
+
+A deleted team cannot be recreated by background imports, old remembered sources or an ordinary report query. Supplying the complete legal team again through explicit registration creates a new empty report; it does not recover deleted battle history. All deletion is local: previously published Showdown replays and copies shared outside this workspace are unaffected.
+
 ## Supported imports
 
 - Client `.jsonl` event streams: protocol events, private requests used to establish your own selected four, and observed team sheets.
@@ -127,6 +138,8 @@ node metrics/cli.mjs review --team FULL_TEAM_FINGERPRINT
 node metrics/cli.mjs review --team FULL_TEAM_FINGERPRINT --opponent-species Archaludon --include-games --max-evidence 10
 node metrics/cli.mjs export --team FULL_TEAM_FINGERPRINT --format html --output rain-review.html
 node metrics/cli.mjs export --team FULL_TEAM_FINGERPRINT --format csv --output rain-review.csv
+node metrics/cli.mjs delete --team FULL_TEAM_FINGERPRINT
+node metrics/cli.mjs delete --team FULL_TEAM_FINGERPRINT --confirm
 ```
 
 Use `--file` repeatedly for several logs or `--url` repeatedly for several replay URLs; these inputs cannot be mixed in one import. Replay imports do not remember URL sources. `--workspace` defaults to this repository. `--from` and `--to` accept ISO dates or timestamps. Reports include exclusions and unknown information rather than silently treating it as a loss or zero selection.
@@ -137,6 +150,6 @@ The HTML dashboard works offline. It shows overview, Pokémon, Mega use, lead pa
 
 Metrics live in `cache/team-metrics`. Manual exports are new files directly under `cache/team-metrics/reports`; an existing manual export is never overwritten. Automatically maintained per-team profiles use the separate `reports/teams` directory and update in place. Export paths reject traversal and symbolic links/junctions. HTML embeds escaped data and loads no remote scripts or assets. CSV cells neutralize formula-like strings. Share exports only when you intend to share the contained teams, opponent names and battle results.
 
-The SQLite catalog, `cache/team-metrics/catalog.sqlite`, maintains team identities, the ten-team LRU and import signatures across restarts. Per-game JSON summaries retain the measured observations. Concurrent writers serialize updates to the same game; unchanged imports and background polling do not mark an archived team recently used. Archiving preserves summaries, saved team sheets and previous exports.
+The SQLite catalog, `cache/team-metrics/catalog.sqlite`, maintains team identities, the ten-team LRU and import signatures across restarts. Per-game JSON summaries retain the measured observations until the team's report is deleted or evicted. Concurrent writers serialize updates to the same game; unchanged imports and background polling do not change the team's recency. Capacity cleanup removes owned files and catalog data rather than retaining an archive; active/shared-file blockers remain explicit. Deletion markers prevent old observations from silently rebuilding a deleted report.
 
 The metrics tool does not calculate damage or Speed and does not replace the matchup skill's per-set decision review. Agent briefs support that review through measured observations and traceable references; they never apply skill or roster changes automatically. Existing signed-in clients require a deliberate reload to adopt changed source; building this tool does not itself change a live session.

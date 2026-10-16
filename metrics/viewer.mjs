@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {listTeams} from './store.mjs';
 import {refreshMetricsSources} from './import.mjs';
 import {ensureTeamReport,updateTeamReport} from './live-reports.mjs';
+import {getMetricsTeamDeletion} from './catalog.mjs';
 
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const teamPattern=/^[a-f0-9]{64}$/;
@@ -32,7 +33,11 @@ export async function startMetricsViewer({workspace=resolve(fileURLToPath(new UR
       let teams=await listTeams({workspace});
       const teamId=requested||teams[0]?.teamId;
       if(!teamId)return send(200,'<!doctype html><title>Team reports</title><main><h1>No teams recorded yet</h1><p>Register a team or import a saved game to create its report.</p></main>','text/html; charset=utf-8');
-      if(requested&&!(await listTeams({workspace,includeArchived:true})).some(team=>team.teamId===requested))return send(404,{error:'Team report not found; register a team first'});
+      if(requested&&!(await listTeams({workspace,includeArchived:true})).some(team=>team.teamId===requested)){
+        const deletion=await getMetricsTeamDeletion({workspace,teamId:requested});
+        if(deletion)return send(410,{deleted:true,pending:deletion.state==='deleting'});
+        return send(404,{error:'Team report not found; register a team first'});
+      }
       if(url.pathname==='/'&&!requested){res.writeHead(302,{Location:'/?team='+teamId,'Cache-Control':'no-store'});res.end();return;}
       if(url.pathname==='/api/version'){
         const stable=await updateTeamReport({workspace,teamId});

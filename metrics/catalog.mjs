@@ -10,6 +10,8 @@ const HASH = /^[a-f0-9]{64}$/u;
 const BATTLE_FILE = /^[a-z0-9]+(?:-[a-z0-9]+)*--[a-f0-9]{64}\.json$/u;
 const POKEMON_COUNTERS = ['switchIns', 'faints', 'knockouts', 'indirectKnockouts', 'itemRemovals', 'couldNotAct'];
 const MOVE_COUNTERS = ['uses', 'calledUses', 'failed', 'missed', 'blocked', 'knockouts', 'itemRemovals'];
+const SOURCES_LOCK_TEAM = '0'.repeat(64);
+const coordinationLock = (roomId, teamId) => teamId === SOURCES_LOCK_TEAM && roomId === 'metrics-sources';
 
 function invalid(message) { throw new TypeError(`Invalid metrics catalog: ${message}`); }
 function validateTeamId(teamId) {
@@ -132,7 +134,21 @@ function unpack(row) {
     usageOrder: row.usage_order, archivedAt: row.archived_at, archiveReason: row.archive_reason };
 }
 const selectOne = (database, teamId) => unpack(database.prepare('SELECT * FROM teams WHERE team_id = ?').get(teamId));
+function deletionStatus(database, teamId) {
+  const row = database.prepare('SELECT team_id,state,started_at,completed_at FROM deleted_teams WHERE team_id=?').get(teamId);
+  return row ? { teamId: row.team_id, state: row.state, startedAt: row.started_at, completedAt: row.completed_at } : null;
+}
+function assertWritable(database, teamId) {
+  const deletion = deletionStatus(database, teamId);
+  if (!deletion) return;
+  const error = new Error('This team report has been deleted or is being deleted; stale imports and live recording cannot recreate it.');
+  error.code = 'METRICS_TEAM_DELETED';
+  error.teamId = teamId;
+  error.deletionState = deletion.state;
+  throw error;
+}
 function updateDescriptor(database, input) {
+  assertWritable(database, input.teamId);
   const existing = selectOne(database, input.teamId);
   if (!existing) return null;
   database.prepare('UPDATE teams SET name = ?, format = ?, roster_json = ? WHERE team_id = ?').run(
@@ -140,12 +156,13 @@ function updateDescriptor(database, input) {
   return selectOne(database, input.teamId);
 }
 function trimActive(database, now) {
-  const evicted = database.prepare('SELECT team_id FROM teams WHERE active = 1 ORDER BY usage_order DESC, team_id ASC LIMIT -1 OFFSET ?').all(MAX_ACTIVE_TEAMS);
+  const evicted = database.prepare('SELECT team_id FROM teams WHERE active = 1 AND team_id NOT IN(SELECT team_id FROM deleted_teams) ORDER BY usage_order DESC, team_id ASC LIMIT -1 OFFSET ?').all(MAX_ACTIVE_TEAMS);
   const archive = database.prepare("UPDATE teams SET active = 0, archived_at = ?, archive_reason = 'capacity' WHERE team_id = ?");
   for (const row of evicted) archive.run(now, row.team_id);
   return evicted.map(row => row.team_id);
 }
 function touch(database, input, now = new Date().toISOString()) {
+  assertWritable(database, input.teamId);
   const existing = selectOne(database, input.teamId);
   const order = nextOrder(database);
   database.prepare(`INSERT INTO teams(team_id,name,format,roster_json,created_at,last_used_at,usage_order,active,archived_at,archive_reason)
@@ -168,6 +185,8 @@ async function openCatalog({ workspace, create = false } = {}) {
   await safeCatalogFile(file);
   const database = new DatabaseSync(file, { timeout: 5000, enableDoubleQuotedStringLiterals: false });
   try {
+    // Deleted descriptors and battle signatures should not remain in reusable SQLite pages.
+    database.exec('PRAGMA secure_delete=ON');
     database.exec(`CREATE TABLE IF NOT EXISTS catalog_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT;
       INSERT OR IGNORE INTO catalog_meta(key,value) VALUES('usage_order','0');
       CREATE TABLE IF NOT EXISTS teams(
@@ -183,6 +202,11 @@ async function openCatalog({ workspace, create = false } = {}) {
       CREATE TABLE IF NOT EXISTS battle_write_locks(
         room_id TEXT NOT NULL,team_id TEXT NOT NULL,owner_pid INTEGER NOT NULL CHECK(owner_pid>0),
         owner_nonce TEXT NOT NULL,acquired_at TEXT NOT NULL,PRIMARY KEY(room_id,team_id)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS deleted_teams(
+        team_id TEXT PRIMARY KEY CHECK(length(team_id)=64),
+        state TEXT NOT NULL CHECK(state IN('deleting','deleted')),
+        started_at TEXT NOT NULL,completed_at TEXT
       ) STRICT;`);
     if (!database.prepare("SELECT value FROM catalog_meta WHERE key='legacy_migrated'").get()) {
       const records = await legacyRecords(directory);
@@ -190,12 +214,13 @@ async function openCatalog({ workspace, create = false } = {}) {
         if (database.prepare("SELECT value FROM catalog_meta WHERE key='legacy_migrated'").get()) return;
         const grouped = new Map();
         for (const record of records) {
+          if (deletionStatus(database, record.teamId)) continue;
           const current = grouped.get(record.teamId);
           if (!current || current.at < record.catalogLegacyAt) grouped.set(record.teamId, { at: record.catalogLegacyAt, input: descriptor({ ...record.team, teamId: record.teamId }) });
         }
         for (const group of [...grouped.values()].sort((a, b) => a.at.localeCompare(b.at) || a.input.teamId.localeCompare(b.input.teamId))) touch(database, group.input, group.at);
         const insert = database.prepare('INSERT OR IGNORE INTO battle_signatures(room_id,team_id,signature) VALUES(?,?,?)');
-        for (const record of records) insert.run(record.roomId, record.teamId, materialBattleSignature(record));
+        for (const record of records) if (!deletionStatus(database, record.teamId)) insert.run(record.roomId, record.teamId, materialBattleSignature(record));
         database.prepare("INSERT INTO catalog_meta(key,value) VALUES('legacy_migrated','1')").run();
       });
     }
@@ -208,7 +233,7 @@ export async function listMetricsCatalog({ workspace, includeArchived = false } 
   const database = await openCatalog({ workspace });
   if (!database) return [];
   try {
-    return database.prepare(`SELECT * FROM teams ${includeArchived ? '' : 'WHERE active=1'} ORDER BY active DESC,usage_order DESC,team_id ASC`).all().map(unpack);
+    return database.prepare(`SELECT * FROM teams WHERE team_id NOT IN(SELECT team_id FROM deleted_teams) ${includeArchived ? '' : 'AND active=1'} ORDER BY active DESC,usage_order DESC,team_id ASC`).all().map(unpack);
   } finally { database.close(); }
 }
 
@@ -217,7 +242,7 @@ export async function isMetricsTeamActive({ workspace, teamId } = {}) {
   validateTeamId(teamId);
   const database = await openCatalog({ workspace });
   if (!database) return null;
-  try { const team = selectOne(database, teamId); return team ? team.active : null; }
+  try { if (deletionStatus(database, teamId)) return null; const team = selectOne(database, teamId); return team ? team.active : null; }
   finally { database.close(); }
 }
 
@@ -225,22 +250,34 @@ export async function isMetricsTeamActive({ workspace, teamId } = {}) {
 export async function registerMetricsTeam({ workspace, teamId, name, format, roster } = {}) {
   const input = descriptor({ teamId, name, format, roster });
   const database = await openCatalog({ workspace, create: true });
-  try { return transaction(database, () => touch(database, input)); }
+  let result;
+  try { result = transaction(database, () => touch(database, input)); }
   finally { database.close(); }
+  return cleanEvicted({ workspace, result });
 }
 
-/** Recover an archived version without deleting its battle files or previous exports. */
+async function cleanEvicted({ workspace, result }) {
+  if (!result.evictedTeams.length) return result;
+  // Cleanup needs separate, short catalog transactions; never await filesystem work inside SQLite.
+  const { cleanupEvictedTeams } = await import('./team-cleanup.mjs');
+  return { ...result, cleanup: await cleanupEvictedTeams({ workspace, teamIds: result.evictedTeams }) };
+}
+
+/** Recover a retained non-capacity archive; deleted LRU versions cannot be restored. */
 export async function restoreMetricsTeam({ workspace, teamId } = {}) {
   validateTeamId(teamId);
   const database = await openCatalog({ workspace });
   if (!database) invalid('team is not present in the catalog');
+  let result;
   try {
-    return transaction(database, () => {
+    result = transaction(database, () => {
+      assertWritable(database, teamId);
       const existing = selectOne(database, teamId);
       if (!existing) invalid('team is not present in the catalog');
       return touch(database, existing);
     });
   } finally { database.close(); }
+  return cleanEvicted({ workspace, result });
 }
 
 /**
@@ -252,8 +289,10 @@ export async function recordMetricsBattle({ workspace, record } = {}) {
   const input = descriptor({ ...record?.team, teamId: record?.teamId });
   const signature = materialBattleSignature(record);
   const database = await openCatalog({ workspace, create: true });
+  let result;
   try {
-    return transaction(database, () => {
+    result = transaction(database, () => {
+      assertWritable(database, input.teamId);
       const previous = database.prepare('SELECT signature FROM battle_signatures WHERE room_id=? AND team_id=?').get(record.roomId, input.teamId);
       if (previous?.signature === signature) return { changed: false, team: updateDescriptor(database, input), evictedTeams: [], maxActiveTeams: MAX_ACTIVE_TEAMS };
       const result = touch(database, input);
@@ -261,6 +300,7 @@ export async function recordMetricsBattle({ workspace, record } = {}) {
       return { ...result, changed: true };
     });
   } finally { database.close(); }
+  return cleanEvicted({ workspace, result });
 }
 
 function processAlive(pid) {
@@ -271,6 +311,111 @@ function processAlive(pid) {
     if (error.code === 'EPERM') return true; // Lack of permission never proves an owner is dead.
     throw error;
   }
+}
+
+/** A retained, minimal tombstone prevents automatic sources from resurrecting deleted reports. */
+export async function getMetricsTeamDeletion({ workspace, teamId } = {}) {
+  validateTeamId(teamId);
+  const database = await openCatalog({ workspace });
+  if (!database) return null;
+  try { return deletionStatus(database, teamId); }
+  finally { database.close(); }
+}
+
+/** Pending cleanup survives a failed filesystem operation and can be retried on the next refresh. */
+export async function listMetricsTeamDeletions({ workspace, state = 'deleting' } = {}) {
+  if (!['deleting', 'deleted'].includes(state)) invalid('deletion state is not recognized');
+  const database = await openCatalog({ workspace });
+  if (!database) return [];
+  try {
+    return database.prepare('SELECT team_id,state,started_at,completed_at FROM deleted_teams WHERE state=? ORDER BY started_at,team_id').all(state)
+      .map(row => ({ teamId: row.team_id, state: row.state, startedAt: row.started_at, completedAt: row.completed_at }));
+  } finally { database.close(); }
+}
+
+/** Check before starting a non-catalog operation; battle writes must additionally hold their row lease. */
+export async function assertMetricsTeamWritable({ workspace, teamId } = {}) {
+  validateTeamId(teamId);
+  const database = await openCatalog({ workspace });
+  if (!database) return;
+  try { assertWritable(database, teamId); }
+  finally { database.close(); }
+}
+
+/**
+ * Stop new writers before removing any files. An already running writer must
+ * release its lease first; only a confirmed dead process may be reclaimed.
+ * Repeating this after a partial cleanup preserves the original tombstone.
+ */
+export async function beginMetricsTeamDeletion({ workspace, teamId, requireCapacityEviction = false } = {}) {
+  validateTeamId(teamId);
+  if (typeof requireCapacityEviction !== 'boolean') invalid('requireCapacityEviction must be boolean');
+  const database = await openCatalog({ workspace, create: true });
+  try {
+    return transaction(database, () => {
+      const existing = deletionStatus(database, teamId);
+      if (existing) return existing;
+      if (requireCapacityEviction) {
+        const team = selectOne(database, teamId);
+        if (!team || team.active || team.archiveReason !== 'capacity') return null;
+      }
+      const owners = database.prepare('SELECT room_id,owner_pid,owner_nonce FROM battle_write_locks WHERE team_id=?').all(teamId).filter(owner => !coordinationLock(owner.room_id, teamId));
+      if (owners.some(owner => processAlive(owner.owner_pid))) {
+        const error = new Error('This team report has an active local writer; wait for recording or importing to finish before deleting it.');
+        error.code = 'METRICS_TEAM_BUSY';
+        throw error;
+      }
+      for (const owner of owners) database.prepare('DELETE FROM battle_write_locks WHERE room_id=? AND team_id=? AND owner_nonce=?').run(owner.room_id, teamId, owner.owner_nonce);
+      database.prepare("INSERT INTO deleted_teams(team_id,state,started_at,completed_at) VALUES(?,'deleting',?,NULL)").run(teamId, new Date().toISOString());
+      return deletionStatus(database, teamId);
+    });
+  } finally { database.close(); }
+}
+
+/** Finish only after the caller has removed every team-owned file and source reference. */
+export async function finishMetricsTeamDeletion({ workspace, teamId } = {}) {
+  validateTeamId(teamId);
+  const database = await openCatalog({ workspace });
+  if (!database) invalid('team deletion must begin before it can finish');
+  try {
+    return transaction(database, () => {
+      const existing = deletionStatus(database, teamId);
+      if (!existing) invalid('team deletion must begin before it can finish');
+      if (existing.state === 'deleted') return existing;
+      database.prepare('DELETE FROM battle_signatures WHERE team_id=?').run(teamId);
+      database.prepare("DELETE FROM battle_write_locks WHERE team_id=? AND NOT(team_id=? AND room_id='metrics-sources')").run(teamId, SOURCES_LOCK_TEAM);
+      database.prepare('DELETE FROM teams WHERE team_id=?').run(teamId);
+      database.prepare("UPDATE deleted_teams SET state='deleted',completed_at=? WHERE team_id=?").run(new Date().toISOString(), teamId);
+      return deletionStatus(database, teamId);
+    });
+  } finally { database.close(); }
+}
+
+/** Only a deliberate new report registration may clear a completed deletion. */
+export async function recreateDeletedMetricsTeam({ workspace, teamId } = {}) {
+  validateTeamId(teamId);
+  const database = await openCatalog({ workspace });
+  if (!database) return { teamId, recreated: false };
+  try {
+    return transaction(database, () => {
+      const deletion = deletionStatus(database, teamId);
+      if (!deletion) return { teamId, recreated: false };
+      if (deletion.state !== 'deleted') {
+        const error = new Error('This team report cleanup is still pending; finish deletion before creating a fresh report.');
+        error.code = 'METRICS_TEAM_BUSY';
+        throw error;
+      }
+      const owners = database.prepare('SELECT room_id,owner_pid FROM battle_write_locks WHERE team_id=?').all(teamId).filter(owner => !coordinationLock(owner.room_id, teamId));
+      if (owners.some(owner => processAlive(owner.owner_pid))) {
+        const error = new Error('This team report has an active local writer; wait before creating a fresh report.');
+        error.code = 'METRICS_TEAM_BUSY';
+        throw error;
+      }
+      database.prepare("DELETE FROM battle_write_locks WHERE team_id=? AND NOT(team_id=? AND room_id='metrics-sources')").run(teamId, SOURCES_LOCK_TEAM);
+      database.prepare('DELETE FROM deleted_teams WHERE team_id=?').run(teamId);
+      return { teamId, recreated: true };
+    });
+  } finally { database.close(); }
 }
 
 /**
@@ -288,6 +433,7 @@ export async function acquireMetricsBattleLock({ workspace, roomId, teamId, time
     let acquired;
     try {
       acquired = transaction(database, () => {
+        if (!coordinationLock(roomId, teamId)) assertWritable(database, teamId);
         const owner = database.prepare('SELECT owner_pid,owner_nonce FROM battle_write_locks WHERE room_id=? AND team_id=?').get(roomId, teamId);
         if (owner && processAlive(owner.owner_pid)) return false;
         if (owner) database.prepare('DELETE FROM battle_write_locks WHERE room_id=? AND team_id=? AND owner_nonce=?').run(roomId, teamId, owner.owner_nonce);

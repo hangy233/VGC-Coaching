@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { saveBattle, listBattles, listTeams, getTeamReport, registerMetricsTeam, restoreMetricsTeam, isMetricsTeamActive, MAX_ACTIVE_TEAMS } from './store.mjs';
+import {exportReport} from './dashboard.mjs';
 
 const TEAM = 'a'.repeat(64);
 const OTHER_TEAM = 'b'.repeat(64);
@@ -351,7 +352,7 @@ test('an operational sibling contaminates the whole set even when a filter hides
 
 const numberedTeam = index => index.toString(16).padStart(64, '0');
 
-test('the catalog keeps ten active teams, evicts LRU, and retains archived records and exports', async t => {
+test('the catalog keeps ten active teams and permanently cleans an evicted team history and exports', async t => {
   const dir = await workspace(t);
   assert.equal(MAX_ACTIVE_TEAMS, 10);
   for (let index = 1; index <= 10; index++) await saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(index), team: { name: `Team ${index}`, roster: ['Golisopod'] } }) });
@@ -363,47 +364,37 @@ test('the catalog keeps ten active teams, evicts LRU, and retains archived recor
   assert.equal(afterRead.usageOrder, initialFirst.usageOrder);
   assert.equal(afterRead.lastUsedAt, initialFirst.lastUsedAt);
   await getTeamReport({ workspace: dir, teamId: numberedTeam(1) });
-  const reports = join(dir, 'cache', 'team-metrics', 'reports');
-  await mkdir(reports);
-  const exportFile = join(reports, 'retained-team-2.html');
-  await writeFile(exportFile, '<p>Existing export</p>');
+  const exported=await exportReport({workspace:dir,report:await getTeamReport({workspace:dir,teamId:numberedTeam(2),touch:false}),format:'html',output:'removed-team-2.html'});
   await saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(11) }) });
   assert.equal((await listTeams({ workspace: dir })).length, 10);
-  assert.equal((await listTeams({ workspace: dir, includeArchived: true })).length, 11);
+  assert.equal((await listTeams({ workspace: dir, includeArchived: true })).length, 10);
   assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(1) }), true);
-  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(2) }), false);
+  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(2) }), null);
   assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(11) }), true);
   assert.equal((await listBattles({ workspace: dir })).length, 10);
-  assert.equal((await listBattles({ workspace: dir, includeArchived: true })).length, 11);
-  assert.equal(await readFile(exportFile, 'utf8'), '<p>Existing export</p>');
-  const archived = (await listTeams({ workspace: dir, includeArchived: true })).find(team => team.teamId === numberedTeam(2));
-  assert.equal(archived.archived, true);
-  assert.equal(archived.archiveReason, 'capacity');
-  assert.ok(archived.archivedAt);
-  const recovered = await getTeamReport({ workspace: dir, teamId: numberedTeam(2) });
-  assert.equal(recovered.totals.games, 1);
-  assert.equal(recovered.team.active, true);
+  assert.equal((await listBattles({ workspace: dir, includeArchived: true })).length, 10);
+  await assert.rejects(readFile(exported.path),{code:'ENOENT'});
+  await assert.rejects(getTeamReport({ workspace: dir, teamId: numberedTeam(2) }),/unknown|deleted/u);
   assert.equal((await listTeams({ workspace: dir })).length, 10);
-  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(3) }), false);
+  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(3) }), true);
 });
 
-test('unchanged and provenance-only reimports do not reactivate archived teams or alter LRU', async t => {
+test('stale reimports cannot recreate a purged team or alter the remaining LRU', async t => {
   const dir = await workspace(t);
   for (let index = 1; index <= 11; index++) await saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(index) }) });
   const before = await listTeams({ workspace: dir, includeArchived: true });
-  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(1) }), false);
-  const repeated = await saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(1) }) });
-  assert.equal(repeated.status, 'unchanged');
-  const provenance = await saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(1), metadata: { ...record().metadata, sources: ['cache/additional-source.jsonl'], attribution: 'Source provenance refreshed' } }) });
-  assert.equal(provenance.status, 'updated');
+  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(1) }), null);
+  await assert.rejects(saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(1) }) }),/deleted/u);
+  await assert.rejects(saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(1), metadata: { ...record().metadata, sources: ['cache/additional-source.jsonl'], attribution: 'Source provenance refreshed' } }) }),/deleted/u);
   const after = await listTeams({ workspace: dir, includeArchived: true });
   assert.deepEqual(after.map(team => [team.teamId, team.usageOrder, team.lastUsedAt, team.active]), before.map(team => [team.teamId, team.usageOrder, team.lastUsedAt, team.active]));
-  await saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(1), turns: 8 }) });
-  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(1) }), true);
-  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(2) }), false);
+  await assert.rejects(saveBattle({ workspace: dir, record: record({ teamId: numberedTeam(1), turns: 8 }) }),/deleted/u);
+  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(1) }), null);
+  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: numberedTeam(2) }), true);
+  assert.equal((await listBattles({workspace:dir,includeArchived:true})).some(game=>game.teamId===numberedTeam(1)),false);
 });
 
-test('explicitly registered empty teams appear in reports and can be restored without a battle', async t => {
+test('explicitly registered empty teams appear in reports and capacity purge prevents implicit restoration', async t => {
   const dir = await workspace(t);
   assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: TEAM }), null);
   await registerMetricsTeam({ workspace: dir, teamId: TEAM, name: 'New trial version', format: 'gen9championsvgc2026regmc', roster: ['Golisopod', 'Sylveon'] });
@@ -416,11 +407,9 @@ test('explicitly registered empty teams appear in reports and can be restored wi
   assert.equal(report.totals.games, 0);
   assert.equal(report.pokemon.length, 2);
   for (let index = 1; index <= 10; index++) await registerMetricsTeam({ workspace: dir, teamId: numberedTeam(index) });
-  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: TEAM }), false);
-  const restored = await restoreMetricsTeam({ workspace: dir, teamId: TEAM });
-  assert.equal(restored.team.active, true);
-  assert.equal(restored.team.name, 'New trial version');
-  assert.equal(restored.evictedTeams.length, 1);
+  assert.equal(await isMetricsTeamActive({ workspace: dir, teamId: TEAM }), null);
+  await assert.rejects(restoreMetricsTeam({ workspace: dir, teamId: TEAM }),/deleted/u);
+  await assert.rejects(getTeamReport({workspace:dir,teamId:TEAM}),/unknown|deleted/u);
   assert.equal((await listTeams({ workspace: dir })).length, 10);
   await assert.rejects(restoreMetricsTeam({ workspace: dir, teamId: OTHER_TEAM }), /not present/u);
 });

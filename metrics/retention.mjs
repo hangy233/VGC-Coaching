@@ -156,7 +156,7 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
         if (JSON.stringify(previous.events) !== JSON.stringify(document.events) || JSON.stringify(previous.sheets) !== JSON.stringify(document.sheets) || previous.decisions.length) throw safeError('completed evidence differs; retain it for review');
       }
     }
-    const pending = join(dirname(target.path), `.pending-${randomUUID()}.tmp`);
+    const pending = join(dirname(target.path), `.pending-${teamId}-${randomUUID()}.tmp`);
     try { await writeFile(pending, await compress(bytes, { level: 9 }), { flag: 'wx', mode: 0o600 }); await rename(pending, target.path); }
     finally { await rm(pending, { force: true }); }
     const evidence = { path: file, sha256: hash, kind: 'sanitized-events', complete: document.complete, version: 1 };

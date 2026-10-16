@@ -5,6 +5,7 @@ import {createRequire} from 'node:module';
 import {analyzeBattle} from './parser.mjs';
 import {saveBattle,isMetricsTeamActive,registerMetricsTeam,listTeams} from './store.mjs';
 import {updateTeamReport,ensureTeamReport} from './live-reports.mjs';
+import {acquireMetricsBattleLock,assertMetricsTeamWritable,recreateDeletedMetricsTeam} from './catalog.mjs';
 
 const require=createRequire(import.meta.url);
 const {Teams,TeamValidator}=require('pokemon-showdown');
@@ -48,6 +49,8 @@ function validateMetricsTeam(text) {
 /** Keep a private immutable export so a saved version survives edits to its source. */
 export async function saveMetricsTeamSnapshot({workspace,teamId,team}) {
   if(!/^[a-f0-9]{64}$/.test(teamId)||createHash('sha256').update(Teams.pack(team)).digest('hex')!==teamId)throw new Error('Team snapshot does not match its fingerprint');
+  const release=await acquireMetricsBattleLock({workspace,teamId,roomId:'team-snapshot'});
+  try{
   const root=await realpath(workspace);let directory=root;
   for(const part of ['cache','team-metrics','teams']){
     directory=join(directory,part);try{await mkdir(directory);}catch(error){if(error.code!=='EEXIST')throw error;}
@@ -61,7 +64,7 @@ export async function saveMetricsTeamSnapshot({workspace,teamId,team}) {
     if(!existing||new TeamValidator('gen9championsvgc2026regmc').validateTeam(existing)?.length||createHash('sha256').update(Teams.pack(existing)).digest('hex')!==teamId)throw new Error('Saved team snapshot is corrupt; existing file was retained');
   };
   try{await verifyExisting();return relative(root,path).replaceAll('\\','/');}catch(error){if(error.code!=='ENOENT')throw error;}
-  const temp=join(directory,'.team-'+randomUUID()+'.tmp');
+  const temp=join(directory,'.pending-'+teamId+'-'+randomUUID()+'.tmp');
   try{
     await writeFile(temp,content,{flag:'wx',mode:0o600});
     // Publish without replacing another importer’s immutable snapshot. Windows
@@ -72,15 +75,17 @@ export async function saveMetricsTeamSnapshot({workspace,teamId,team}) {
     }
   }finally{await rm(temp,{force:true});}
   return relative(root,path).replaceAll('\\','/');
+  }finally{await release();}
 }
 
 /** Register a legal team and its own report before playing or importing a game. */
 export async function registerTeamFromFile({workspace,teamFile,name}={}) {
   const registration=await loadMetricsTeam({workspace,teamFile,name});
+  await recreateDeletedMetricsTeam({workspace,teamId:registration.teamId});
   const savedTeamFile=await saveMetricsTeamSnapshot({workspace,...registration});
-  await registerMetricsTeam({workspace,teamId:registration.teamId,...registration.descriptor});
+  const catalog=await registerMetricsTeam({workspace,teamId:registration.teamId,...registration.descriptor});
   const stableReport=await ensureTeamReport({workspace,teamId:registration.teamId});
-  return {teamId:registration.teamId,team:registration.descriptor,savedTeamFile,stableReport};
+  return {teamId:registration.teamId,team:registration.descriptor,savedTeamFile,stableReport,...(catalog.cleanup?{cleanup:catalog.cleanup}:{})};
 }
 
 /** MCP callers can register a pasted team without creating an intermediate file. */
@@ -88,9 +93,10 @@ export async function registerTeamFromText({workspace,teamText,name}={}) {
   const {team,teamId}=validateMetricsTeam(teamText);
   const known=(await listTeams({workspace,includeArchived:true})).find(value=>value.teamId===teamId);
   const descriptor={name:name||known?.name||'M-C team',format:'gen9championsvgc2026regmc',roster:team.map(p=>p.species)};
+  await recreateDeletedMetricsTeam({workspace,teamId});
   const savedTeamFile=await saveMetricsTeamSnapshot({workspace,teamId,team});
-  await registerMetricsTeam({workspace,teamId,...descriptor});
-  return {teamId,team:descriptor,savedTeamFile,stableReport:await ensureTeamReport({workspace,teamId})};
+  const catalog=await registerMetricsTeam({workspace,teamId,...descriptor});
+  return {teamId,team:descriptor,savedTeamFile,stableReport:await ensureTeamReport({workspace,teamId}),...(catalog.cleanup?{cleanup:catalog.cleanup}:{})};
 }
 
 function safeRequest(request) {
@@ -226,16 +232,51 @@ export async function importBattleFiles({workspace,files,username,teamFile,teamI
   return {teamId:registration.teamId,imported:saved.length,skipped,battles:saved,team:registration.descriptor,savedTeamFile,stableReport,provenance:'Training points belong to the supplied validated team file; open sheets alone do not reveal them.'};
 }
 
+/** One registry lease serializes imports and team deletion across processes. */
+export async function mutateMetricsSources({workspace,update}) {
+  if(typeof update!=='function')throw new Error('Metrics sources require an update function');
+  const release=await acquireMetricsBattleLock({workspace,teamId:'0'.repeat(64),roomId:'metrics-sources'});
+  try{
+    const root=await realpath(workspace),parts=['cache','team-metrics','sources'];
+    let directory=root,missing=false;
+    for(const part of parts){
+      directory=join(directory,part);
+      if(missing)continue;
+      let info;try{info=await lstat(directory);}catch(error){if(error.code!=='ENOENT')throw error;missing=true;continue;}
+      const rel=relative(root,await realpath(directory));
+      if(info.isSymbolicLink()||!info.isDirectory()||rel.startsWith('..')||isAbsolute(rel))throw new Error('Metrics source registry must stay in real workspace directories');
+    }
+    const file=join(directory,'registry.json');let sources=[];
+    if(!missing)try{
+      const info=await lstat(file);if(info.isSymbolicLink()||!info.isFile()||info.size>1024*1024)throw new Error('Invalid metrics source registry');
+      sources=JSON.parse(await readFile(file,'utf8'));if(!Array.isArray(sources))throw new Error('Invalid metrics source registry');
+    }catch(error){if(error.code!=='ENOENT')throw error;}
+    const previous=JSON.stringify(sources),next=await update(sources);
+    if(!Array.isArray(next))throw new Error('Metrics source registry update must return an array');
+    if(!next.length){if(!missing)await rm(file,{force:true});return next;}
+    if(JSON.stringify(next)===previous&&!missing)return next;
+    directory=root;
+    for(const part of parts){
+      directory=join(directory,part);try{await mkdir(directory);}catch(error){if(error.code!=='EEXIST')throw error;}
+      const info=await lstat(directory),rel=relative(root,await realpath(directory));
+      if(info.isSymbolicLink()||!info.isDirectory()||rel.startsWith('..')||isAbsolute(rel))throw new Error('Metrics source registry must stay in real workspace directories');
+    }
+    const temporary=file+'.'+randomUUID()+'.tmp';
+    try{await writeFile(temporary,JSON.stringify(next,null,2)+'\n',{flag:'wx',mode:0o600});await rename(temporary,file);}
+    finally{await rm(temporary,{force:true});}
+    return next;
+  }finally{await release();}
+}
+
 export async function rememberMetricsSource({workspace,source}) {
-  const directory=join(workspace,'cache','team-metrics','sources');await mkdir(directory,{recursive:true});
-  // Read/write only the generated registry; paths are rechecked again on every refresh.
-  const root=await realpath(workspace),actual=await realpath(directory),rel=relative(root,actual);
-  if(rel.startsWith('..')||isAbsolute(rel))throw new Error('Metrics source registry must stay in the workspace');
-  const file=join(directory,'registry.json');let sources=[];
-  try{sources=JSON.parse(await readFile(file,'utf8'));if(!Array.isArray(sources))throw new Error('Invalid metrics source registry');}catch(error){if(error.code!=='ENOENT')throw error;}
-  const key=createHash('sha256').update(JSON.stringify([source.username,source.teamFile,source.files])).digest('hex');
-  const value={key,...source};sources=[...sources.filter(s=>s.key!==key),value];
-  const temporary=file+'.'+randomUUID()+'.tmp';await writeFile(temporary,JSON.stringify(sources,null,2)+'\n',{flag:'wx'});await rename(temporary,file);
+  if(!/^[a-f0-9]{64}$/.test(source?.expectedTeamId))throw new Error('Remembered metrics sources require an exact team fingerprint');
+  return mutateMetricsSources({workspace,update:async sources=>{
+    // Recheck while holding the shared registry lease: deletion cannot remove
+    // this source and then have an importer silently add it back.
+    await assertMetricsTeamWritable({workspace,teamId:source.expectedTeamId});
+    const key=createHash('sha256').update(JSON.stringify([source.username,source.teamFile,source.files])).digest('hex');
+    return [...sources.filter(value=>value.key!==key),{key,...source}];
+  }});
 }
 
 export async function refreshMetricsSources({workspace}) {

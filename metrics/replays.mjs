@@ -5,6 +5,7 @@ import {importBattleFiles, loadMetricsTeam, readWorkspaceFile} from './import.mj
 import {attachVerifiedReplay, fetchVerifiedReplay} from './replay-evidence.mjs';
 import {updateTeamReport} from './live-reports.mjs';
 import {listBattles} from './store.mjs';
+import {acquireMetricsBattleLock,assertMetricsTeamWritable} from './catalog.mjs';
 
 const ORIGIN = 'https://replay.pokemonshowdown.com';
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -185,7 +186,7 @@ async function writeCachedReplay(directory, replay, path) {
     if (old.complete && (!current.complete || current.turns < old.turns)) return relative(directory.root, path).replaceAll('\\', '/');
     if (JSON.stringify(previous) === JSON.stringify(replay)) return relative(directory.root, path).replaceAll('\\', '/');
   }
-  const temporary = join(directory.path, `.pending-${randomUUID()}.tmp`);
+  const temporary = join(directory.path, `.pending-${directory.teamId}-${randomUUID()}.tmp`);
   try {
     await writeFile(temporary, `${JSON.stringify(replay)}\n`, {encoding: 'utf8', flag: 'wx', mode: 0o600});
     await rename(temporary, path);
@@ -208,6 +209,7 @@ export async function importReplayUrls({workspace, urls, username, teamFile, tea
     if (!previous || (!previous.capability && identity.capability)) identities.set(identity.publicId, identity);
   }
   const registration = await loadMetricsTeam({workspace, teamFile, teamId, name});
+  await assertMetricsTeamWritable({workspace,teamId:registration.teamId});
   if (ledgerFile) {
     const ledger = await readWorkspaceFile(workspace, ledgerFile, {extensions: ['.json']});
     try { JSON.parse(ledger.text); } catch { throw new Error('Invalid metrics ledger JSON.'); }
@@ -234,7 +236,9 @@ export async function importReplayUrls({workspace, urls, username, teamFile, tea
     }
     replays.push(replay);
   }
-  const directory = await replayDirectory(workspace), files = [];
+  const release=await acquireMetricsBattleLock({workspace,teamId:registration.teamId,roomId:'team-replay-import'});
+  try{
+  const directory = {...await replayDirectory(workspace),teamId:registration.teamId}, files = [];
   for (const replay of replays) files.push(await cacheReplay(directory, replay));
   const teamReference = teamId === undefined ? {teamFile: registration.teamFile} : {teamId: registration.teamId};
   const imported = await importBattleFiles({workspace, files, username, ...teamReference, name: name ?? registration.descriptor.name,
@@ -253,4 +257,5 @@ export async function importReplayUrls({workspace, urls, username, teamFile, tea
   const replayWarnings = replays.filter(replay => !replay.formatConfirmed).map(replay => ({roomId: `battle-${replay.id}`,
     warning: 'Replay payload has no format metadata; its URL identifies M-C, but the payload did not independently confirm the format.'}));
   return {...imported, replayUrls: identities.size, replays: attached, replayWarnings};
+  }finally{await release();}
 }
