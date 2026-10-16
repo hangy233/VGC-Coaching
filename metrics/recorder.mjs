@@ -37,7 +37,7 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
     stableReport=await updateTeamReport({workspace,teamId});initialized=true;
   });
   initialize();
-  const owned=room=>!session||session.ownedRooms.has(client.resolveRoom?.(room)||room);
+  const owned=room=>!session||session.ownedRooms.has(client.resolveRoom?.(room)||room)&&(!session.roomTeamId||session.roomTeamId(room)===teamId);
   const get=room=>{const id=canonicalRoom(room);if(!/^battle-/.test(id)||!owned(room))return null;if(!buffers.has(id))buffers.set(id,{roomId:id,events:[],truncated:false});return buffers.get(id);};
   const on=(event,handler)=>{client.on(event,handler);listeners.push([event,handler]);};
   const append=(room,value)=>{const b=get(room);if(!b)return;if(b.events.length>=20000){b.truncated=true;return;}b.events.push({...value,room,at:Date.now()});};
@@ -93,6 +93,15 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
       const winner=String(value.winner||'').toLowerCase().replace(/[^a-z0-9]/g,'');
       const result={outcome:value.type==='tie'?'tie':winner===own?'win':'loss',completed:true};
       if(!owned(value.room))return;
+      // Membership comes from the observed official parent, independently of
+      // whichever child buffers happened to be recorded/imported successfully.
+      // An unavailable/empty parent list leaves coverage explicitly unknown.
+      const parentState=client.rooms?.get(client.resolveRoom?.(value.room)||value.room)||client.state?.(value.room);
+      const rawChildren=parentState?.children;
+      if(Array.isArray(rawChildren)&&rawChildren.length>0&&rawChildren.length<=3){
+        const expected=rawChildren.map(canonicalRoom);
+        if(new Set(expected).size===expected.length&&expected.every(child=>/^battle-gen9championsvgc2026regmc(?:bo3)?-\d+$/.test(child)))result.expectedChildIds=expected.sort();
+      }
       parentResults.set(canonicalRoom(value.room),result);
       queueMicrotask(()=>{if(disposed)return;for(const b of buffers.values()){
         const parent=[...(session?.roomParents||[])].find(([child])=>canonicalRoom(child)===b.roomId)?.[1];
@@ -122,6 +131,13 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
         do{observed=chain;await observed;}while(observed!==chain);
       }
       return status();
+    },
+    async reopen(){
+      // Only a failed, idle team-switch transaction resumes the same observer.
+      // Buffers retain the original exact-team identity and decision journal.
+      if(!disposed)return status();disposed=false;
+      for(const [event,handler]of listeners)client.on(event,handler);
+      return this.flush({savePending:true});
     },
     async close(){disposed=true;for(const [event,handler]of listeners)client.off(event,handler);for(const b of buffers.values())save(b);let observed;do{observed=chain;await observed;}while(observed!==chain);notify();observers.clear();},
   };

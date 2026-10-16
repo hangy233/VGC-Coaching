@@ -10,20 +10,35 @@ of skill files, review reports, and chat.
 
 1. Establish the user's existing account, exact team, set limit and stopping
    conditions. Preserve that authorization; a review or skill update adds none.
-2. From the active project, run
-   `node skills/champions-mc-matchups/scripts/sync-skill.mjs --check`.
-   The check compares all skill files, including references, metadata and scripts.
-   If stale, review the repository changes, install with an explicit backup path,
-   check again, and read the changed instructions into the active context. Do not
+2. Call `battle_skill_status` for the matchup skill. This compares the complete
+   repository and installed folders, including references, metadata and scripts.
+   If stale, review the changes, inspect `battle_skill_sync`'s dry run, then apply
+   with `dryRun: false, confirmed: true` within the existing skill-sync scope.
+   It uses a fixed installation path and generated private backup. Call
+   `battle_skill_read` afterward to read every current file into active context
+   and retain its short-lived content-bound `readReceipt`. With an older MCP,
+   use `node skills/champions-mc-matchups/scripts/sync-skill.mjs --check` and
+   its explicit-backup installation helper, then read the updated files. Do not
    rely on a matching filename, old chat summary, timestamp, or old catalog text.
-3. Find the previous BO3's private checkpoint, including one played in another
+3. Use `battle_review_status` to find the previous BO3's private checkpoint,
+   including one played in another
    context or signed-in client. If it is incomplete, finish that review now. The
    first search of a new batch does not erase an unreviewed earlier set. An initial
    run with no earlier set can record that fact instead.
-4. Verify current authentication, team version, remaining authorization and actual
-   server idle state. Only then make the next authorized `battle_start` call.
-   The MCP currently checks battle scope and idle state, not review completion;
-   the agent must perform this additional precondition.
+4. Run `battle_preflight` and inspect its blockers and warnings: existing
+   authentication, exact team, remaining authorization, actual idle state,
+   loaded capabilities, prior review, skill adoption and report health. A source
+   digest describes the loaded AgentSession file only; it does not prove every
+   dependency was refreshed. An older process keeps its loaded capabilities until
+   its next normal start. Do not restart or authenticate merely to gain features.
+   Resolve relevant gaps before the next authorized `battle_start` call. Preflight
+   is advisory and does not grant allowance or enforce this review inside
+   `battle_start`; the agent must perform the additional precondition. A report
+   with no prior stored set proves only that local observation. Preflight also
+   checks recent retained parents across local team versions after a restart;
+   it discloses tied/unknown chronology and does not infer an account match or
+   coverage of battles missing from local storage. An explicit older parent
+   cannot replace the newest known review checks.
 
 ## Play and adapt within the BO3
 
@@ -37,6 +52,17 @@ move denial when shown on the sheet. MCP damage and Speed verify feasibility;
 they do not predict the opponent's choice. Unknown investments stay hypothetical.
 Unsupported numerical states stay unverified; never replace MCP with a direct
 calculator or mental damage/Speed arithmetic.
+
+When the clock permits, call `battle_note_decision` with a stable `commandId`,
+the observed action token, short opposing paired predictions, our plan/reason,
+alternatives and optional verified `calculationRefs`. Submit first if necessary;
+the observed token can still bind a later note to that request. Notes do not
+submit actions, prove when a read was formed, or establish acceptance/execution.
+Retrieve them later with `battle_decision_notes`. For retained calculator evidence,
+pass `evidenceContext: {teamId, roomId, turn}` to actual `calculate_damage` or
+`calculate_speed`, then keep its returned `calculationRef.id`. The optional context
+does not change calculator mechanics or fill unknown investments. Use
+`battle_calculation_evidence` to retrieve those exact inputs and outputs.
 
 Use fresh requests and observe acceptance and execution separately. Update a
 compact board/plan note after consequential reveals so a handoff can resume
@@ -124,9 +150,34 @@ limitation. If metrics are unavailable, record that limitation and review the ra
 set evidence; do not invent counts or claim a fresh report. Keep this work between
 BO3s, outside live turn and between-game readiness deadlines.
 
-Write a private checkpoint in the active project's ignored cache, for example
-`cache/champions-mc-reviews/BO3_ID.json`. Keep private access URLs and player
-identifiers there, not in shared skill guidance. Include:
+Use `team_metrics_health` for read-only snapshot, evidence, replay, remembered
+source and pending-cleanup diagnostics; it does not refresh missing imports.
+`team_metrics_annotate_game` appends a reasoned note or a manual exclude/include
+audit without changing the official outcome or operational observations.
+`team_metrics_game_annotations` retrieves that history. Defaults exclude manually
+excluded games and affected parent performance; use `includeManuallyExcluded`
+when checking the complete sample and state that filter. Excluding a bad result
+does not establish that it was unrepresentative. `team_metrics_compare` contrasts
+immutable sets and results under matching filters; differences are descriptive,
+not proof that a roster change caused improvement.
+
+Prefer `battle_review_save` to save the private checkpoint under ignored
+`cache/champions-mc-reviews/BO3_ID.json`. Supply structured decisions, positive
+evidence, execution/variance, a supported lesson or no-change reason, validation
+actually performed, and the current `readReceipt`; optional `calculationIds` must
+resolve to actual records for this exact team and this parent's children. The
+service checks an independently observed parent child manifest against stored
+games, then derives official results, report filters, retained evidence and skill
+hashes. Unknown child coverage or a missing expected game blocks completion;
+the rows already present cannot prove that no game is missing. It verifies
+content delivery, not the quality of agent judgment.
+Updates require `expectedRevision` and retain history. Use `battle_review_get`
+and `battle_review_status` to verify completion; changed games, evidence,
+annotations or adopted guidance can invalidate it. Missing replay coverage stays
+explicit and blocks cleanup even when local evidence permits a completed review.
+With an older MCP, record the same fields privately and state that service
+validation is unavailable; do not fabricate its receipt or completed status.
+Keep private access URLs and player identifiers out of shared guidance. Include:
 
 | Field | Evidence required |
 | --- | --- |
@@ -172,11 +223,20 @@ changed helper scripts. Run application tests only when relevant runtime code
 changed. Do not call a wording-match check proof of good tactical judgment.
 
 Install the reviewed whole folder with a backup, run the sync check, and read the
-changed skill/reference instructions. Complete the checkpoint, then apply the
+changed skill/reference instructions. Prefer `battle_skill_sync` and a fresh
+`battle_skill_read`; an old read receipt expires and becomes invalid after a
+source change or MCP restart. Save/verify the checkpoint, then apply the
 retention step below. Report **review complete / lesson or no change / sync
 verified**, replay coverage and any cleanup blocker. Only then continue
 within the user's remaining authorization. A restart, new thread, client switch,
-or authorized batch size never bypasses this step.
+or authorized batch size never bypasses this step. If the user approved a roster
+change, finish the old version's replay, sync and review work first. Then use
+`battle_switch_team` only when server-confirmed idle, supplying the approved full
+team or registered exact version. It validates six legal members and rebinds the
+recorder without login, team upload, queueing or added allowance. The next
+separately authorized search uploads that team. Old room attribution remains with
+the old version; replay work after switching must be imported to that version if
+`requiresReplayImport` is returned. Do not switch teams merely to validate a tool.
 
 ## Retain useful evidence, then clean completed artifacts
 
@@ -194,7 +254,8 @@ it does not authorize another battle.
 
 Keep the database and compact per-game observations, exact immutable team sets,
 official parent/child results, compressed canonical per-game review evidence,
-private decision/skill checkpoint and current human/agent reports. Public replays
+private decision/skill checkpoint and revisions, decision notes, actual calculator
+receipts and current human/agent reports. Public replays
 can omit private selected reserves, submitted choices, rejected/defaulted actions
 and decision rationale, and remote retention is outside this tool's control. A
 replay URL alone is therefore insufficient replacement for the compact evidence.
@@ -231,7 +292,8 @@ which retains useful evidence while the team version remains stored.
 
 Whole-team cleanup covers generated reports/exports, saved sets, game summaries,
 compressed evidence, owned replay caches, source registrations, and exclusively
-owned cache logs/reviews. Active client ownership, shared or unrecognized sources,
+owned cache logs/reviews, decision notes and calculator receipts. Active client
+ownership, shared or unrecognized sources,
 unsafe paths and changed files remain explicit pending cleanup. A false `complete`
 value is not full removal; inspect `retained`, `blockers` and
 `team_metrics_list.pendingCleanupTeams`, then retry after resolving those exact

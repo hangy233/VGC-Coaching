@@ -82,6 +82,14 @@ test('a partial reimport cannot erase a complete record but can add ledger attri
   assert.equal((await getTeamReport({ workspace: dir, teamId: TEAM, includeOperational: true })).totals.sets.losses, 1);
 });
 
+test('independent parent child membership survives later imports without a manifest',async t=>{
+  const dir=await workspace(t),first=record().roomId,second='battle-gen9championsvgc2026regmc-124';
+  await saveBattle({workspace:dir,record:record({metadata:{setResult:{outcome:'win',completed:true,expectedChildIds:[second,first]}}})});
+  await saveBattle({workspace:dir,record:record({metadata:{setResult:{outcome:'win',completed:true}}})});
+  assert.deepEqual((await listBattles({workspace:dir}))[0].metadata.setResult.expectedChildIds,[first,second]);
+  for(const expectedChildIds of [[],[first,first],[first+'-privatepw'],['not-a-child']])await assert.rejects(saveBattle({workspace:dir,record:record({metadata:{setResult:{outcome:'win',completed:true,expectedChildIds}}})}),/expectedChildIds/);
+});
+
 test('exact team versions occupy distinct files even when the room is the same', async t => {
   const dir = await workspace(t);
   await saveBattle({ workspace: dir, record: record() });

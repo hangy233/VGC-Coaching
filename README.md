@@ -10,6 +10,7 @@ A specialized Model Context Protocol (MCP) server designed for competitive Poké
 - **Type Effectiveness**: Instant multiplier calculations for any type combination.
 - **Damage Calculation**: Integrated Smogon-calc for precise battle scenario modeling.
 - **Private team metrics**: Keep ten recent team versions with separate reports. Record moves, knockouts, item removals, selections and results automatically from the client or import saved replay URLs. Includes a live dashboard, agent-readable evidence reports for skill/team reviews, and CSV/JSON exports. Deleting or evicting a report permanently cleans its owned logs and data; blocked shared or active files remain explicit. See [team metrics](metrics/README.md).
+- **Agent battle workflow**: Inspect loaded client capabilities and readiness, retain decision notes and actual calculator evidence, save validated BO3 review revisions, and read/sync maintained guidance through MCP. Report annotations, exact team comparisons and viewer controls are available in the same server.
 
 Private battle records, session files, metrics databases, compressed evidence and generated reports belong under the ignored `cache/` directory. New personal team exports and notes under `teams/`, local logs, database files, temporary files and environment secrets are also ignored. Previously published example teams remain tracked. Do not force-add private data or replay access links to Git.
 
@@ -131,6 +132,15 @@ no-change reason, relevant validation and verified skill sync. This applies afte
 the final set too. Project `AGENTS.md`, the skill entrypoint/default prompt and MCP
 `battle_start` description expose the requirement; review completion is an agent
 responsibility, not a runtime restriction enforced by the transport.
+
+Agents can use `battle_skill_status`, `battle_skill_sync` (dry run first) and
+`battle_skill_read` for this same workflow. The read returns current complete
+guidance and a short-lived content receipt for `battle_review_save`.
+`battle_review_get`/`battle_review_status` verify stored checkpoint coverage;
+`battle_preflight` combines session, allowance, skill, prior review and report
+checks without queueing or authenticating. Content delivery and evidence checks
+do not establish tactical judgment. Updated source does not change a running
+client; inspect `battle_capabilities` before depending on new operations.
 
 The guide research and rules baseline were checked on October 2, 2026. Historical
 VGC guides contribute methodology only; recommendations must pass Champions M-C
@@ -348,8 +358,14 @@ and do not require live downloads.
 | `get_type_effectiveness` | Calculates multiplier for an attack vs defender types. |
 | `calculate_damage` | Advanced damage calculation using Smogon-calc. |
 | `calculate_speed` | Native Champions raw stats, effective Speed, same-priority order and ties for 1–6 explicit snapshots. |
+| `battle_calculation_evidence` | Read retained actual calculator inputs/results. Both calculator tools accept optional exact-team/game `evidenceContext` and return a receipt for notes/reviews. |
 | `battle_status`, `battle_wait` | Compact state, current action tokens, observed clocks and event-driven waiting on the terminal-owned session. |
+| `battle_capabilities`, `battle_preflight` | Inspect the loaded runtime and observed readiness, including prior review, skill adoption and report health. No battle or login is started. |
+| `battle_note_decision`, `battle_decision_notes` | Save/read bounded reasoning and predictions tied to an observed action token; distinct from executed protocol evidence. |
+| `battle_review_save`, `battle_review_get`, `battle_review_status` | Store versioned private BO3 checkpoints with official-result, exact-child, evidence and adopted-guidance checks. |
+| `battle_skill_status`, `battle_skill_read`, `battle_skill_sync` | Compare, read and install maintained complete Champions guidance with fixed paths, private backups and content checks. |
 | `battle_start`, `battle_choose`, `battle_ready` | Guarded M-C BO3 search, complete doubles decisions and readiness within the authorized set limit. |
+| `battle_switch_team` | Apply an approved legal six while server-confirmed idle, preserving login and allowance; creates/reuses its exact-version report. |
 | `battle_cancel_search`, `battle_stop` | Cancel matchmaking or close the signed-in local session. |
 | `battle_authorize_sets`, `battle_forfeit`, `battle_save_replays` | Extend an explicitly authorized allowance, forfeit an owned set, or save its completed replays. |
 | `team_metrics_register_team` | Create an exact-version team report from pasted `teamText` or a local `teamFile`. |
@@ -358,6 +374,10 @@ and do not require live downloads.
 | `team_metrics_import`, `team_metrics_import_replays` | Append saved logs or replay URLs without duplicating existing games; verified replay links appear in the report. |
 | `team_metrics_list`, `team_metrics_report`, `team_metrics_agent_report` | Find team versions and query human/agent-readable metrics. |
 | `team_metrics_game_evidence`, `team_metrics_export`, `team_metrics_finalize_bo3` | Read retained turns, export reports, and preserve/clean a reviewed completed set. |
+| `team_metrics_health` | Read-only snapshot, replay, evidence, source and cleanup diagnostics. |
+| `team_metrics_game_annotations`, `team_metrics_annotate_game` | Read/append audited notes and manual exclusion/re-inclusion reasons without changing official outcomes. |
+| `team_metrics_compare` | Compare exact immutable team sets and descriptive results under matching filters. |
+| `team_metrics_viewer_status`, `team_metrics_open_viewer` | Verify/reuse or start the local report viewer and return its team URL. |
 
 ## License
 
@@ -378,7 +398,8 @@ npm.cmd run battle:session -- YOUR_USERNAME --team YOUR_TEAM.txt --sets 1
 
 Enter the password directly in the hidden prompt. Login does not queue; an
 authorized `battle_start` call searches for one set. The team is validated and
-locked for that process. Automatic readiness only advances games inside its
+locked until an explicit approved idle `battle_switch_team`; switching sends no
+login, upload or search and grants no additional sets. Automatic readiness only advances games inside its
 authorized BO3. `--manual-ready` disables it. No browser battle UI is needed.
 See [setup/API](showdown/README.md) and [play → conclude → update](showdown/AGENT-WORKFLOW.md).
 Battle and report tools share the same MCP server. After a game or BO3, use

@@ -7,6 +7,7 @@ import {listTeams} from './store.mjs';
 import {refreshMetricsSources} from './import.mjs';
 import {ensureTeamReport,updateTeamReport} from './live-reports.mjs';
 import {getMetricsTeamDeletion} from './catalog.mjs';
+const VIEWER_VERSION=2;
 
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const teamPattern=/^[a-f0-9]{64}$/;
@@ -17,6 +18,7 @@ export async function startMetricsViewer({workspace=resolve(fileURLToPath(new UR
   if(!Number.isSafeInteger(port)||port<0||port>65535)throw new Error('Use a valid local port');
   if(!Number.isSafeInteger(refreshMs)||refreshMs<500)throw new Error('Refresh interval must be at least 500 ms');
   let refreshing;
+  const identity={service:'vgc-private-team-metrics',version:VIEWER_VERSION,pid:process.pid,workspaceSha256:createHash('sha256').update(resolve(workspace).toLowerCase()).digest('hex'),startedAt:new Date().toISOString()};
   const refresh=()=>refreshing||=(async()=>{try{return await refreshMetricsSources({workspace});}finally{refreshing=null;}})();
   const server=createServer(async(req,res)=>{
     const send=(status,body,type='application/json; charset=utf-8')=>{res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'});res.end(type.startsWith('application/json')?JSON.stringify(body):body);};
@@ -25,6 +27,7 @@ export async function startMetricsViewer({workspace=resolve(fileURLToPath(new UR
       if(req.headers.host!==`127.0.0.1:${boundPort}`||req.headers['sec-fetch-site']==='cross-site')return send(403,{error:'Local metrics viewer only'});
       if(req.method!=='GET')return send(405,{error:'Read-only viewer'});
       const url=new URL(req.url,'http://127.0.0.1:'+boundPort);
+      if(url.pathname==='/api/viewer-status'&&!url.search)return send(200,identity);
       if(!['/','/api/version','/api/agent-report','/agent-report.md'].includes(url.pathname))return send(404,{error:'Not found'});
       if([...url.searchParams.keys()].some(k=>k!=='team'))return send(400,{error:'Unsupported report option'});
       const requested=url.searchParams.get('team');
@@ -74,7 +77,7 @@ setInterval(async()=>{if(document.hidden||metricsRefreshing)return;metricsRefres
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  const args=process.argv.slice(2);let port=52615;
-  if(args.length){if(args.length!==2||args[0]!=='--port'||!/^\d+$/.test(args[1]))throw new Error('Usage: node metrics/viewer.mjs [--port 52615]');port=Number(args[1]);}
-  const viewer=await startMetricsViewer({port});console.log('Team reports: '+viewer.url);
+  const args=process.argv.slice(2);let port=52615,workspace;
+  for(let index=0;index<args.length;index+=2){if(args[index]==='--port'&&/^\d+$/.test(args[index+1]||''))port=Number(args[index+1]);else if(args[index]==='--workspace'&&args[index+1])workspace=resolve(args[index+1]);else throw new Error('Usage: node metrics/viewer.mjs [--port 52615] [--workspace DIRECTORY]');}
+  const viewer=await startMetricsViewer({port,...(workspace?{workspace}:{})});console.log('Team reports: '+viewer.url);
 }

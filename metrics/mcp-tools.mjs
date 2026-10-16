@@ -12,6 +12,10 @@ import {readGameEvidence} from './retention.mjs';
 import {finalizeBo3} from './finalize.mjs';
 import {deleteTeamReport} from './team-cleanup.mjs';
 import {listMetricsTeamDeletions} from './catalog.mjs';
+import {getGameAnnotations,annotateGame} from './annotations.mjs';
+import {getMetricsHealth} from './health.mjs';
+import {compareTeamReports} from './compare.mjs';
+import {getMetricsViewerStatus,ensureMetricsViewer} from './viewer-service.mjs';
 
 const teamId=z.string().regex(/^[a-f0-9]{64}$/).describe('Exact team fingerprint from team_metrics_list.');
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}(?:T.*)?$/).refine(value=>Number.isFinite(Date.parse(value)),'Use an ISO date or timestamp.');
@@ -22,6 +26,7 @@ const filters={
   outcome:z.enum(['win','loss','tie','unknown']).optional(),
   includeIncomplete:z.boolean().default(false),
   includeOperational:z.boolean().default(false).describe('Include games flagged for inactivity, default choices or other operational problems; excluded by default.'),
+  includeManuallyExcluded:z.boolean().default(false).describe('Opt in to games excluded by audited review annotations; original outcomes and counters remain unchanged.'),
   from:date.optional(),to:date.optional(),
 };
 
@@ -35,6 +40,22 @@ export function registerMetricsTools(server,{workspace,replayImporter=importRepl
     description,inputSchema:teamChoice?z.strictObject(schema).refine(value=>Boolean(value.teamFile)!==Boolean(value.teamId),{message:'Supply exactly one of teamFile or teamId.'}):teamInput?z.strictObject(schema).refine(value=>Boolean(value.teamFile)!==Boolean(value.teamText),{message:'Supply exactly one of teamFile or teamText.'}):z.strictObject(schema),
     annotations:{readOnlyHint:readOnly,destructiveHint:destructive,openWorldHint:openWorld,idempotentHint:readOnly},
   },handler);
+  register('team_metrics_health','Read-only report health for one exact team or all stored teams: validated snapshots, missing saved replays, retained evidence integrity, per-source file diagnostics, report freshness and pending cleanup. Does not refresh imports, touch LRU order, publish, authenticate or delete.',{
+    teamId:teamId.optional(),verifyEvidence:z.boolean().default(true),
+  },true,args=>result(()=>getMetricsHealth({workspace,...args})));
+  register('team_metrics_game_annotations','Read audited review notes and manual inclusion/exclusion decisions for one exact game. Original protocol outcome and operational flags remain separate.',{
+    teamId,roomId:z.string().regex(/^battle-[a-z0-9]+-\d+$/),
+  },true,args=>result(()=>getGameAnnotations({workspace,...args})));
+  register('team_metrics_annotate_game','Append an audited review note, manual exclusion, or re-inclusion with a required reason. Does not change the measured outcome, moves or operational flags. Default human/agent/export/comparison metrics exclude manually excluded games and their parent set; includeManuallyExcluded opts them in. Reusing the same annotationId and contents is idempotent; history cannot be rewritten. Private annotations are deleted with their team.',{
+    teamId,roomId:z.string().regex(/^battle-[a-z0-9]+-\d+$/),action:z.enum(['note','exclude','include']).default('note'),reason:z.string().min(1).max(4000),author:z.string().min(1).max(100).default('agent'),annotationId:z.string().uuid().optional(),
+  },false,args=>result(()=>annotateGame({workspace,...args})));
+  const {teamId:_ignoredTeam,...comparisonFilters}=filters;
+  register('team_metrics_compare','Compare two exact stored team versions using identical filters. Returns verified immutable native stat-point sets and changes, measured selection/move/matchup summaries, sample quality and a descriptive rate difference. Does not infer causality, calculate battle damage or Speed, touch LRU order, change the roster or start a battle.',{
+    teamA:teamId,teamB:teamId,...comparisonFilters,
+  },true,args=>result(()=>compareTeamReports({workspace,...args})));
+  const viewerOptions={teamId:teamId.optional(),port:z.number().int().min(1).max(65535).default(52615)};
+  register('team_metrics_viewer_status','Check the private loopback report viewer and return its stable URL and verified workspace identity. No process starts or stops; never queries external hosts.',viewerOptions,true,args=>result(()=>getMetricsViewerStatus({workspace,...args})));
+  register('team_metrics_open_viewer','Ensure the private loopback report viewer is available and return the team URL. Reuses a verified existing viewer or starts a hidden independent helper that stays available when MCP disconnects. Never kills an existing listener, executes a user command, opens external hosts or changes battle state. Open the returned URL to view it.',viewerOptions,false,args=>result(()=>ensureMetricsViewer({workspace,...args})));
   register('team_metrics_list','List up to 10 active exact team versions in last-used order, sample sizes and profile metadata. Capacity eviction permanently cleans the oldest report and its owned data. pendingCleanupTeams exposes deletions already in progress; includeArchived also shows capacity evictions whose cleanup has not begun because of blockers. Listing does not change usage order. Refreshes remembered local logs only; never logs in, searches, publishes or changes a battle.',{
     includeArchived:z.boolean().default(false),
   },true,args=>result(async()=>{const refresh=await refreshMetricsSources({workspace});const [all,pendingCleanupTeams]=await Promise.all([listTeams({workspace,includeArchived:true}),listMetricsTeamDeletions({workspace})]);const teams=await addTeamProfileLinks({workspace,teams:args.includeArchived?all:all.filter(team=>team.active!==false)});return {teams,pendingCleanupTeams,capacity:{maxActiveTeams:MAX_ACTIVE_TEAMS,activeTeams:all.filter(team=>team.active!==false).length,archivedTeams:all.filter(team=>team.archived).length},refresh};}));

@@ -20,12 +20,17 @@ const formatSchema = z.string().default(CURRENT_FORMAT)
   .describe("Showdown format ID (default: Champions VGC 2026 Regulation M-C)");
 
 const server = new McpServer({ name: "smogon-vgc", version: "1.0.0" });
-registerSpeedTools(server);
+const workspace=fileURLToPath(new URL('..', import.meta.url));
+const {recordCalculation}=await import(new URL('../workflow/calculations.mjs',import.meta.url).href);
+const recordEvidence=(entry:any)=>recordCalculation({workspace,...entry});
+registerSpeedTools(server,{recordEvidence});
 // The terminal-owned transport remains source .mjs; it shares the same local workspace.
 const { registerBattleTools } = await import(new URL('../showdown/mcp-tools.mjs', import.meta.url).href);
 registerBattleTools(server, {workspace:fileURLToPath(new URL('..', import.meta.url))});
 const { registerMetricsTools } = await import(new URL('../metrics/mcp-tools.mjs', import.meta.url).href);
 registerMetricsTools(server, {workspace:fileURLToPath(new URL('..', import.meta.url))});
+const {registerWorkflowTools}=await import(new URL('../workflow/mcp-tools.mjs',import.meta.url).href);
+registerWorkflowTools(server,{workspace});
 
 // Classify a team's playstyle and attributes
 server.tool(
@@ -209,6 +214,11 @@ server.tool(
 // Match @smogon/calc status codes; omit (or use "") for a healthy Pokémon.
 const statusSchema = z.enum(["", "brn", "par", "psn", "tox", "slp", "frz"]).optional()
   .describe("Status: brn (burn), par (paralysis), psn (poison), tox (bad poison), slp (sleep), frz (freeze); omit or empty string for healthy");
+const calculationContextSchema=z.strictObject({
+  teamId:z.string().regex(/^[a-f0-9]{64}$/),
+  roomId:z.string().regex(/^battle-gen9championsvgc2026regmc(?:bo3)?-[1-9]\d*$/),
+  turn:z.number().int().min(0).max(10000).optional(),
+}).describe('Optional exact team/game context: retain this actual MCP result privately and return a calculationRef for decision notes.');
 
 // Define the damage calculation tool
 server.tool(
@@ -246,8 +256,9 @@ server.tool(
       isGravity: z.boolean().optional(),
     }).optional(),
     gen: z.number().optional().default(9).describe("Generation (default: 9)"),
+    evidenceContext:calculationContextSchema.optional(),
   },
-  async ({ attacker, attackerOptions, defender, defenderOptions, move, field, gen }) => {
+  async ({ attacker, attackerOptions, defender, defenderOptions, move, field, gen, evidenceContext }) => {
     const result = calculate(
       gen as any,
       new Pokemon(gen as any, attacker, attackerOptions as any),
@@ -256,9 +267,12 @@ server.tool(
       new Field(field as any)
     );
 
-    return {
-      content: [{ type: "text", text: result.fullDesc() }],
-    };
+    const description=result.fullDesc();
+    if(evidenceContext){
+      const calculationRef=await recordEvidence({tool:'calculate_damage',input:{attacker,attackerOptions,defender,defenderOptions,move,field,gen},result:{description,damage:result.damage},context:evidenceContext});
+      return {content:[{type:'text',text:description},{type:'text',text:JSON.stringify({calculationRef})}]};
+    }
+    return {content: [{ type: "text", text: description }]};
   }
 );
 

@@ -5,6 +5,8 @@ import {createTTYBroker} from './tty-login.mjs';
 import {createWindowsCredentialBroker} from './windows-credential-login.mjs';
 import {attachTerminalLog} from './terminal-log.mjs';
 import {attachMetricsRecorder} from '../metrics/recorder.mjs';
+import {saveDecisionNote} from './decision-notes.mjs';
+import {recreateDeletedMetricsTeam} from '../metrics/catalog.mjs';
 import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
@@ -65,11 +67,15 @@ export async function runSession({username,teamFile,authorizedSets=1,autoReady=t
     output.write(`Sign in as ${username}${loginMethod==='windows-credential-manager' ? ' using Windows Credential Manager' : ''}. Team validated for M-C; set limit: ${authorizedSets}. Signing in does not queue.\n`);
     identity=eventOnce(client,'identity',()=>client.authenticated,150000);
     await client.authenticate(username,{approved:true});await identity.promise;
-    session=new AgentSession(client,{username,packed,authorizedSets,autoReady});
-    if(metrics){
-      const metricRoot=metricsWorkspace||(basename(dirname(descriptorPath))==='cache'?resolve(dirname(descriptorPath),'..'):dirname(descriptorPath));
+    const metricRoot=metricsWorkspace||(basename(dirname(descriptorPath))==='cache'?resolve(dirname(descriptorPath),'..'):dirname(descriptorPath));
+    const recorderFactory=async({team,teamId,name,session:owner,approvedTeamChange=false})=>{
+      if(approvedTeamChange)await recreateDeletedMetricsTeam({workspace:metricRoot,teamId});
       let warned=false;
-      recorder=attachMetricsRecorder(client,{workspace:metricRoot,username,teamId:expectedTeamHash,team,name:basename(teamFile,'.txt'),session,onError:()=>{if(!warned){warned=true;output.write('Team metrics could not be saved; battle controls remain available.\n');}}});
+      return attachMetricsRecorder(client,{workspace:metricRoot,username,teamId,team,name,session:owner,onError:()=>{if(!warned){warned=true;output.write('Team metrics could not be saved; battle controls remain available.\n');}}});
+    };
+    session=new AgentSession(client,{username,packed,authorizedSets,autoReady,recorderFactory,decisionNoteWriter:args=>saveDecisionNote({workspace:metricRoot,...args})});
+    if(metrics){
+      recorder=await recorderFactory({team,teamId:expectedTeamHash,name:basename(teamFile,'.txt'),session});
       session.attachMetricsRecorder(recorder);
     }
     let onDisconnected;
@@ -89,7 +95,7 @@ export async function runSession({username,teamFile,authorizedSets=1,autoReady=t
     await new Promise(resolvePromise=>setTimeout(resolvePromise,50));
   } finally {
     challenge?.cancel();identity?.cancel();
-    await bridge?.close();detachLog();await recorder?.close();session?.dispose();client.close();
+    await bridge?.close();detachLog();await (session?.metricsRecorder||recorder)?.close();session?.dispose();client.close();
     for(const signal of ['SIGINT','SIGTERM','SIGHUP'])signals.off(signal,stop);
   }
 }

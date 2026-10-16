@@ -1,6 +1,6 @@
 interface:
   display_name: "Champions M-C Matchups"
   short_description: "Plan M-C battles; review and sync after every BO3"
-  default_prompt: "Use $champions-mc-matchups to plan my M-C battle, then review each BO3, update supported lessons, and verify skill sync before the next authorized search."
+  default_prompt: "Use $champions-mc-matchups to plan my M-C battle. Read current guidance with battle_skill_read, save and verify every BO3 checkpoint with battle_review_save and battle_review_status, update supported lessons, verify skill sync, and inspect battle_preflight before the next authorized search."
 policy:
   allow_implicit_invocation: true

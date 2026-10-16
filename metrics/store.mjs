@@ -80,11 +80,28 @@ function metadata(value = {}, identity = {}) {
     result.sources = [...new Set(value.sources.map(source))];
   }
   if (value.ledgerIndex !== undefined) result.ledgerIndex = count(value.ledgerIndex, 'metadata.ledgerIndex');
+  if (value.annotations !== undefined) {
+    if (!Array.isArray(value.annotations) || value.annotations.length > 500) fail('annotations must contain at most 500 audit entries');
+    const seen=new Set();
+    result.annotations=value.annotations.map(entry=>{
+      object(entry,'annotation');
+      if(typeof entry.id!=='string'||! /^[a-f0-9-]{36}$/u.test(entry.id)||seen.has(entry.id)) fail('annotation ID must be a distinct UUID');
+      seen.add(entry.id);
+      if(!['note','exclude','include'].includes(entry.action))fail('annotation action is not recognized');
+      const at=timestamp(entry.at,'annotation.at');if(!at)fail('annotation timestamp is required');
+      return {id:entry.id,at,action:entry.action,reason:string(entry.reason,'annotation.reason',{max:4000}),author:string(entry.author??'agent','annotation.author',{max:100})};
+    });
+  }
   if (value.attribution !== undefined) result.attribution = string(value.attribution, 'metadata.attribution', { max: 500 });
   if (value.setResult !== undefined && value.setResult !== null) {
     object(value.setResult, 'metadata.setResult');
     if (!OUTCOMES.has(value.setResult.outcome)) fail('metadata.setResult.outcome is not recognized');
     result.setResult = { outcome: value.setResult.outcome, completed: boolean(value.setResult.completed, 'metadata.setResult.completed') };
+    if(value.setResult.expectedChildIds!==undefined){
+      const children=value.setResult.expectedChildIds;
+      if(!Array.isArray(children)||children.length<1||children.length>3||new Set(children).size!==children.length||children.some(child=>typeof child!=='string'||!/^battle-[a-z0-9]+-\d+$/u.test(child)))fail('metadata.setResult.expectedChildIds must contain one to three distinct canonical child room IDs');
+      result.setResult.expectedChildIds=[...children].sort();
+    }
   }
   if (value.replay !== undefined && value.replay !== null) {
     result.replay = normalizeReplayReference(value.replay, { roomId: identity.roomId });
@@ -213,9 +230,24 @@ function mergeMetadata(existing, incoming) {
   const result = { ...existing, ...incoming };
   if (existing.sources || incoming.sources) result.sources = [...new Set([...(existing.sources ?? []), ...(incoming.sources ?? [])])];
   if (existing.setResult?.completed && !incoming.setResult?.completed) result.setResult = existing.setResult;
+  if(existing.setResult?.expectedChildIds&&result.setResult){
+    // A replay or older importer cannot erase independent observed membership.
+    // Preserve the union if later parent observation adds another known child.
+    const expected=[...new Set([...existing.setResult.expectedChildIds,...(result.setResult.expectedChildIds||[])])].sort();
+    if(expected.length>3)fail('conflicting parent child manifests exceed one BO3; retain source evidence for reconciliation');
+    result.setResult={...result.setResult,expectedChildIds:expected};
+  }
   if (existing.replay && !incoming.replay) result.replay = existing.replay;
   if (existing.evidence && !incoming.evidence) result.evidence = existing.evidence;
   if (existing.evidence?.complete && incoming.evidence && !incoming.evidence.complete) result.evidence = existing.evidence;
+  if(existing.annotations||incoming.annotations){
+    const entries=new Map((existing.annotations||[]).map(entry=>[entry.id,entry]));
+    for(const entry of incoming.annotations||[]){if(entries.has(entry.id)&&JSON.stringify(entries.get(entry.id))!==JSON.stringify(entry))fail('an annotation ID cannot be rewritten');entries.set(entry.id,entry);}
+    if(entries.size>500)fail('annotation audit history is full');
+    // The serialized writer's append order decides inclusion; equal wall-clock
+    // timestamps or a stale reimport must not reorder an earlier review action.
+    result.annotations=[...entries.values()];
+  }
   return result;
 }
 
@@ -336,7 +368,12 @@ export async function listBattles({ workspace, includeArchived = false }) {
   return records.filter(record => activeIds.has(record.teamId));
 }
 
-const eligible = record => record.completed && record.quality.complete && !record.quality.operational;
+export const gameAnnotationState = record => {
+  const history=record.metadata?.annotations||[];
+  const latest=history.filter(entry=>entry.action!=='note').at(-1);
+  return {excluded:latest?.action==='exclude',reason:latest?.action==='exclude'?latest.reason:null,history};
+};
+const eligible = record => record.completed && record.quality.complete && !record.quality.operational && !gameAnnotationState(record).excluded;
 const playedAt = record => record.metadata?.endedAt ?? record.metadata?.startedAt ?? record.importedAt ?? '';
 
 export async function listTeams({ workspace, includeArchived = false }) {
@@ -371,7 +408,7 @@ function opposingSpecies(record) {
   }
   return [...names.values()];
 }
-function setReport(records, { allTeamRecords = records, includedRecords = records, includeOperational = false } = {}) {
+function setReport(records, { allTeamRecords = records, includedRecords = records, includeOperational = false, includeManuallyExcluded = false } = {}) {
   const groups = new Map();
   for (const record of records) if (record.parentId) {
     if (!groups.has(record.parentId)) groups.set(record.parentId, []);
@@ -383,7 +420,7 @@ function setReport(records, { allTeamRecords = records, includedRecords = record
     siblings.get(record.parentId).push(record);
   }
   const includedRooms = new Set(includedRecords.map(record => record.roomId));
-  const counts = { observed: groups.size, played: 0, wins: 0, losses: 0, ties: 0, unknown: 0, incomplete: 0, excludedOperational: 0, excludedIncomplete: 0 };
+  const counts = { observed: groups.size, played: 0, wins: 0, losses: 0, ties: 0, unknown: 0, incomplete: 0, excludedOperational: 0, excludedIncomplete: 0, excludedManual:0 };
   const details = [];
   for (const [parentId, games] of groups) {
     const allSiblings = siblings.get(parentId) ?? games;
@@ -391,10 +428,13 @@ function setReport(records, { allTeamRecords = records, includedRecords = record
     const outcome = official.length === 1 ? official[0] : 'unknown';
     const completed = official.length === 1 && outcome !== 'unknown';
     const operational = allSiblings.some(game => game.quality.operational);
+    const manuallyExcluded = allSiblings.some(game=>gameAnnotationState(game).excluded);
     const includedGames = games.filter(game => includedRooms.has(game.roomId)).length;
     const excludedOperational = operational && !includeOperational;
-    const included = !excludedOperational && includedGames > 0;
+    const excludedManual=manuallyExcluded&&!includeManuallyExcluded;
+    const included = !excludedOperational && !excludedManual && includedGames > 0;
     if (excludedOperational) counts.excludedOperational++;
+    else if(excludedManual)counts.excludedManual++;
     else if (!included) counts.excludedIncomplete++;
     // Child results alone do not establish a BO3 result: later games or concessions may be absent.
     if (included) {
@@ -402,7 +442,7 @@ function setReport(records, { allTeamRecords = records, includedRecords = record
       counts[{ win: 'wins', loss: 'losses', tie: 'ties', unknown: 'unknown' }[outcome]]++;
     }
     if (!completed) counts.incomplete++;
-    details.push({ parentId, games: games.length, storedGames: allSiblings.length, includedGames, outcome, completed, operational, included, exclusionReason: excludedOperational ? 'operational' : !included ? 'no-eligible-child' : null, source: completed ? 'official' : (official.length > 1 ? 'conflicting-parent-results' : 'unconfirmed') });
+    details.push({ parentId, games: games.length, storedGames: allSiblings.length, includedGames, outcome, completed, operational, manuallyExcluded, included, exclusionReason: excludedOperational ? 'operational' : excludedManual?'manual-exclusion':!included ? 'no-eligible-child' : null, source: completed ? 'official' : (official.length > 1 ? 'conflicting-parent-results' : 'unconfirmed') });
   }
   return { ...counts, winRate: rate(counts.wins, counts.wins + counts.losses), winRateDenominator: counts.wins + counts.losses, records: details };
 }
@@ -412,11 +452,12 @@ function setReport(records, { allTeamRecords = records, includedRecords = record
  * Win rates count wins and losses only. Opponent matchups mean roster presence,
  * not an inferred enemy selection. Incomplete and operational games are opt-in.
  */
-export async function getTeamReport({ workspace, teamId: requestedTeamId, opponentSpecies, selectedSpecies, outcome, includeIncomplete = false, includeOperational = false, from, to, touch = true } = {}) {
+export async function getTeamReport({ workspace, teamId: requestedTeamId, opponentSpecies, selectedSpecies, outcome, includeIncomplete = false, includeOperational = false, includeManuallyExcluded = false, from, to, touch = true } = {}) {
   if (requestedTeamId !== undefined) teamId(requestedTeamId);
   if (outcome !== undefined && !OUTCOMES.has(outcome)) fail('outcome filter is not recognized');
   boolean(includeIncomplete, 'includeIncomplete');
   boolean(includeOperational, 'includeOperational');
+  boolean(includeManuallyExcluded,'includeManuallyExcluded');
   boolean(touch, 'touch');
   if (opponentSpecies !== undefined) string(opponentSpecies, 'opponentSpecies');
   if (selectedSpecies !== undefined) string(selectedSpecies, 'selectedSpecies');
@@ -452,17 +493,19 @@ export async function getTeamReport({ workspace, teamId: requestedTeamId, oppone
     incompleteGames: matching.filter(record => !record.completed || !record.quality.complete).length,
     operationalGames: matching.filter(record => record.quality.operational).length,
     incompleteOperationalGames: matching.filter(record => (!record.completed || !record.quality.complete) && record.quality.operational).length,
-    excludedIncomplete: 0, excludedOperational: 0, excludedTotal: 0,
+    manuallyExcludedGames:matching.filter(record=>gameAnnotationState(record).excluded).length,
+    excludedIncomplete: 0, excludedOperational: 0, excludedManual:0, excludedTotal: 0,
     warnings: [...new Set(matching.flatMap(record => record.quality.warnings))],
   };
   const games = matching.filter(record => {
     // These exclusion counts are disjoint: an overlapping row is charged to incompleteness first.
     if (!includeIncomplete && (!record.completed || !record.quality.complete)) { quality.excludedIncomplete++; return false; }
     if (!includeOperational && record.quality.operational) { quality.excludedOperational++; return false; }
+    if(!includeManuallyExcluded&&gameAnnotationState(record).excluded){quality.excludedManual++;return false;}
     return true;
   });
   quality.includedGames = games.length;
-  quality.excludedTotal = quality.excludedIncomplete + quality.excludedOperational;
+  quality.excludedTotal = quality.excludedIncomplete + quality.excludedOperational + quality.excludedManual;
   const totalCounts = outcomes();
   const opponents = new Map();
   const pokemon = new Map();
@@ -556,17 +599,17 @@ export async function getTeamReport({ workspace, teamId: requestedTeamId, oppone
       moves: [...entry.moves.values()].map(move => ({ ...move, usagePercent: rate(move.uses, usageDenominator), usageDenominator })).sort((a, b) => b.uses - a.uses || a.move.localeCompare(b.move)),
     };
   });
-  const setMetrics = setReport(matching, { allTeamRecords: teamRecords, includedRecords: games, includeOperational });
+  const setMetrics = setReport(matching, { allTeamRecords: teamRecords, includedRecords: games, includeOperational, includeManuallyExcluded });
   const parents = new Map(setMetrics.records.map(parent => [parent.parentId, parent]));
   return {
     schemaVersion: SCHEMA_VERSION, team,
     catalog: { maxActiveTeams: MAX_ACTIVE_TEAMS, activeTeams: catalog.filter(entry => entry.active).length, archivedTeams: catalog.filter(entry => !entry.active).length, archivePolicy: 'Least recently used versions are permanently cleaned with their reports and stored data; protected artifacts remain explicit pending cleanup.' },
-    filters: { teamId: chosen, opponentSpecies: opponentSpecies ?? null, selectedSpecies: selectedSpecies ?? null, outcome: outcome ?? null, includeIncomplete, includeOperational, from: fromDate ?? null, to: toDate ?? null },
+    filters: { teamId: chosen, opponentSpecies: opponentSpecies ?? null, selectedSpecies: selectedSpecies ?? null, outcome: outcome ?? null, includeIncomplete, includeOperational, includeManuallyExcluded, from: fromDate ?? null, to: toDate ?? null },
     totals: { ...withRate(totalCounts), sets: setMetrics },
-    quality, selection, pokemon: pokemonReport,
+    quality, reviewAnnotations:matching.filter(record=>record.metadata.annotations?.length).map(record=>{const state=gameAnnotationState(record);return {roomId:record.roomId,parentId:record.parentId,originalOutcome:record.outcome,excluded:state.excluded,reason:state.reason,entries:state.history.length,latestAt:state.history.at(-1)?.at,retrievalTool:'team_metrics_game_annotations'};}), selection, pokemon: pokemonReport,
     leadPairs: [...leadPairs.values()].map(entry => ({ ...withRate(entry), usageDenominator: selection.gamesWithKnownLeadPairs, usagePercent: rate(entry.games, selection.gamesWithKnownLeadPairs) })).sort((a, b) => b.games - a.games || a.species.join('/').localeCompare(b.species.join('/'))),
     opponents: [...opponents.values()].map(withRate).sort((a, b) => b.games - a.games || a.species.localeCompare(b.species)),
-    games: games.map(record => ({ roomId: record.roomId, parentId: record.parentId, outcome: record.outcome, completed: record.completed, turns: record.turns, opponent: record.players[record.ownSide === 'p1' ? 'p2' : 'p1'], opponentRoster: record.opponentRoster, opponentSelected: record.opponentSelected, opponentLeads: record.opponentLeads, opponentSelectionKnown: record.opponentSelectionKnown, opponentMega: record.opponentMega, selected: record.selected, leads: record.leads, selectionKnown: record.selectionKnown, pokemon: record.pokemon, setResult: record.metadata.setResult ?? (parents.get(record.parentId)?.completed ? { outcome: parents.get(record.parentId).outcome, completed: true } : null), setOperational: parents.get(record.parentId)?.operational ?? false, quality: record.quality, playedAt: playedAt(record) || null, replay: record.metadata.replay ?? null, evidence: record.metadata.evidence ?? null })),
-    definitions: { winRate: 'Wins / (wins + losses), expressed as a percentage; ties and unknown outcomes are excluded.', moveUsage: 'Observed uses of this move / all observed move uses by this Pokémon.', selections: 'Selection rates use only games whose entire own selection is known; observed appearances in other games remain separately counted.', opponentMatchups: 'Presence on the opposing roster or a positively observed appearance, not inferred selection. rosterGames and observedOnlyGames distinguish their evidence. Opposing attendance is observed only; an unobserved roster member remains unknown until all four opposing selections are identified.', megaUsage: 'Only an observed Mega Evolution event counts; a registered Mega form or held stone alone does not establish use. Mega win rates exclude ties and unknown outcomes.', leadPairs: 'Unordered pairs from games with exactly two distinct observed own leads; pair win rates exclude ties and unknown outcomes.', speciesMatching: 'Species and forms match by their exact normalized names; regional and other forms are not merged by an inferred family.', sets: 'Only explicit completed parent-set results establish a set outcome; a child game alone never does. Any operational stored sibling marks the whole parent operational, even when a filter hides that sibling. Default set performance excludes these parents; observed records retain their official scores and includeOperational opts them in.' },
+    games: games.map(record => ({ annotation:gameAnnotationState(record), roomId: record.roomId, parentId: record.parentId, outcome: record.outcome, completed: record.completed, turns: record.turns, opponent: record.players[record.ownSide === 'p1' ? 'p2' : 'p1'], opponentRoster: record.opponentRoster, opponentSelected: record.opponentSelected, opponentLeads: record.opponentLeads, opponentSelectionKnown: record.opponentSelectionKnown, opponentMega: record.opponentMega, selected: record.selected, leads: record.leads, selectionKnown: record.selectionKnown, pokemon: record.pokemon, setResult: record.metadata.setResult ?? (parents.get(record.parentId)?.completed ? { outcome: parents.get(record.parentId).outcome, completed: true } : null), setOperational: parents.get(record.parentId)?.operational ?? false, quality: record.quality, playedAt: playedAt(record) || null, replay: record.metadata.replay ?? null, evidence: record.metadata.evidence ?? null })),
+    definitions: { manualExclusions:'Review annotations are separate audited judgments. Original protocol outcomes and counters remain unchanged. Excluded children exclude their entire parent from set performance unless includeManuallyExcluded is true.', winRate: 'Wins / (wins + losses), expressed as a percentage; ties and unknown outcomes are excluded.', moveUsage: 'Observed uses of this move / all observed move uses by this Pokémon.', selections: 'Selection rates use only games whose entire own selection is known; observed appearances in other games remain separately counted.', opponentMatchups: 'Presence on the opposing roster or a positively observed appearance, not inferred selection. rosterGames and observedOnlyGames distinguish their evidence. Opposing attendance is observed only; an unobserved roster member remains unknown until all four opposing selections are identified.', megaUsage: 'Only an observed Mega Evolution event counts; a registered Mega form or held stone alone does not establish use. Mega win rates exclude ties and unknown outcomes.', leadPairs: 'Unordered pairs from games with exactly two distinct observed own leads; pair win rates exclude ties and unknown outcomes.', speciesMatching: 'Species and forms match by their exact normalized names; regional and other forms are not merged by an inferred family.', sets: 'Only explicit completed parent-set results establish a set outcome; a child game alone never does. Any operational stored sibling marks the whole parent operational, even when a filter hides that sibling. Default set performance excludes these parents; observed records retain their official scores and includeOperational opts them in.' },
   };
 }

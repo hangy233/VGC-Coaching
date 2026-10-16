@@ -180,8 +180,14 @@ function ledgerIndex(ledger){
     const official=set.parentResult;
     const setResult=official?.ownResult?{outcome:official.ownResult,completed:true}:undefined;
     const children=set.children||set.childResults||[];
+    // Preserve the reviewed ledger's complete explicit membership even if some
+    // child logs are absent. Never derive expected membership from imported rows.
+    if(setResult&&Array.isArray(children)&&children.length>0&&children.length<=3){
+      const expected=children.map(child=>canonicalRoom(typeof child==='string'?child:child?.id||child?.room||child?.roomId||''));
+      if(new Set(expected).size===expected.length&&expected.every(child=>/^battle-gen9championsvgc2026regmc(?:bo3)?-\d+$/.test(child)))setResult.expectedChildIds=expected.sort();
+    }
     for(const child of children){
-      const room=canonicalRoom(child.id||child.room||'');if(!battleRoom(room))continue;
+      const room=canonicalRoom(typeof child==='string'?child:child?.id||child?.room||child?.roomId||'');if(!battleRoom(room))continue;
       const excluded=set.completedPlayed===false||set.countedTowardTarget===false;
       const operational=excluded||!!child.operationalErrors?.length||/inactivity|server-default/i.test(child.finishAttribution||'');
       map.set(room,{parentId:canonicalRoom(set.parentId),setResult,index:set.completedPlayedIndex,opponent:set.opponent,child,excluded,operational});

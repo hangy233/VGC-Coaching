@@ -204,6 +204,24 @@ export function reviewedCheckpoint(checkpoint, { teamId, parentId }) {
   const adoption = checkpoint.adoption;
   return Boolean(checkpoint.decisionReview && Object.keys(checkpoint.decisionReview).length && checkpoint.reusableOutcome && Object.keys(checkpoint.reusableOutcome).length && adoption && (adoption.syncVerified === true || adoption.synchronized === true) && HASH.test(adoption.sourceSha256) && adoption.sourceSha256 === adoption.installedSha256);
 }
+/** Structured service checkpoints must remain current, not merely look completed. */
+export async function validateCleanupReview({workspace,teamId,parentId,checkpointFile,checkpoint,skillOptions={}}={}){
+  if(!reviewedCheckpoint(checkpoint,{teamId,parentId}))return {complete:false,mode:'invalid',blockers:['The exact set needs a completed decision review and verified skill adoption checkpoint.']};
+  if((checkpoint.schemaVersion===undefined||checkpoint.schemaVersion===1)&&!checkpoint.evidenceRevision)return {complete:true,mode:'legacy-static-checkpoint',blockers:[],limitation:'Legacy review identity, child coverage and recorded adoption hashes are checked, but current service evidence revisions and installed guidance are not attested by this older format.'};
+  if(checkpoint.schemaVersion!==2)return {complete:false,mode:'unsupported-structured-checkpoint',blockers:['The structured review checkpoint schema is unsupported; retrieve and save it through the current review service.']};
+  const expected=`cache/champions-mc-reviews/${parentId}.json`;
+  if(checkpointFile!==expected)return {complete:false,mode:'structured-current-review',blockers:['A structured review must use its canonical current service checkpoint path.']};
+  try{
+    // Loaded only at operation time: the review service itself imports the pure
+    // reviewedCheckpoint predicate above, so static imports would form a cycle.
+    const {reviewStatus}=await import('../workflow/reviews.mjs');
+    const status=await reviewStatus({workspace,teamId,parentId,skillOptions});
+    const sameRevision=status.revision===checkpoint.revision&&status.evidenceRevision===checkpoint.evidenceRevision&&status.reviewedAt===checkpoint.reviewedAt;
+    const complete=status.complete===true&&sameRevision,blockers=[...(status.blockers||[]),...(sameRevision?[]:['The provided checkpoint is not the current reviewed evidence revision.'])];
+    if(!complete&&!blockers.length)blockers.push('The current structured review has not confirmed completion.');
+    return {complete,mode:'structured-current-review',revision:status.revision,blockers};
+  }catch{return {complete:false,mode:'structured-current-review',blockers:['The current structured review, retained evidence or adopted skill could not be verified.']};}
+}
 async function jsonFile(workspace, file) { const source = await checkedPath(workspace, file, { maxBytes: 2 * 1024 * 1024 }); return JSON.parse(await readFile(source.path, 'utf8')); }
 async function sourceProtection(workspace) {
   const registered = new Set(), activePaths = new Set(); let activeClient = false;
@@ -323,11 +341,11 @@ async function canonicalSourceCoverage(workspace, content, extension, records, p
 }
 
 /** A read-only, exact-file deletion plan. Missing replay/review/evidence keeps logs intact. */
-export async function buildCleanupPlan({ workspace, teamId, parentId, checkpointFile, files = [], closedFiles = [] } = {}) {
+export async function buildCleanupPlan({ workspace, teamId, parentId, checkpointFile, files = [], closedFiles = [], skillOptions = {} } = {}) {
   if (typeof teamId !== 'string' || !HASH.test(teamId) || typeof parentId !== 'string' || !PARENT.test(parentId) || typeof checkpointFile !== 'string' || !Array.isArray(files) || files.length > 200 || !Array.isArray(closedFiles) || closedFiles.length > 200) throw safeError('invalid BO3 cleanup request');
   const globalBlocks = [], candidates = [], blocked = [], decisionEvidence = [];
-  let checkpoint, checkpointPath;
-  try { const source = await checkedPath(workspace, checkpointFile, { maxBytes: 2 * 1024 * 1024 }); checkpointPath = source.relative; checkpoint = JSON.parse(await readFile(source.path, 'utf8')); if (!reviewedCheckpoint(checkpoint, { teamId, parentId })) globalBlocks.push('The exact set needs a completed decision review and verified skill adoption checkpoint.'); }
+  let checkpoint, checkpointPath,reviewValidation;
+  try { const source = await checkedPath(workspace, checkpointFile, { maxBytes: 2 * 1024 * 1024 }); checkpointPath = source.relative; checkpoint = JSON.parse(await readFile(source.path, 'utf8')); reviewValidation=await validateCleanupReview({workspace,teamId,parentId,checkpointFile:checkpointPath,checkpoint,skillOptions});globalBlocks.push(...reviewValidation.blockers); }
   catch { globalBlocks.push('The private decision review checkpoint is missing, invalid or unsafe.'); checkpointPath = slash(checkpointFile); }
   const records = (await listBattles({ workspace, includeArchived: true })).filter(record => record.teamId === teamId && record.parentId === parentId);
   if (!records.length) globalBlocks.push('No child games are registered for this exact set and team.');
@@ -367,7 +385,7 @@ export async function buildCleanupPlan({ workspace, teamId, parentId, checkpoint
     } catch { entry = { path: typeof file === 'string' ? safeText(file, 1000) : '[invalid path]', sha256: null, size: null, eligible: false, reason: 'File is missing, outside the workspace, linked or otherwise unsafe.' }; }
     candidates.push(entry); if (!entry.eligible) blocked.push(entry);
   }
-  return { schemaVersion: 1, teamId, parentId, checkpointFile: checkpointPath, ready: globalBlocks.length === 0, childIds: records.map(record => record.roomId), decisionEvidence, files: candidates, blocked, blockers: [...new Set(globalBlocks)], activeClient: protections.activeClient, eligibleCount: candidates.filter(file => file.eligible).length, keptCount: blocked.length, policy: 'Exact generated files only; protected data and registered shared logs remain intact.' };
+  return { schemaVersion: 1, teamId, parentId, checkpointFile: checkpointPath, reviewValidation:reviewValidation||{complete:false,mode:'invalid',blockers:['The private checkpoint could not be inspected.']}, ready: globalBlocks.length === 0, childIds: records.map(record => record.roomId), decisionEvidence, files: candidates, blocked, blockers: [...new Set(globalBlocks)], activeClient: protections.activeClient, eligibleCount: candidates.filter(file => file.eligible).length, keptCount: blocked.length, policy: 'Exact generated files only; protected data and registered shared logs remain intact.' };
 }
 
 /** Execute only a freshly checked explicit plan; no recursive removal or client changes. */

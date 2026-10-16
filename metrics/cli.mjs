@@ -24,6 +24,7 @@ const help=`Private team metrics
 
 Filters: --opponent-species NAME --selected-species NAME --outcome win|loss|tie|unknown
          --from YYYY-MM-DD --to YYYY-MM-DD --include-incomplete --include-operational
+         --include-manually-excluded (opt in to audited review exclusions)
 Use --file or --url repeatedly, up to 20 inputs. These input types cannot be mixed in one import.
 --workspace PATH defaults to this repository. URL import reads existing replays; it never publishes them.
 Imports remember local sources for query-time refresh; --no-remember disables this for that import.
@@ -41,6 +42,7 @@ export function parseArguments(argv) {
   for (let i=0;i<tokens.length;i++) {
     const key=tokens[i];
     if (key==='--include-incomplete'||key==='--include-operational') {values[key==='--include-incomplete'?'includeIncomplete':'includeOperational']=true;continue;}
+    if(key==='--include-manually-excluded'){if(Object.hasOwn(values,'includeManuallyExcluded'))throw new Error('Duplicate option: --include-manually-excluded');values.includeManuallyExcluded=true;continue;}
     if(key==='--include-archived'){values.includeArchived=true;continue;}
     if(key==='--include-games'){values.includeGames=true;continue;}
     if(key==='--confirm'){if(Object.hasOwn(values,'confirmed'))throw new Error('Duplicate option: --confirm');values.confirmed=true;continue;}
@@ -66,7 +68,7 @@ export function parseArguments(argv) {
   for (const key of ['from','to']) if(values[key]&&!/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(values[key])) throw new Error(`Invalid --${key}; use an ISO date or timestamp.`);
   for (const key of ['from','to']) if(values[key]&&!Number.isFinite(Date.parse(values[key]))) throw new Error(`Invalid --${key}.`);
   const common=['workspace'];
-  const reportOptions=['teamId','opponentSpecies','selectedSpecies','outcome','from','to','includeIncomplete','includeOperational'];
+  const reportOptions=['teamId','opponentSpecies','selectedSpecies','outcome','from','to','includeIncomplete','includeOperational','includeManuallyExcluded'];
   const allowed={list:[...common,'includeArchived'],register:[...common,'teamFile','name'],report:[...common,...reportOptions],review:[...common,...reportOptions,'includeGames','maxEvidence'],export:[...common,...reportOptions,'format','output'],import:[...common,'username','teamFile','teamId','ledgerFile','name','remember'],delete:[...common,'teamId','confirmed']};
   if(command!=='help'&&!allowed[command]) throw new Error(`Unknown command: ${command}`);
   if(command!=='help') for(const field of Object.keys(values)) {

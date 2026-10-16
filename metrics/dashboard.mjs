@@ -65,13 +65,13 @@ export function aggregateFilteredGames(source, games) {
     for(const name of new Map([...(game.opponentRoster||[]),...(game.opponentSelected||[]),...(game.opponentLeads||[]),...(game.opponentMega||[])].map(value=>[key(species(value)),species(value)])).values()) {if(!opponents.has(key(name)))opponents.set(key(name),{species:name,...counts()});add(opponents.get(key(name)),game.outcome);}
     if(game.parentId){if(!sets.has(game.parentId))sets.set(game.parentId,[]);const result=game.setResult||knownSets.get(game.parentId);if(result?.completed)sets.get(game.parentId).push(result.outcome);}
   }
-  const setCounts={observed:sets.size,played:0,wins:0,losses:0,ties:0,unknown:0,incomplete:0,excludedOperational:0,excludedIncomplete:0,records:[]};
+  const setCounts={observed:sets.size,played:0,wins:0,losses:0,ties:0,unknown:0,incomplete:0,excludedOperational:0,excludedIncomplete:0,excludedManual:0,records:[]};
   for(const [parentId,results] of sets){
     const known=knownSets.get(parentId),observed=[...new Set(results)],outcome=observed.length===1?observed[0]:'unknown',completed=outcome!=='unknown';
     const operational=Boolean(known?.operational||games.some(game=>game.parentId===parentId&&game.setOperational)),included=!(operational&&!source.filters?.includeOperational)&&known?.included!==false;
     setCounts.records.push({...known,parentId,outcome,completed,operational,included});
     if(!completed)setCounts.incomplete++;
-    if(!included){if(operational)setCounts.excludedOperational++;else setCounts.excludedIncomplete++;continue;}
+    if(!included){if(operational&&!source.filters?.includeOperational)setCounts.excludedOperational++;else if(known?.manuallyExcluded&&!source.filters?.includeManuallyExcluded)setCounts.excludedManual++;else setCounts.excludedIncomplete++;continue;}
     setCounts.played++;setCounts[{win:'wins',loss:'losses',tie:'ties',unknown:'unknown'}[outcome]||'unknown']++;
   }
   const rows=[...pokemon.values()].map(row=>{const usageDenominator=[...row.moves.values()].reduce((sum,move)=>sum+move.uses,0),selectionWinRateDenominator=row.winsWhenSelected+row.lossesWhenSelected,megaWinRateDenominator=row.megaWins+row.megaLosses;return {...row,forms:[...row.forms],selectionRate:rate(row.selectedGames,row.selectionDenominator),selectionWinRate:rate(row.winsWhenSelected,selectionWinRateDenominator),selectionWinRateDenominator,megaWinRate:rate(row.megaWins,megaWinRateDenominator),megaWinRateDenominator,moves:[...row.moves.values()].map(move=>({...move,usagePercent:rate(move.uses,usageDenominator),usageDenominator})).sort((a,b)=>b.uses-a.uses||a.move.localeCompare(b.move))};});
@@ -118,11 +118,12 @@ const render=()=>{
   const totals=view.totals||{},quality=report.quality||{};
   document.getElementById('overview').replaceChildren();
   [['Games',totals.games],['Record (W–L–T)',count(totals.wins)+'–'+count(totals.losses)+'–'+count(totals.ties)],['Game win rate',pct(totals.winRate)],['Eligible / observed sets',count(totals.sets?.played)+' / '+count(totals.sets?.observed??totals.sets?.played)],['Set win rate',pct(totals.sets?.winRate)]].forEach(([label,value])=>{const c=document.createElement('div');c.className='card';c.append(text('div',value??'—','value'),text('div',label,'label'));document.getElementById('overview').append(c)});
-  document.getElementById('quality').textContent='Games shown: '+count(totals.games)+' of '+count(quality.storedGames)+' recorded. Base exclusions: '+count(quality.excludedIncomplete)+' incomplete; '+count(quality.excludedOperational)+' with client or timer issues. Sets excluded from the set win rate: '+count(totals.sets?.excludedOperational)+'. Games with known selections: '+count(view.selection?.gamesWithSelection)+'. '+[...(quality.warnings||[]).filter(w=>!w.startsWith('Ledger flags')),...(report.refresh?.warnings||[])].join(' ');
+  document.getElementById('quality').textContent='Games shown: '+count(totals.games)+' of '+count(quality.storedGames)+' recorded. Base exclusions: '+count(quality.excludedIncomplete)+' incomplete; '+count(quality.excludedOperational)+' with client or timer issues; '+count(quality.excludedManual)+' manually excluded. Sets excluded from the set win rate: '+count(totals.sets?.excludedOperational)+'. Games with known selections: '+count(view.selection?.gamesWithSelection)+'. '+[...(quality.warnings||[]).filter(w=>!w.startsWith('Ledger flags')),...(report.refresh?.warnings||[])].join(' ');
   const filterLabels=[opponent||report.filters?.opponentSpecies||'All opponent species',outcome||report.filters?.outcome||'All outcomes'];
   if(report.filters?.selectedSpecies)filterLabels.push('Selected: '+report.filters.selectedSpecies);
   if(report.filters?.from)filterLabels.push('From '+report.filters.from.slice(0,10));
   if(report.filters?.to)filterLabels.push('Through '+report.filters.to.slice(0,10));
+  filterLabels.push(report.filters?.includeManuallyExcluded?'Manual exclusions included':'Manual exclusions omitted');
   filterLabels.push(report.filters?.includeOperational?'Client and timer issues included':'Client and timer issues excluded');
   document.getElementById('report-filters').textContent=filterLabels.join(' · ');
   document.getElementById('pokemon').replaceChildren(table(['Pokémon','Selected / known games','Selection','Led / known lead games','Win rate when selected','Mega games','Mega win rate','Direct KOs','Indirect KOs','Faints','Unable to act','Items removed'],view.pokemon.map(p=>[p.species,p.selectedGames+' / '+p.selectionDenominator,pct(p.selectionRate),p.leadGames+' / '+p.leadDenominator,pct(p.selectionWinRate),p.megaGames??0,pct(p.megaWinRate),p.knockouts,p.indirectKnockouts,p.faints,p.couldNotAct??'—',p.itemRemovals])));
@@ -148,9 +149,9 @@ export function renderCsv(report) {
   const rows = [columns];
   const add = (section,fields,metric,value,denominator) => rows.push(columns.map(key => ({section,teamId:report.team?.teamId,team:report.team?.name,...fields,metric,value,denominator})[key]));
   for (const key of ['games','wins','losses','ties','unknown','winRate']) add('summary',{},key,report.totals?.[key],key==='winRate'?report.totals?.winRateDenominator:undefined);
-  for (const key of ['observed','played','wins','losses','ties','unknown','incomplete','excludedOperational','excludedIncomplete','winRate','winRateDenominator']) add('sets',{},key,report.totals?.sets?.[key],key==='winRate'?report.totals.sets.winRateDenominator:undefined);
+  for (const key of ['observed','played','wins','losses','ties','unknown','incomplete','excludedOperational','excludedIncomplete','excludedManual','winRate','winRateDenominator']) add('sets',{},key,report.totals?.sets?.[key],key==='winRate'?report.totals.sets.winRateDenominator:undefined);
   for (const set of report.totals?.sets?.records||[]) for(const metric of ['completed','operational','included'])add('set',{parentId:set.parentId,outcome:set.outcome},metric,set[metric]);
-  for (const key of ['storedGames','includedGames','excludedIncomplete','excludedOperational']) add('quality',{},key,report.quality?.[key]);
+  for (const key of ['storedGames','includedGames','excludedIncomplete','excludedOperational','excludedManual','manuallyExcludedGames']) add('quality',{},key,report.quality?.[key]);
   for (const p of report.pokemon||[]) {
     for (const key of ['selectedGames','observedSelectedGames','selectionRate','leadGames','selectionWinRate','megaGames','megaWins','megaLosses','megaTies','megaUnknown','megaWinRate','switchIns','faints','couldNotAct','knockouts','indirectKnockouts','itemRemovals']) add('pokemon',{pokemon:p.species},key,p[key],key==='selectionRate'?p.selectionDenominator:key==='selectionWinRate'?p.selectionWinRateDenominator:key==='megaWinRate'?p.megaWinRateDenominator:key==='leadGames'?p.leadDenominator:undefined);
     for (const m of p.moves||[]) for (const key of ['uses','calledUses','usagePercent','failed','missed','blocked','knockouts','itemRemovals']) add('move',{pokemon:p.species,move:m.move},key,m[key],key==='usagePercent'?m.usageDenominator:undefined);
@@ -158,6 +159,7 @@ export function renderCsv(report) {
   for (const p of report.opponents||[]) for (const key of ['games','wins','losses','ties','unknown','winRate']) add('opponent',{opponent:p.species},key,p[key],key==='winRate'?p.winRateDenominator:undefined);
   for (const pair of report.leadPairs||[])for(const key of ['games','wins','losses','ties','unknown','winRate'])add('leadPair',{pokemon:(pair.species||pair.pokemon||[]).join(' + ')},key,pair[key],key==='winRate'?pair.winRateDenominator:undefined);
   for (const g of report.games||[]) { const fields={roomId:g.roomId,parentId:g.parentId,outcome:g.outcome,opponent:g.opponent,replayUrl:replayUrlForGame(g)};add('game',fields,'selected',(g.selected||[]).map(p=>typeof p==='string'?p:p.species).join('; '));add('game',fields,'selectionKnown',g.selectionKnown); }
+  for(const annotation of report.reviewAnnotations||[]){const fields={roomId:annotation.roomId,parentId:annotation.parentId,outcome:annotation.originalOutcome};add('reviewAnnotation',fields,'manuallyExcluded',annotation.excluded);add('reviewAnnotation',fields,'reviewReason',annotation.reason);add('reviewAnnotation',fields,'auditEntries',annotation.entries);}
   for (const [key,value] of Object.entries(report.filters||{}))add('filter',{},key,value);
   for (const warning of [...(report.quality?.warnings||[]),...(report.refresh?.warnings||[])])add('warning',{},'warning',warning);
   return rows.map(row => row.map(csvCell).join(',')).join('\r\n')+'\r\n';

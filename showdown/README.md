@@ -60,6 +60,95 @@ session may use `--saved-login` again within the user's authorized battle scope.
 
 MCP tools `battle_status` and `battle_wait` return compact observed state, open sheets, current action tokens, legal actions and observed countdowns. `battle_start` uploads the locked team and sends one search. `battle_choose` consumes a fresh token plus complete doubles actions. `battle_ready`, `battle_cancel_search`, `battle_forfeit` and `battle_stop` handle the remaining controls. Each action remains subject to the user's actual scope; the default hard limit is one matchmaking search. The session only acquires its expected-format BO3 parent and server-linked children, not unrelated battles on the account.
 
+### MCP workflow and loaded capabilities
+
+Use `battle_capabilities` and `battle_status.capabilities` to inspect the actual
+running client. They expose its schema, advertised operations, optional feature
+flags, load time and a SHA-256 fingerprint of the AgentSession source loaded by
+that process. The fingerprint covers that module; it does not attest every
+dependency. `battle_status` also exposes `awaitingSet`, `searchPending` and
+`switchingTeam`, so a transient idle server update is not proof that a pending
+match has settled. Updating source or restarting MCP never hot-reloads an open
+signed-in terminal. Keep its current login; use advertised features and preserve
+logs until its next normal start can adopt new features.
+
+The same MCP exposes the remaining private BO3 workflow:
+
+| Tool | Purpose |
+| --- | --- |
+| `battle_preflight` | Check the existing session, approved team, pending work, allowance, loaded capabilities, previous review, skill sync and report health. `ready` is informational and grants no permission to search. |
+| `battle_skill_status` | Compare the complete maintained and installed skill folders and return exact hashes and differences. |
+| `battle_skill_read` | Read the complete current skill folder and return a short-lived `readReceipt` tied to its source digest and this MCP process. Delivery does not prove the agent followed it. |
+| `battle_skill_sync` | Preview installation by default; `dryRun:false, confirmed:true` installs reviewed source guidance with private backups and verification. It does not edit source. Read the updated folder afterward. |
+| `battle_review_get` / `battle_review_status` | Retrieve an exact team's BO3 checkpoint or inspect completeness blockers, official results, evidence revision and skill adoption. |
+| `battle_review_save` | Save the structured private decision review after an official parent result. It validates stored identity/evidence and current skill adoption; tactical judgments and validation descriptions remain agent assertions. |
+| `battle_note_decision` / `battle_decision_notes` | Save optional intent against an observed action token, then query private notes by exact team, canonical child room and optional turn range. |
+| `battle_calculation_evidence` | Retrieve the recorded inputs and outputs of an actual MCP calculation by exact team and receipt `id`. Performs no new calculation. |
+| `battle_switch_team` | Apply an explicitly approved full legal team while idle, prepare its report and preserve the signed-in account and remaining allowance. |
+
+Every BO3 still requires the private review and skill checkpoint before another
+authorized search, including wins, forfeits and the final set. Prefer these MCP
+workflow tools to manually writing review JSON or copying installed skills; also
+follow the repository's required `sync-skill.mjs --check` check. Preflight and
+review saves validate their stated contracts; `battle_start` does not implement a
+runtime review guard, and no tool can establish tactical correctness from prose.
+Do not search, authenticate, change the roster, publish replays or commit merely
+to validate a skill or these APIs.
+
+### Optional decision notes and retained calculations
+
+`battle_note_decision` takes a unique `commandId`, an observed `token`, optional
+`predictedOpposingActions` (up to two), `ourPlan`, `alternatives`, `reason` and
+`calculationRefs` (receipt UUIDs). Supply a plan or reason. The session binds the
+note to the exact team, session, room, request ID and observed turn. Annotation is
+optional and does not serialize `battle_choose`: submit urgent complete paired
+choices first, then annotate the observed token if needed. Predictions and intent
+stay separate from selected, sent, accepted, executed and server-defaulted facts.
+
+When making an actual `calculate_damage` or `calculate_speed` MCP call, pass
+`evidenceContext:{teamId,roomId,turn}` to retain its real input/output and receive
+a `calculationRef`. Put its `id` in the note's `calculationRefs`. Notes resolve
+the retained receipts and require matching team/room and any recorded turn;
+arbitrary reference text is rejected. A verified receipt proves what the tool
+returned for those inputs, not other numeric assertions or the prediction.
+Unsupported calculations and unknown opposing investments remain explicit.
+
+`battle_decision_notes({teamId,room,fromTurn,toTurn})` reads those saved notes
+even after the client closes. Use `team_metrics_game_evidence` separately for
+observed protocol and action evidence. Notes and calculation receipts stay in
+ignored private team data and are removed with permanent team cleanup, including
+capacity eviction; they are not public replay contents or reusable skill text.
+
+### Change an approved team without another login
+
+After completing the previous BO3 review/preservation checkpoint, call
+`battle_switch_team` with `confirmed:true`, a unique `commandId`, and exactly one
+of a full Showdown `teamText` or a registered exact `teamId`; `name` is optional.
+The session requires server-confirmed idle, no unsettled search/match and no
+replay operation. It independently validates all six, flushes the old recorder,
+prepares the next report, rechecks idle and retains the old team on failure.
+Existing games keep their original team attribution. Switching creates/accesses
+a report and can permanently evict the oldest report beyond the recent ten;
+inspect report cleanup blockers rather than claiming completion.
+
+A successful switch resets upload state. It does not upload, search, extend the
+set budget or authenticate; a separately authorized `battle_start` uploads the
+new approved team. If the loaded client lacks `switch-team`, retain its login and
+wait for its next normal start rather than restarting it merely to test the tool.
+For an older owned parent saved after a switch, `battle_save_replays` returns its
+original `teamId` and `requiresReplayImport:true`: append its returned URLs with
+`team_metrics_import_replays` using that exact old ID and confirm preservation
+before cleaning evidence. Saving replays before switching avoids that extra step.
+
+For report diagnostics and review support, use `team_metrics_health`, audited
+`team_metrics_annotate_game` / `team_metrics_game_annotations`, and
+`team_metrics_compare` with identical filters. They preserve measured outcomes
+and separate manual exclusions from observed operational flags. A comparison is
+descriptive, not evidence that a roster change caused a result. Use
+`team_metrics_viewer_status` or `team_metrics_open_viewer` for the private local
+report URL. See [metrics](../metrics/README.md) and the
+[agent workflow](AGENT-WORKFLOW.md) for report, review and cleanup sequencing.
+
 When the user authorizes forfeiting a stuck set, call
 `battle_forfeit({confirmed:true,commandId:"forfeit-set-once",room:BO3_PARENT_ID})`.
 The command ID is required. This sends `/forfeit` to the owned live BO3 parent,
@@ -125,7 +214,7 @@ The six-member fixed G packed team has SHA-256:
 
     e80b1aaaf56dff7456904ca7fe54ff5e8048fe541031b76ad50cbe96e34f68b2
 
-This hash is enforced by default before upload. For another explicitly approved and MCP-validated team, pass `--team-sha256 HASH` as the final CLI option or `expectedTeamHash` to the constructor. The hash must be 64 lowercase hex characters and cannot be changed through control commands. It preserves Leech Life and Sucker Punch. Local test fixtures explicitly substitute their fixture hash. No dependencies were installed.
+This hash is enforced by default before upload. For another explicitly approved and MCP-validated team, pass `--team-sha256 HASH` as the final CLI option or `expectedTeamHash` to the constructor. The hash must be 64 lowercase hex characters. The standalone JSON-lines controller cannot change its configured hash; approved idle replacement is exposed separately through AgentSession/MCP `battle_switch_team`. The historical team preserves Leech Life and Sucker Punch. Local test fixtures explicitly substitute their fixture hash. No dependencies were installed.
 
 ## User-operated hidden CLI login
 

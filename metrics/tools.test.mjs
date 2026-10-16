@@ -140,7 +140,7 @@ test('MCP tools expose strict local-only schemas and no battle controls',async()
   const agent=registrations.get('team_metrics_agent_report'),agentSchema=agent.settings.inputSchema;
   assert.equal(agent.settings.annotations.readOnlyHint,true);assert.equal(agent.settings.annotations.openWorldHint,false);
   assert.match(agent.settings.description,/cited turns and open sheets/);assert.match(agent.settings.description,/calculate_damage and calculate_speed/);
-  assert.deepEqual(agentSchema.parse({teamId:id}),{teamId:id,includeIncomplete:false,includeOperational:false,includeGames:false,maxEvidence:5});
+  assert.deepEqual(agentSchema.parse({teamId:id}),{teamId:id,includeIncomplete:false,includeOperational:false,includeManuallyExcluded:false,includeGames:false,maxEvidence:5});
   assert.equal(agentSchema.safeParse({teamId:id,opponentSpecies:'Archaludon',includeGames:true,maxEvidence:20,includeOperational:true}).success,true);
   for(const maxEvidence of [0,21,2.5,'5'])assert.equal(agentSchema.safeParse({teamId:id,maxEvidence}).success,false);
   assert.equal(agentSchema.safeParse({teamId:id,applyChanges:true}).success,false);

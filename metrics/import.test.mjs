@@ -51,10 +51,12 @@ test('imports p2 private selections, reimports idempotently, remembers and refre
 test('ledger assigns official sets and excludes known operational games without calling actions choices',async()=>{
   const workspace=await setup();
   try{
-    await writeFile(join(workspace,'cache/ledger.json'),JSON.stringify({sets:[{completedPlayedIndex:1,parentId:'game-bestof3-gen9championsvgc2026regmcbo3-122-secretpw',parentResult:{ownResult:'win'},children:[{id:ROOM,selection:{lead:['Golisopod','Farigiraf'],reserves:['Politoed','Sylveon'],mcpTeamChoice:'team 1546'},operationalErrors:[{kind:'server-default-turn'}],finishAttribution:'played-out'}]}]}));
+    const missing='battle-gen9championsvgc2026regmcbo3-124';
+    await writeFile(join(workspace,'cache/ledger.json'),JSON.stringify({sets:[{completedPlayedIndex:1,parentId:'game-bestof3-gen9championsvgc2026regmcbo3-122-secretpw',parentResult:{ownResult:'win'},children:[{id:ROOM,selection:{lead:['Golisopod','Farigiraf'],reserves:['Politoed','Sylveon'],mcpTeamChoice:'team 1546'},operationalErrors:[{kind:'server-default-turn'}],finishAttribution:'played-out'},{id:missing+'-privatepw'}]}]}));
     await importBattleFiles({workspace,files:['cache/battles.jsonl'],username:'Fixture',teamFile:'teams/team.txt',ledgerFile:'cache/ledger.json'});
     assert.equal((await getTeamReport({workspace})).totals.games,0);
     const all=await getTeamReport({workspace,includeOperational:true});assert.equal(all.totals.games,1);assert.equal(all.totals.sets.wins,1);
+    assert.deepEqual((await listBattles({workspace}))[0].metadata.setResult.expectedChildIds,[ROOM.replace('-secretpw',''),missing]);
   }finally{await rm(workspace,{recursive:true,force:true});}
 });
 

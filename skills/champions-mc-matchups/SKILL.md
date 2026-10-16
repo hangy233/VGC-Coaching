@@ -10,12 +10,16 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-15.6**. Read the bundled
+Cycle revision: **2026-10-15.7**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
 the previous BO3's private review checkpoint is complete. Authorization and an
-idle server alone do not complete this checkpoint.
+idle server alone do not complete this checkpoint. Prefer `battle_skill_status`,
+`battle_skill_sync` and `battle_skill_read` for complete guidance adoption;
+`battle_review_save` and `battle_review_status` for the private checkpoint; and
+`battle_preflight` before the next authorized search. Readiness and content
+delivery do not prove tactical judgment, and neither grants battle authorization.
 
 After **every BO3**, including a win, forfeit, or final set in a batch: verify the
 official parent result; save and verify each completed child's replay within the
@@ -103,7 +107,10 @@ Make the read explicit: **plausible opposing paired action -> our paired respons
 -> main risk and alternative**. Use the open sheet and observed responses to form
 these branches; use MCP damage and Speed to check their feasibility. A damage
 maximum does not select the plan. Keep the note short, and submit first when the
-clock cannot support optional explanation or additional calculations.
+clock cannot support optional explanation or additional calculations. When time
+permits, `battle_note_decision` retains this reasoning against the observed action
+token without submitting a move. Use optional calculator `evidenceContext` to
+link actual MCP results; never invent a receipt or turn a prediction into a fact.
 
 - **Switch-aware legality:** Evaluate the field when moves resolve, including
   plausible opposing switch-ins. Recheck priority, target eligibility, terrain,
@@ -192,7 +199,12 @@ ID before drawing cross-game conclusions. The compact report includes the cached
 team sheet, sample sizes, exclusions, descriptive observations and evidence links;
 the cycle explains its freshness checks and private saved-file fallback. Use
 `includeGames: true` or `team_metrics_report` when the relevant game evidence is
-needed. Do not combine changed team versions or treat review questions as findings.
+needed. Use `team_metrics_health` for missing replay/evidence/source diagnostics,
+`team_metrics_game_annotations` for the append-only review audit, and
+`team_metrics_compare` for descriptive comparisons of exact immutable versions.
+Manual exclusions need a reason; disclose the resulting filters and sample sizes,
+and inspect excluded games before drawing conclusions. Do not combine changed
+team versions or treat review questions as findings.
 
 Reconstruct decisive changes first, then assess selection and the opening. For
 each important turn, record what was knowable before the action, the observed

@@ -10,6 +10,8 @@ import {getTeamReport} from './store.mjs';
 test('live recorder saves observation metrics and official parent result without sending or authenticating',async()=>{
   const workspace=await mkdtemp(join(tmpdir(),'vgcm-recorder-')),client=new EventEmitter();
   const room='battle-gen9championsvgc2026regmcbo3-45',parent='game-bestof3-gen9championsvgc2026regmcbo3-44';
+  const unrecorded='battle-gen9championsvgc2026regmcbo3-46';
+  client.state=target=>target===parent?{children:[room,unrecorded+'-privatepw']}:{sheets:{}};
   const session={ownedRooms:new Set([room,parent]),roomParents:new Map([[room,parent]])};
   const recorder=attachMetricsRecorder(client,{workspace,username:'Fixture',teamId:'a'.repeat(64),team:[{species:'Sylveon',moves:['Hyper Voice','Protect']}],session,onError:()=>assert.fail('Metrics persistence failed')});
   try{
@@ -17,6 +19,8 @@ test('live recorder saves observation metrics and official parent result without
     emit('player','p1','Fixture');emit('player','p2','Opponent');emit('start');emit('switch','p1a: Sylveon','Sylveon, L50','202/202');emit('switch','p2a: Target','Pikachu, L50','100/100');emit('turn','1');emit('move','p1a: Sylveon','Hyper Voice','p2a: Target');emit('-damage','p2a: Target','0 fnt');emit('faint','p2a: Target');emit('win','Fixture');
     client.emit('result',{room:parent,type:'win',winner:'Fixture'});await recorder.flush();
     const report=await getTeamReport({workspace});assert.equal(report.totals.wins,1);assert.equal(report.totals.sets.wins,1);assert.equal(report.pokemon[0].knockouts,1);
+    assert.deepEqual(report.games[0].setResult.expectedChildIds,[room,unrecorded]);
+    assert.equal(report.games.length,1); // Membership survives a missing child buffer.
     assert.equal(report.pokemon[0].moves.find(m=>m.move==='Protect').uses,0);assert.equal(typeof client.send,'undefined');
     assert.equal(recorder.status().state,'ready');assert.equal(recorder.status().pending,0);
     assert.equal(recorder.status().stableReport.games,1);assert.equal(recorder.status().lastError,null);

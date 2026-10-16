@@ -154,6 +154,8 @@ export async function planTeamCleanup({workspace,teamId,sessionCall=callLocalSes
     const room=basename(file).split('--')[0];if(/^battle-[a-z0-9]+-\d+$/u.test(room))rooms.add(room);
     await add(file,'game-evidence');
   }
+  for(const file of await names(workspace,'cache/team-metrics/decision-notes'))if(new RegExp('^'+teamId+'--(?:battle-[a-z0-9]+-\\d+|game-bestof3-[a-z0-9]+-\\d+)\\.json$','u').test(basename(file))||new RegExp('^\\.pending-'+teamId+'-[a-f0-9-]{36}\\.tmp$','u').test(basename(file)))await add(file,'decision-notes');
+  for(const file of await names(workspace,'cache/team-metrics/calculations'))if(new RegExp('^'+teamId+'--[a-f0-9-]{36}\\.json$','u').test(basename(file))||new RegExp('^\\.pending-'+teamId+'-[a-f0-9-]{36}\\.tmp$','u').test(basename(file)))await add(file,'calculation-evidence');
   for(const directory of ['','teams','reports/teams','evidence','replays'])for(const file of await names(workspace,'cache/team-metrics'+(directory?'/'+directory:'')))if(new RegExp('^\\.pending-'+teamId+'-[a-f0-9-]{36}\\.tmp$','u').test(basename(file)))await add(file,'temporary-file');
   for(const file of await names(workspace,'cache/team-metrics/deletions'))if(new RegExp('^\\.cleanup-'+teamId+'-[a-f0-9-]{36}\\.tmp$','u').test(basename(file)))await add(file,'temporary-file');
   await add(`cache/team-metrics/teams/${teamId}.txt`,'team-snapshot');

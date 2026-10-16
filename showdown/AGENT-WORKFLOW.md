@@ -14,20 +14,40 @@ verification; no additional ladder battle was queued for their development.
 Before each new BO3 search, read the repository
 [matchup skill](../skills/champions-mc-matchups/SKILL.md) and its portable
 [BO3 cycle](../skills/champions-mc-matchups/references/headless-battle-cycle.md).
-Run `node skills/champions-mc-matchups/scripts/sync-skill.mjs --check` from this
-project; resolve a stale installed copy and read the changed instructions before
-continuing. The complete folder matters, including references and UI metadata.
+Prefer `battle_skill_status` and `battle_skill_read` to inspect the complete
+maintained/installed folders and read the current guidance through MCP. The read
+returns a 60-minute `readReceipt` bound to the exact source digest and this MCP
+process; retain it for `battle_review_save`. It records delivery, not compliance.
+Alternatively run `node skills/champions-mc-matchups/scripts/sync-skill.mjs --check`
+from this project. Resolve a stale installed copy and read the changed instructions before
+continuing. Use `battle_skill_sync` to preview installation, then
+`dryRun:false, confirmed:true` to install reviewed source guidance with private
+backups and verification. It does not edit source; read the changed folder again
+with `battle_skill_read`. The complete folder matters, including references and
+UI metadata. Source edits and supported behavioral validation remain deliberate
+agent work rather than an automatic rule generated from a result.
 
 After every official BO3 parent result, including the final set in a batch,
 finish a private review checkpoint before another authorized queue. Record
 supported reusable changes or a justified no-change result, relevant validation,
 and verified source/installed hashes. When the user has authorized the replay and
-retention workflow, verify all child replays, retain compact evidence and complete
-bounded cleanup after that review. Report **review complete / lesson or no
+retention workflow, verify child replays and retain compact evidence before
+saving the final checkpoint; complete bounded cleanup after that review. A
+missing replay remains an explicit preservation blocker. Report **review complete / lesson or no
 change / sync verified**, replay coverage and any retained cleanup blockers. A
 context handoff, restart, idle state or unused set
 allowance does not replace this checkpoint. These are operator responsibilities;
-the MCP does not enforce review completion or automatically update skill files.
+`battle_review_save` validates checkpoint identity, stored evidence, official
+results and current skill adoption, while tactical judgments remain agent claims.
+It checks stored games against an independently retained parent/ledger child
+manifest; unknown coverage or a missing expected game blocks completion.
+`battle_preflight` and `battle_review_status` expose blockers before another
+search. Preflight also inspects recent retained parents across local team
+versions after a restart, disclosing account and chronology limits. A requested
+older parent cannot hide the newest known checkpoints. `battle_start` itself has
+no runtime review guard. Do not start battles,
+authenticate, change the roster, publish replays or commit merely to validate
+guidance or these tools.
 
 ## Establish the session
 
@@ -54,7 +74,11 @@ the MCP does not enforce review completion or automatically update skill files.
    queue. The readable live battle log appears in this terminal after login,
    with an official watch URL for the BO3 and every game as the server announces
    their room IDs. Keep private room links within the user's sharing scope.
-4. Call `battle_status` through this repository's MCP. If the tools are not
+4. Call `battle_status`, `battle_capabilities` and `battle_preflight` through this
+   repository's MCP. Preflight checks the existing account connection, exact team,
+   allowance, settled idle state, loaded operations, last review, skill sync and
+   report health. Inspect blockers and warnings; `ready:true` grants no additional
+   authorization. If the tools are not
    exposed by the host, use the MCP SDK Client/StdioClientTransport against
    `node dist/index.js` on this same host. Do not substitute a separate anonymous
    client or the old temporary command-file bridge.
@@ -63,6 +87,15 @@ the MCP does not enforce review completion or automatically update skill files.
    uploads the locked team and sends one search.
    The session enforces its set limit and binds one expected M-C BO3 parent and
    server-linked children. It does not acquire unrelated account battles.
+
+The loaded capabilities include schema, operations, optional feature flags,
+load time and a fingerprint of the AgentSession module loaded by this process.
+The fingerprint does not attest all dependencies. Source updates or an MCP
+restart do not hot-reload an already signed-in terminal. Preflight reports this
+distinction; keep the existing login and use only advertised operations until
+the next normal client start. `awaitingSet`, `searchPending`, `savingReplays` and
+`switchingTeam` remain explicit pending work even if the server briefly reports
+no active games. Never restart or authenticate solely to test a new operation.
 
 `--manual-ready` disables the default prompt-driven readiness inside this BO3.
 The bridge never queues a later set automatically. It uses a Windows named pipe
@@ -94,6 +127,12 @@ local descriptor contain no saved Showdown secret. See the
   current forms, boosts, status, supported field options and explicit test sets.
   No independent arithmetic/fallback engine or calculation from memory. Missing
   MCP support leaves the benchmark unverified; read returned errors/descriptions.
+- For retained numerical evidence, pass
+  `evidenceContext:{teamId,roomId,turn}` on an actual `calculate_damage` or
+  `calculate_speed` call. Save the returned `calculationRef.id`; retrieve its
+  recorded inputs/outputs with `battle_calculation_evidence({teamId,id})`.
+  A matching receipt supports that tool result for those assumptions. It does
+  not verify different claims made elsewhere in narrative notes.
 - `actions[]` gives the current kind, room, token, legal actions and observed clock.
   Submit complete paired actions via `battle_choose` using that token,
   `confirmed:true`, a unique `commandId`, and the action array. Preview is one
@@ -114,6 +153,19 @@ local descriptor contain no saved Showdown secret. See the
 - A repeated mutating command ID retrieves its original result. An uncertain
   response requires state reconciliation, not a new ID and blind retry. A
   deliberately corrected rejected choice requires a new ID and fresh token.
+
+Optionally use `battle_note_decision` with a unique `commandId` and an observed
+action `token` to preserve `predictedOpposingActions` (up to two), `ourPlan`,
+`alternatives`, `reason` and `calculationRefs` (actual receipt UUIDs). Supply a
+plan or reason. The session binds the note to the exact team, room, request,
+observed turn and session; calculation receipts must match the team/game and
+any recorded turn. Intent/predictions remain agent assertions, distinct from
+acceptance, execution and defaults. These notes are optional and never block
+`battle_choose`; send urgent complete choices first and annotate afterward if
+necessary. Query saved intent with
+`battle_decision_notes({teamId,room,fromTurn,toTurn})`, including after game or
+client completion, then read `team_metrics_game_evidence` for observed actions.
+Do not perform longer reporting or review inside a live turn deadline.
 
 Automatic readiness responds promptly only to server prompts inside the bound
 set. With manual readiness, use the current urgent ready token in `battle_ready`.
@@ -168,6 +220,20 @@ authentication. With the user's saved-login authorization, explicitly start it
 using `--saved-login`; do not add an automatic reconnect or queue another battle
 merely because a saved credential exists.
 
+For an explicitly approved roster change, finish the old BO3 checkpoint and
+preservation first. While the existing server connection confirms idle, use
+`battle_switch_team({confirmed:true,commandId:UNIQUE_ID,teamId:REGISTERED_ID})` or
+replace `teamId` with the full legal `teamText`; supply exactly one. An optional
+`name` labels its report. The session validates all six, preserves the old
+recorder, prepares the next report and rechecks idle before replacing the team;
+failure retains the old approval. Old games keep their original team IDs.
+Switching resets upload state but does not upload, search, extend allowance or
+log in. The next separately authorized `battle_start` uploads the new team.
+Creating/accessing the new report can evict and permanently clean the oldest
+team beyond the recent ten; inspect explicit pending cleanup blockers. If the
+running client lacks this operation, preserve its login until its next normal
+start. A report registration alone does not change the live approved team.
+
 ## Conclude and improve
 
 After the official parent ends, call `team_metrics_sync_battles` with the locked
@@ -188,6 +254,17 @@ children are present or explicitly recorded as excluded/missing. Compare the new
 set with the same version's wider history; do not substitute the latest team or
 combine changed versions. This report read belongs after game over, outside live
 turn and between-game readiness deadlines.
+
+Use `team_metrics_health` for snapshot/evidence/replay integrity, source freshness
+and cleanup blockers. `team_metrics_game_annotations` reads audited notes and
+manual exclusions; `team_metrics_annotate_game` appends a reasoned note, exclusion
+or re-inclusion without rewriting official outcomes, move counts or operational
+flags. Apply an exclusion only with supported evidence and retain its history.
+`team_metrics_compare` compares two exact versions with identical filters and
+reports descriptive differences; it does not prove a change caused improvement.
+`team_metrics_viewer_status` checks the private report viewer;
+`team_metrics_open_viewer` returns a local team URL and starts a helper only when
+needed. These operations neither choose a roster nor authorize battles.
 
 The compact JSON includes descriptive observations, review questions and
 game/parent/source evidence references. Request `includeGames: true`, use
@@ -225,13 +302,41 @@ within the rooms' existing privacy; it does not authorize changing visibility.
 After an official parent result, `battle_save_replays` with `room`,
 `confirmed: true` and a unique `commandId` saves each finished owned child,
 verifies the server-returned URL against its completed replay log, and
-returns explicit per-child coverage/failures. Keep full private access links in
+returns the exact parent `teamId`, `requiresReplayImport` and per-child
+coverage/failures. When `requiresReplayImport:true`, including a historical
+parent after a team switch, append returned URLs with
+`team_metrics_import_replays` using that exact old team ID, then verify the report
+and retained evidence before cleanup. The current team recorder must not absorb
+the old team's games. Keep full private access links in
 ignored reports/checkpoints. Do not guess links, use live watch URLs as saved
 replays, claim completion from a send acknowledgment or expose access suffixes
 in skills/commits. Reuse a mutating command's ID after an uncertain reply and
 reconcile the returned state before another upload attempt. The already open
 older client receives this operation on its next normal deliberate start; keep
 its present authentication unchanged and preserve logs while it lacks support.
+
+Save the structured checkpoint with `battle_review_save` after reading the exact
+team report, each child's decisive retained evidence and any saved decision
+notes. Supply `teamId`, canonical `parentId`, the current matchup `readReceipt`,
+`decisionReview`, `positiveEvidence`, `executionAndVariance`, `reusableOutcome`
+and `validation`. The save derives official outcomes, exact children and evidence
+revision from stored data; `expectedChildIds` can assert the expected coverage.
+Use `calculationIds` for retained actual MCP receipts supporting numerical review.
+Decision entries separate known facts, opposing reads, selected/accepted/executed
+actions and partner progress, plus an alternative or explicit limitation.
+A reusable lesson needs evidence and a counterexample/applicability limit; an
+explicit supported no-change reason is valid. Validation descriptions remain
+agent-reported checks. Mark a backfill with `retrospective:true` and report
+`subsequentSearchOccurred` accurately; a newly written file does not prove a
+review happened before an earlier search.
+
+`battle_review_get({teamId,parentId})` returns the saved checkpoint, its
+`checkpointFile`, revision and completeness blockers. Updating a saved review
+requires `expectedRevision` from the latest read and preserves prior revisions.
+Confirm `battle_review_status` before another authorized search; if guidance or
+retained evidence changed, resolve the resulting stale-review blockers. Missing
+replays stay explicit and prevent cleanup even when the decision review itself
+is saved. Review tools neither publish replays nor update skill source files.
 
 After the decision review and skill-sync checkpoint, call
 `team_metrics_finalize_bo3` with `teamId`, `parentId`, `checkpointFile` and explicit
@@ -271,7 +376,7 @@ and a whole-folder sync; unchanged guidance needs an explicit supported no-chang
 reason. Do not force a new rule from every outcome. Read the changed active skill
 after syncing, and report the checkpoint before any further authorized queue.
 Keep roster changes within the user's accepted scope and revalidate them before
-starting a new locked-team session.
+an approved idle team switch or the next normal locked-team session.
 
 See [matchup skill](../skills/champions-mc-matchups/SKILL.md),
 [teambuilding skill](../skills/champions-mc-teambuilding/SKILL.md), and
