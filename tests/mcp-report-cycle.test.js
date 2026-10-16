@@ -32,7 +32,7 @@ test('combined MCP creates, appends, and queries exact-team reports from observe
     const tools=(await mcp.listTools()).tools.map(tool=>tool.name);
     for(const name of ['battle_status','battle_choose','team_metrics_register_team','team_metrics_sync_battles','team_metrics_report','team_metrics_agent_report','team_metrics_game_evidence','battle_skill_read','battle_review_save','battle_preflight','battle_switch_team','battle_note_decision','team_metrics_health','team_metrics_compare','team_metrics_annotate_game','team_metrics_open_viewer'])assert(tools.includes(name),name);
     const call=async(name,args={})=>{
-      const response=await mcp.callTool({name,arguments:args});
+      const response=await mcp.callTool({name,arguments:['battle_choose','battle_switch_team'].includes(name) ? {controllerLease:'a'.repeat(64),...args} : args});
       assert.notEqual(response.isError,true,response.content?.find(item=>item.type==='text')?.text);
       return decode(response);
     };
@@ -48,7 +48,7 @@ test('combined MCP creates, appends, and queries exact-team reports from observe
     live.connected=true;live.authenticated=true;live.epoch=1;live.searchState={searching:[],games:{}};
     live.ws={send:line=>sent.push(line),close:()=>{live.connected=false;live.authenticated=false;}};
     const recorderFactory=({team,teamId,name,session:owner})=>attachMetricsRecorder(live,{workspace,username:'Fixture',teamId,team,name,session:owner,onError:()=>errors.push('Recorder persistence failed')});
-    session=new AgentSession(live,{username:'Fixture',packed,autoReady:false,recorderFactory,decisionNoteWriter:args=>saveDecisionNote({workspace,...args})});
+    session=new AgentSession(live,{username:'Fixture',packed,autoReady:false,controllerRequired:false,recorderFactory,decisionNoteWriter:args=>saveDecisionNote({workspace,...args})});
     recorder=recorderFactory({teamId,team,name:'Fixture rain',session});
     session.attachMetricsRecorder(recorder);
     bridge=await serveLocalSession(session,{descriptorPath:join(workspace,'cache','showdown-session.json')});

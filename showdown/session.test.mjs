@@ -175,11 +175,12 @@ test('login is terminal-only, publishes local controls afterward, streams events
     const reply=await callLocalSession(f.descriptorPath,{id:'status',op:'status'});
     assert.equal(reply.ok,true);assert.equal(reply.result.username,'TofuRotom');
     assert.equal(reply.result.authenticated,true);assert.equal(reply.result.searchesSent,0);
+    assert.equal(reply.result.controller.required,true);assert.equal(reply.result.controller.owner,null);
     assert.equal(reply.result.authorizedSets,1);assert.equal(reply.result.autoReady,true);
     assert.match(reply.result.teamSha256,/^[a-f0-9]{64}$/);
     assert.equal(reply.result.metrics.enabled,true);assert.equal(reply.result.metrics.teamId,reply.result.teamSha256);
     const synced=await callLocalSession(f.descriptorPath,{id:'metrics-initialize',op:'metrics-sync'});
-    assert.equal(synced.ok,true);assert.equal(synced.result.state,'ready');assert.equal(synced.result.stableReport.games,0);
+    assert.equal(synced.ok,true,JSON.stringify(synced));assert.equal(synced.result.state,'ready');assert.equal(synced.result.stableReport.games,0);
     assert.match(await readFile(synced.result.stableReport.path,'utf8'),/<!doctype html>/i);
     assert.deepEqual(f.client().commands,[]); // Signing in must not search or upload.
     await assert.rejects(f.client().connect(),/new user-operated login/);
@@ -194,7 +195,10 @@ test('login is terminal-only, publishes local controls afterward, streams events
       assert(!saved.includes(ASSERTION));assert(!saved.includes(CHALLENGE));assert(!saved.includes('password'));
     }
     assert(!f.tty.rendered().includes(ASSERTION));assert(!f.tty.rendered().includes(CHALLENGE));
-    const stopped=await callLocalSession(f.descriptorPath,{id:'stop',op:'stop',confirmed:true});
+    const missingLease=await callLocalSession(f.descriptorPath,{id:'stop-without-lease',op:'stop',confirmed:true});assert.equal(missingLease.ok,false);assert.equal(f.client().connected,true);
+    const claimed=await callLocalSession(f.descriptorPath,{id:'claim-stop',op:'control-claim',confirmed:true,controllerId:'session-fixture'});assert.equal(claimed.ok,true);
+    assert.match(claimed.result.controllerLease,/^[a-f0-9]{64}$/);
+    const stopped=await callLocalSession(f.descriptorPath,{id:'stop',op:'stop',confirmed:true,controllerLease:claimed.result.controllerLease});
     assert.equal(stopped.ok,true);assert.equal(stopped.result.stopped,true);
     await deadline(f.running);
     assert.equal(f.client().connected,false);
@@ -301,7 +305,8 @@ test('explicit saved-login selection passes approved account to its broker and s
     assert(!JSON.stringify(status).includes(ASSERTION));assert(!f.tty.rendered().includes(ASSERTION));
     const descriptor=await readFile(f.descriptorPath,'utf8');
     assert(!descriptor.includes(ASSERTION));assert(!descriptor.includes(CHALLENGE));
-    await callLocalSession(f.descriptorPath,{id:'saved-stop',op:'stop',confirmed:true});
+    const claimed=await callLocalSession(f.descriptorPath,{id:'saved-claim-stop',op:'control-claim',confirmed:true,controllerId:'saved-session-fixture'});assert.equal(claimed.ok,true);
+    await callLocalSession(f.descriptorPath,{id:'saved-stop',op:'stop',confirmed:true,controllerLease:claimed.result.controllerLease});
     await deadline(f.running);
     assert.equal(f.client().connected,false);
     await assert.rejects(readFile(f.descriptorPath),/ENOENT/);

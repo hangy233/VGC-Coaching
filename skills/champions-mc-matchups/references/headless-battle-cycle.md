@@ -25,7 +25,18 @@ of skill files, review reports, and chat.
    context or signed-in client. If it is incomplete, finish that review now. The
    first search of a new batch does not erase an unreviewed earlier set. An initial
    run with no earlier set can record that fact instead.
-4. Run `battle_preflight` and inspect its blockers and warnings: existing
+4. Read `battle_status` and `battle_capabilities` on the existing authorized client.
+   On a newly started client advertising exclusive control and deadline protection,
+   claim one controller with `battle_control_claim`. Keep the returned opaque
+   `controllerLease` private and supply it to every socket-mutating operation,
+   including start, ready, choose, forfeit, replay policy/saving and stop. While
+   server-confirmed idle, explicitly configure `battle_set_control_policy` before
+   preflight and play. It defaults off; `forfeitIfStuck: true` requires the user's
+   existing permission to forfeit a stuck set. Policy, credentials and a lease
+   grant no new battles, replay publication or roster changes. Source edits do
+   not update an existing process; adopt these capabilities at the next authorized
+   startup. Retain the current valid lease between sets rather than claiming anew.
+5. Run `battle_preflight` and inspect its blockers and warnings: existing
    authentication, exact team, remaining authorization, actual idle state,
    loaded capabilities, prior review, skill adoption and report health. A source
    digest describes the loaded AgentSession file only; it does not prove every
@@ -73,6 +84,17 @@ four is not an intentional selection, and a sent choice without acknowledgment
 leaves acceptance unknown. Missing preview history does not prove a default.
 Keep these distinctions in selection-quality and execution review.
 From each fresh actionable request, identify a complete legal pair immediately.
+With the enabled deadline policy, stage that exact pair using
+`battle_stage_fallback` before calculator calls, history reads or optional notes.
+Use `battle_turn_status` for compact current requests, choice state, controller
+owner and safety state. Staging is neither a send nor acceptance: the client can
+submit it at its bounded cutoff if the operator stalls. Improve it through an
+ordinary timely `battle_choose` when justified. Every fallback belongs to its
+exact token; request change, disconnect, lease release or takeover invalidates it.
+Without a staged fallback, an enabled `forfeitIfStuck` policy makes a bounded
+whole-set forfeit attempt and halts further searches; it invents no attack.
+Inspect its send uncertainty, official result and idle state. Reset a safety halt
+only through deliberate policy configuration while idle, after the control review.
 Before submission, check only unresolved facts that could change it; reuse actual
 MCP results only while all relevant inputs still match. Defer optional notes,
 history reads and extra research until the send is verified, and stop that work
@@ -94,13 +116,22 @@ replacement or changed board can invalidate the earlier pair; rebuild that
 fallback instead of sending stale actions. Verify the send before more analysis.
 Do not use the cutoff to ignore a known immunity, priority blocker or illegal
 replacement. A stale attempt or an observer alert is not a submitted choice.
+For forced replacements, use the named legal options and complete switch/pass
+combinations from the fresh request. Prefer the stable `pokemonId` over a guessed
+party index; a Pokemon's slot can change after a server default or new request.
+The selected identity is resolved and revalidated immediately before sending.
+On rejection, refresh legality and correct the choice with a new command ID;
+on an uncertain send, reconcile first rather than blindly repeating the action.
+Use `battle_control_trace` to distinguish request arrival, staging, send,
+rejection, acknowledgment and server advancement. A watchdog or forfeit outcome
+remains an operational failure in the report; it is not evidence of sound play.
 
 During automatic context restoration, an external observer can alert the active
 operator using fresh request/choice evidence; it must not create competing move
 ownership. If operation cannot recover and the user authorized forfeiting when
 stuck, use the owned whole-BO3 `battle_forfeit`, then verify the parent result and
-server idle. `battle_stop` only disconnects. Do not assume either a fallback move
-or an automatic forfeit policy exists in the client.
+server idle. `battle_stop` only disconnects. Never assume a fallback was staged
+or deadline protection enabled: inspect the actually loaded client's safety state.
 
 Prepare a deliberate operator handoff between BO3s when possible. Before a new
 search or transfer, the receiving operator must read the current guidance and
@@ -108,10 +139,14 @@ successfully call `battle_status` through its own MCP connection, verifying the
 same signed-in session, locked team and current request or idle state. A running
 MCP process does not prove access to the client's local pipe. Keep the original
 operator responsible until the receiver acknowledges working controls and
-exclusive ownership. During an urgent live turn, submit and verify a legal pair
-before optional controller setup; if recovery cannot finish, use an already
-authorized whole-set forfeit. Do not delay an available current operator merely
-to arrange a handoff.
+exclusive ownership. Transfer with `battle_control_claim({takeover:true,
+expectedGeneration:CURRENT_GENERATION,...})`; successful takeover revokes the old
+lease and clears its staged fallback. The receiver must stage a fresh pair
+immediately. A generation mismatch requires a fresh read, not repeated takeovers.
+During an urgent turn, the current owner should submit and verify a legal pair
+before arranging an optional handoff. A receiver cannot act with the revoked
+lease; if recovery cannot finish, use an already authorized whole-set forfeit or
+inspect the enabled policy's bounded recovery. Do not create competing ownership.
 
 Between games, handle readiness and preview deadlines promptly. Record observed
 response -> our adjustment -> their plausible counter-adjustment. Save deep log

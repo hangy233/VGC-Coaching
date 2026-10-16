@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-16.13**. Read the bundled
+Cycle revision: **2026-10-16.14**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -156,7 +156,10 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
   adjustment -> their plausible counter-adjustment. Carry this into the current
   branch; one Protect or lead choice does not establish a fixed opponent habit.
 - **Keep a legal fallback:** From the fresh request, identify a complete legal
-  pair before optional research. Follow the cycle's early-commit procedure;
+  pair and stage it with `battle_stage_fallback` before optional research when
+  the loaded client supports the enabled deadline policy. Hold the exclusive
+  controller lease; a handoff requires an explicit generation-checked takeover.
+  Follow the cycle's early-commit procedure and inspect `battle_turn_status`;
   an unverified numerical benchmark does not require delaying every legal play.
   Revalidate the pair after state changes. Check both the current-turn deadline
   and the total game bank: repeated animation reads, calculations, and context restoration consume
@@ -251,7 +254,8 @@ or the simulator establish a guaranteed win against unknown opposing sets.
 Follow the bundled [BO3 cycle and checkpoint](references/headless-battle-cycle.md).
 Locate the active VGC project's `showdown/AGENT-WORKFLOW.md` for its client API;
 that project file is not relative to a globally installed skill. The agent supplies
-strategy; the transport has no autonomous move policy. Review does not authorize
+strategy; an explicitly enabled watchdog can submit the agent's staged legal pair,
+but generates no generic move choice. Review does not authorize
 another set, a roster change, replay publication, or a new authentication attempt.
 Honor an existing user request to save replays and clean completed BO3 artifacts;
 do not ask again for that already authorized scope. Preserve room privacy and

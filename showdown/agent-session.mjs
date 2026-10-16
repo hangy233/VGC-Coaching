@@ -2,6 +2,9 @@ import {EventEmitter} from 'node:events';
 import {createHash, randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
+import {ControllerLease} from './controller-lease.mjs';
+import {DeadlineSupervisor} from './deadline-supervisor.mjs';
+import {replacementOptions,legalReplacementPairs} from './choice-validation.mjs';
 
 const {Teams,TeamValidator}=createRequire(import.meta.url)('pokemon-showdown');
 const RUNTIME_REVISION=createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
@@ -14,7 +17,7 @@ const EVENTS = ['request','battle-event','sheet','timer','result','ready','serve
 
 /** One explicitly bounded local session. It never logs in or chooses strategy. */
 export class AgentSession extends EventEmitter {
-  constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter,replayPolicy=false,replayPreservationVerifier} = {}) {
+  constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter,replayPolicy=false,replayPreservationVerifier,controllerRequired=true,controlTimers={},monotonicNow=()=>performance.now()} = {}) {
     super();
     check(typeof username === 'string' && normalized(username), 'Username required');
     check(typeof packed === 'string' && packed.length > 10, 'Approved packed team required');
@@ -27,9 +30,11 @@ export class AgentSession extends EventEmitter {
     check(typeof replayPolicy==='boolean'&&(replayPreservationVerifier===undefined||typeof replayPreservationVerifier==='function'),'Invalid replay preservation policy');
     this.replayPreservationVerifier=replayPreservationVerifier;this.replayPolicy={enabled:replayPolicy,configuredAt:replayPolicy?new Date(this.now()).toISOString():null,fromSearch:1};this.replayPreservation=new Map();this.replayTasks=new Map();
     this.id = randomUUID(); this.revision = 0; this.searchesSent = 0; this.stopped = false;
-    this.commands = new Map(); this.readySent = new Set(); this.notices = []; this.listeners = [];
+    this.commands = new Map();this.commandFingerprints=new Map(); this.readySent = new Set(); this.notices = []; this.listeners = [];
     this.ownedRooms = new Set(); this.ownedParents = new Set(); this.roomParents = new Map(); this.awaitingSet = false;
     this.roomTeams=new Map();this.actionContexts=new Map();this.recorderFactory=recorderFactory;this.decisionNoteWriter=decisionNoteWriter;this.switchingTeam=false;
+    this.controller=new ControllerLease({now,required:controllerRequired});this.controlTrace=[];this.controlSequence=0;this.monotonicNow=monotonicNow;this.controlStartedAt=monotonicNow();this.tracedRequests=new Set();this.choiceSources=new Map();this.uncertainChoices=new Set();
+    this.supervisor=new DeadlineSupervisor({now,...controlTimers,getActions:()=>this.actions({includePending:true}),validate:(action,choices)=>this.validateAction(action,choices),submit:(action,choices)=>this.submitChoice(action,choices,'fallback'),forfeit:(action,reason)=>this.containControlFailure(action,reason),onTrace:entry=>this.recordControlTrace({...entry,type:entry.type?.startsWith('watchdog-')?entry.type:`watchdog-${entry.type||'event'}`})});
     for (const event of EVENTS) {
       const listener = value => {
         if (event === 'disconnected') this.stopped = true;
@@ -40,12 +45,81 @@ export class AgentSession extends EventEmitter {
         }
         if(event==='search-state' && this.cancellation && value.searching.length===0 && !Object.keys(value.games || {}).length)this.cancellation.status='idle-observed';
         this.captureRooms();
+        this.observeControlEvent(event,value);
+        this.supervisor.refresh(event);
         this.revision++; this.emit('change', {revision:this.revision,event});
         if (this.autoReady && ['ready','search-state','request'].includes(event)) this.confirmPendingReady();
         if(['result','search-state','room-renamed'].includes(event)||event==='battle-event'&&client.rooms.get(value.room)?.ended)queueMicrotask(()=>this.maybePreserveReplays());
       };
       client.on(event, listener); this.listeners.push([event,listener]);
     }
+  }
+  recordControlTrace(entry){
+    const controller=this.controller.status(),record={seq:++this.controlSequence,at:this.now(),elapsedMs:Math.max(0,this.monotonicNow()-this.controlStartedAt),controllerId:controller.owner?.replace(/[^A-Za-z0-9_.:-]/g,'_')||'none',generation:controller.generation};
+    for(const key of ['type','source','status','kind','reasonCode'])if(typeof entry[key]==='string')record[key]=entry[key].replace(/[^A-Za-z0-9_.:-]/g,'_').slice(0,80);
+    for(const key of ['rqid','revision','latencyMs'])if(Number.isFinite(entry[key]))record[key]=entry[key];
+    if(typeof entry.room==='string'&&this.ownedRooms.has(this.client.resolveRoom(entry.room)))record.room=this.client.resolveRoom(entry.room);
+    this.controlTrace.push(record);if(this.controlTrace.length>2000)this.controlTrace.shift();
+    this.client.emit('control-trace',record);return record;
+  }
+  recordControllerTransition(type){
+    const rooms=[...this.client.rooms.values()].filter(room=>this.ownedRooms.has(room.id)&&room.id.startsWith('battle-')&&!room.ended);
+    if(!rooms.length)this.recordControlTrace({type});
+    for(const room of rooms)this.recordControlTrace({type,room:room.id,rqid:room.request?.rqid,revision:room.revision});
+  }
+  observeControlEvent(event,value={}){
+    const room=value.room&&this.client.resolveRoom(value.room),state=room&&this.client.rooms.get(room);
+    if(room&&!this.ownedRooms.has(room))return;
+    if(event==='request')for(const action of this.actions({includePending:true})){
+      if(action.kind==='ready'||this.tracedRequests.has(action.token))continue;
+      this.tracedRequests.add(action.token);this.recordControlTrace({type:'request',...action});
+      if(this.tracedRequests.size>2000)this.tracedRequests.delete(this.tracedRequests.values().next().value);
+    }
+    if(event==='action-status'){
+      const action=state?.lastAction;
+      this.recordControlTrace({type:value.status==='sent'&&this.choiceSources.get(room)==='fallback'?'fallback-sent':value.status,room,rqid:action?.rqid,revision:action?.revision,source:this.choiceSources.get(room)||'operator',status:value.status,latencyMs:value.status==='sent'?Math.max(0,this.now()-(state.receivedAt||this.now())):undefined});
+    }
+    if(event==='server-error')this.recordControlTrace({type:'server-error',room,rqid:state?.request?.rqid,revision:state?.revision,reasonCode:'inspect-fresh-request'});
+    if(event==='battle-event'&&['start','turn','win','tie'].includes(value.type))this.recordControlTrace({type:'server-advance',room,rqid:state?.request?.rqid,revision:state?.revision,status:value.type});
+    if(event==='disconnected')this.recordControlTrace({type:'disconnected'});
+  }
+  validateAction(action,choices){
+    const fresh=this.actions().find(current=>current.token===action.token);
+    check(fresh,'Action token is stale or no longer actionable; inspect fresh state');
+    return this.client.validateChoice(fresh.room,{rqid:fresh.rqid,revision:fresh.revision,actions:choices,deadlineAt:this.now()+1000}).actions;
+  }
+  submitChoice(action,choices,source='operator',validForMs=10000){
+    const fresh=this.actions().find(current=>current.token===action.token);
+    check(fresh,'Action token is stale or no longer actionable; inspect fresh state');
+    check(Number.isInteger(validForMs)&&validForMs>=100&&validForMs<=30000,'Decision validity must be 100–30000 ms');
+    const deadlineAt=Math.min(this.now()+validForMs,fresh.clock.deadlineAt===null?Infinity:fresh.clock.deadlineAt-1000);
+    check(deadlineAt>this.now(),'Observed turn countdown has expired; inspect fresh state');
+    const canonical=this.client.validateChoice(fresh.room,{rqid:fresh.rqid,revision:fresh.revision,actions:choices,deadlineAt}).actions;
+    this.recordControlTrace({type:'selected',...fresh,source});this.choiceSources.set(fresh.room,source);
+    this.client.authorize('choose',{room:fresh.room,confirmed:true});
+    try{return this.client.choose(fresh.room,{rqid:fresh.rqid,revision:fresh.revision,actions:canonical,deadlineAt});}
+    catch(error){
+      const key=`choose:${fresh.room}:${fresh.rqid}:${fresh.revision}`;
+      if(this.client.sent.has(key)){this.uncertainChoices.add(fresh.token);this.recordControlTrace({type:'watchdog-uncertain',...fresh,source,reasonCode:'socket-write-uncertain'});}
+      else this.recordControlTrace({type:'validation-rejected',...fresh,source,reasonCode:'inspect-fresh-request'});
+      throw error;
+    }finally{this.supervisor.refresh('choice-attempt');}
+  }
+  containControlFailure(action,reason){
+    const c=this.client,parent=c.resolveRoom(action.parentId||this.roomParents.get(action.room));
+    this.assertLive();check(this.ownedParents.has(parent)&&!c.rooms.get(parent)?.ended,'No live owned parent for control recovery');
+    if(c.pendingForfeit(parent))return {status:'pending-forfeit'};
+    this.recordControlTrace({type:'watchdog-forfeit',...action,reasonCode:reason||'control-timeout',source:'watchdog'});
+    c.authorize('forfeit',{room:parent,confirmed:true});return c.forfeitSet(parent);
+  }
+  turnSnapshot(){
+    return {sessionId:this.id,revision:this.revision,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),actions:this.actions(),choices:[...this.client.rooms.values()].filter(room=>this.ownedRooms.has(room.id)&&!room.ended&&room.lastAction).map(room=>({room:room.id,...room.lastAction}))};
+  }
+  controlPolicySnapshot(){const {recentEvents,...policy}=this.supervisor.status();return policy;}
+  readControlTrace({room,limit=50}={}){
+    check(Number.isInteger(limit)&&limit>=1&&limit<=200,'Trace limit must be 1–200');
+    if(room){room=this.client.resolveRoom(room);check(this.ownedRooms.has(room),'Trace room is not owned by this session');}
+    return {sessionId:this.id,controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),entries:this.controlTrace.filter(entry=>!room||entry.room===room||this.roomParents.get(entry.room)===room).slice(-limit),limitation:'Local control observations distinguish attempts, sends and server responses; they do not guarantee server acceptance.'};
   }
   migrateRoom({oldRoom,room}) {
     // A server rename moves existing authority; it never acquires another set.
@@ -83,7 +157,7 @@ export class AgentSession extends EventEmitter {
     }
   }
   roomTeamId(room){return this.roomTeams.get(this.client.resolveRoom(room))||this.client.expectedTeamHash;}
-  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
+  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,namedReplacements:true,controlTrace:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
   rememberAction(action){
     const state=this.client.rooms.get(action.room),turn=state?.battle?.turn;
     if(!this.actionContexts.has(action.token))this.actionContexts.set(action.token,{room:action.room,teamId:this.roomTeamId(action.room),rqid:action.rqid,turn:Number(turn)||0,sessionId:this.id,token:action.token,lastObservedStatus:state?.lastAction?.rqid===action.rqid?state.lastAction.status:'unsubmitted'});
@@ -104,12 +178,13 @@ export class AgentSession extends EventEmitter {
     });
     // A timer-off observation cancels earlier countdown evidence.
     const timerOff = [...r.timers].reverse().find(entry => entry.type === 'inactiveoff');
-    if (!observation || timerOff && timerOff.at >= observation.at) return {source:'unavailable',deadlineAt:null,remainingMs:null};
+    if (!observation || timerOff && timerOff.at >= observation.at) return {source:'unavailable',deadlineAt:null,remainingMs:null,bankDeadlineAt:null,bankRemainingMs:null};
     const match = observation.text.match(/^Time left: (\d+) sec this turn/) || observation.text.match(/ has (\d+) seconds /);
     const deadlineAt = observation.at + Number(match[1]) * 1000;
-    return {source:'server-timer-observation',observedAt:observation.at,text:observation.text,deadlineAt,remainingMs:Math.max(0,deadlineAt-this.now()),uncertainty:'Server/network delay can shorten the available time; this is an observed countdown, not an exact server deadline.'};
+    const bank=observation.text.match(/\| (\d+) sec total(?: \||$)/),bankDeadlineAt=bank?observation.at+Number(bank[1])*1000:null;
+    return {source:'server-timer-observation',observedAt:observation.at,text:observation.text,deadlineAt,remainingMs:Math.max(0,deadlineAt-this.now()),bankDeadlineAt,bankRemainingMs:bankDeadlineAt===null?null:Math.max(0,bankDeadlineAt-this.now()),uncertainty:'Server/network delay can shorten the available time; this is an observed countdown, not an exact server deadline.'};
   }
-  actions() {
+  actions({includePending=false}={}) {
     if (this.stopped || !this.client.connected || !this.client.authenticated) return [];
     const c = this.client, output = [];
     for (const r of c.rooms.values()) {
@@ -117,9 +192,11 @@ export class AgentSession extends EventEmitter {
       const q = r.request;
       if (r.epoch === c.epoch && q && normalized(q.side?.name)===normalized(this.username) && !q.wait && !r.confirmedChoice) {
         const key = `choose:${r.id}:${q.rqid}:${r.revision}`;
-        if (c.sent.has(key)) continue;
+        const pending=c.sent.has(key);
+        if(pending&&(!includePending||r.lastAction?.rqid===q.rqid&&['accepted','execution-observed','resolution-observed'].includes(r.lastAction.status)))continue;
         const kind = q.teamPreview ? 'preview' : q.forceSwitch ? 'switch' : 'turn';
-        output.push({kind,room:r.id,token:this.token(r.id,kind,[q.rqid,r.revision]),rqid:q.rqid,revision:r.revision,receivedAt:r.receivedAt,clock:this.clock(r,kind),legalActions:{teamPreview:!!q.teamPreview,maxChosenTeamSize:q.maxChosenTeamSize || q.maxTeamSize || (q.teamPreview ? 4 : undefined),active:q.active || null,forceSwitch:q.forceSwitch || null,pokemon:q.side?.pokemon || [],targetConvention:'Positive 1/2 = opposing slots; negative -1/-2 = own slots.'}});
+        const actionToken=this.token(r.id,kind,[q.rqid,r.revision]);
+        output.push({kind,room:r.id,parentId:this.roomParents.get(r.id),token:actionToken,rqid:q.rqid,revision:r.revision,receivedAt:r.receivedAt,...(pending?{actionable:false,submissionStatus:this.uncertainChoices.has(actionToken)?'uncertain':'sent'}:{}),clock:this.clock(r,kind),legalActions:{teamPreview:!!q.teamPreview,maxChosenTeamSize:q.maxChosenTeamSize || q.maxTeamSize || (q.teamPreview ? 4 : undefined),active:q.active || null,forceSwitch:q.forceSwitch || null,pokemon:q.side?.pokemon || [],replacements:replacementOptions(q),replacementPairs:legalReplacementPairs(q),targetConvention:'Positive 1/2 = opposing slots; negative -1/-2 = own slots.'}});
       }
     }
     for (const r of c.rooms.values()) {
@@ -157,6 +234,7 @@ export class AgentSession extends EventEmitter {
       savingReplays:this.savingReplays,awaitingSet:this.awaitingSet,searchPending:!!this.client.searchPending,
       replayPolicy:this.replayPolicySnapshot(),
       switchingTeam:this.switchingTeam,capabilities:this.capabilities(),
+      controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),
       metrics:this.metricsStatus(),
       search:this.client.searchState || null,cancellation:this.cancellation || null,actions:this.actions(),notices:this.notices,
       rooms:[...this.client.rooms.values()].filter(r=>this.ownedRooms.has(r.id)).map(r=>({
@@ -189,7 +267,8 @@ export class AgentSession extends EventEmitter {
     check(!this.awaitingSet&&!c.searchPending&&c.searchState&&!c.searchState.searching.length&&!Object.keys(c.searchState.games||{}).length,'Server must confirm idle with no pending search or match before switching teams');
     check(![...this.ownedParents].some(room=>!c.rooms.get(room)?.ended),'Finish the owned BO3 before switching teams');
   }
-  async switchTeam({teamText,teamId,name}){
+  async switchTeam({teamText,teamId,name,controllerLease}){
+    const assertControl=()=>this.controller.assert(controllerLease);assertControl();
     check(!this.switchingTeam,'A team switch is already running');this.assertIdleForTeamSwitch();
     check(this.recorderFactory,'Team switching is unavailable in this loaded session; use the next normal client start');
     check(typeof teamText==='string'&&Buffer.byteLength(teamText,'utf8')<=128*1024,'Supply a bounded legal team export');
@@ -201,15 +280,17 @@ export class AgentSession extends EventEmitter {
     this.switchingTeam=true;this.emit('change',{revision:++this.revision,event:'team-switch-started'});let nextRecorder,previousClosed=false;
     const previous=this.metricsRecorder,previousTeamId=this.client.expectedTeamHash;
     try{
-      if(previous){const oldStatus=await previous.flush({savePending:true});check(!['error','closed'].includes(oldStatus.state),'Old team observations could not be preserved; team was retained');}
+      if(previous){const oldStatus=await previous.flush({savePending:true});assertControl();check(!['error','closed'].includes(oldStatus.state),'Old team observations could not be preserved; team was retained');}
       // Prepare the exact next report before replacing any account/team state.
       nextRecorder=await this.recorderFactory({team,teamId:nextId,name:name||'M-C team',session:this,approvedTeamChange:true});
+      assertControl();
       check(nextRecorder&&typeof nextRecorder.status==='function','New team recorder is unavailable');
-      const prepared=await nextRecorder.flush();check(prepared.teamId===nextId&&prepared.state==='ready','New team report could not be prepared; team was retained');
+      const prepared=await nextRecorder.flush();assertControl();check(prepared.teamId===nextId&&prepared.state==='ready','New team report could not be prepared; team was retained');
       this.assertIdleForTeamSwitch();
       // Closing has no socket side effects. New observations cannot be acquired
       // during this idle-only operation; start/authorization are separately held.
       if(previous){previousClosed=true;await previous.close();}
+      assertControl();
       this.assertIdleForTeamSwitch();
       check(previous?.status().state!=='error','Old team recorder did not close cleanly; approved team was retained');
       this.detachMetrics?.();this.detachMetrics=null;this.metricsRecorder=null;
@@ -252,9 +333,9 @@ export class AgentSession extends EventEmitter {
       void this.preserveSetReplays(parent,{automatic:true}).catch(()=>{});return;
     }
   }
-  async preserveSetReplays(parent,{automatic=false}={}){
+  async preserveSetReplays(parent,{automatic=false,assertControl=()=>{}}={}){
     if(this.replayTasks.has(parent))return this.replayTasks.get(parent);
-    if(!this.replayPreservationVerifier)return this.saveSetReplays(parent);
+    if(!this.replayPreservationVerifier)return this.saveSetReplays(parent,{assertControl});
     check(this.ownedParents.has(parent)&&this.ownedRooms.has(parent)&&this.roomParents.get(parent)===parent,'BO3 parent is not owned by this authorized session');
     check(this.client.rooms.get(parent)?.ended&&['win','tie'].includes(this.client.rooms.get(parent)?.result?.type),'Official BO3 parent result is not confirmed');
     let entry=this.replayPreservation.get(parent);
@@ -263,7 +344,7 @@ export class AgentSession extends EventEmitter {
       const deadline=Date.now()+this.replayBudgetMs;entry.status='saving';entry.attempted=true;entry.automatic=automatic;entry.lastAttemptAt=new Date(this.now()).toISOString();entry.failures=[];this.replayPolicyChanged();
       let saved;
       try{
-        saved=await this.saveSetReplays(parent,{deadline});entry.verifiedChildIds=saved.replays.map(replay=>replay.roomId);entry.failures=saved.failures.map(failure=>({roomId:failure.roomId.replace(/-[a-z0-9]+pw$/u,''),reason:failure.error}));
+        saved=await this.saveSetReplays(parent,{deadline,assertControl});entry.verifiedChildIds=saved.replays.map(replay=>replay.roomId);entry.failures=saved.failures.map(failure=>({roomId:failure.roomId.replace(/-[a-z0-9]+pw$/u,''),reason:failure.error}));
         entry.status='preserving';this.replayPolicyChanged();
         const withinBudget=async operation=>{let timer;try{check(deadline>Date.now(),'Replay preservation budget exhausted; retain local evidence and retry the existing request');return await Promise.race([Promise.resolve().then(operation),new Promise((_resolve,reject)=>{timer=setTimeout(()=>reject(new Error('Replay report preservation did not complete within its bounded budget; retain local evidence')),Math.max(1,deadline-Date.now()));})]);}finally{clearTimeout(timer);}};
         // A historical parent keeps its original report identity. External
@@ -313,13 +394,20 @@ export class AgentSession extends EventEmitter {
     if (command.op === 'status') return Promise.resolve({id:command.id,ok:true,result:this.snapshot()});
     if (command.op === 'metrics-status') return Promise.resolve({id:command.id,ok:true,result:this.metricsStatus()});
     if (command.op === 'capabilities') return Promise.resolve({id:command.id,ok:true,result:this.capabilities()});
+    if(command.op==='turn-status')return Promise.resolve({id:command.id,ok:true,result:this.turnSnapshot()});
+    if(command.op==='control-trace'){try{return Promise.resolve({id:command.id,ok:true,result:this.readControlTrace(command)});}catch(error){return Promise.resolve({id:command.id,ok:false,error:error.message});}}
     // Long polling is read-only and can be cancelled independently of other calls.
     if (command.op === 'wait') return this.wait({...command,signal}).then(result=>({id:command.id,ok:true,result}));
-    if (this.commands.has(command.id)) return this.commands.get(command.id);
+    const fingerprint=hash(command);
+    if(this.commands.has(command.id)){
+      if(this.commandFingerprints.get(command.id)!==fingerprint)return Promise.resolve({id:command.id,ok:false,error:'Command ID already belongs to different arguments'});
+      if(!['control-claim','control-release','note-decision','metrics-sync'].includes(command.op))try{this.controller.assert(command.controllerLease);}catch(error){return Promise.resolve({id:command.id,ok:false,error:error.message});}
+      return this.commands.get(command.id);
+    }
     const task = Promise.resolve().then(()=>this.dispatch(command)).then(result=>({id:command.id,ok:true,result}),error=>({id:command.id,ok:false,error:error.message}));
-    this.commands.set(command.id,task);return task;
+    this.commands.set(command.id,task);this.commandFingerprints.set(command.id,fingerprint);return task;
   }
-  async saveSetReplays(parent,{deadline:outerDeadline=Infinity}={}) {
+  async saveSetReplays(parent,{deadline:outerDeadline=Infinity,assertControl=()=>{}}={}) {
     const c=this.client;
     check(!this.savingReplays,'A completed-set replay operation is already running');
     check(typeof parent==='string' && /^game-bestof3-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(parent),'Expected a completed authorized BO3 parent room');
@@ -335,6 +423,7 @@ export class AgentSession extends EventEmitter {
         const roomId=c.resolveRoom(child),state=c.rooms.get(roomId);
         try {
           this.assertLive();
+          assertControl();
           check(state?.ended && ['win','tie'].includes(state.result?.type),'Child battle has no official finished result; retain its local evidence');
           const remaining=()=>deadline-Date.now();
           let pending=c.replayRequests.get(roomId);
@@ -367,12 +456,24 @@ export class AgentSession extends EventEmitter {
     if (op === 'metrics-sync') return this.syncMetrics();
     if (op === 'note-decision') return this.noteDecision(command);
     check(confirmed === true, 'Explicit session control confirmation required');
-    if (op === 'stop') { this.stopped=true;c.close();this.revision++;this.emit('change',{revision:this.revision,event:'stopped'});return {stopped:true}; }
+    if(op==='control-claim'){
+      this.assertLive();const result=this.controller.claim(command);this.supervisor.invalidateStaged('controller-changed');this.recordControllerTransition('controller-claimed');this.revision++;this.emit('change',{revision:this.revision,event:'controller'});return result;
+    }
+    this.controller.assert(command.controllerLease);
+    if(op==='control-release'){const result=this.controller.release(command.controllerLease);this.supervisor.invalidateStaged('controller-released');this.recordControllerTransition('controller-released');this.revision++;this.emit('change',{revision:this.revision,event:'controller'});return result;}
+    if (op === 'stop') { this.supervisor.dispose();this.stopped=true;c.close();this.revision++;this.emit('change',{revision:this.revision,event:'stopped'});return {stopped:true}; }
     this.assertLive();
+    if(op==='set-control-policy'){
+      this.assertIdleForTeamSwitch();const policy={enabled:command.enabled,forfeitIfStuck:command.forfeitIfStuck,planningMs:command.planningMs??20000,safetyMarginMs:command.safetyMarginMs??5000,unknownClockMs:command.unknownClockMs??20000};
+      for(const key of ['planningMs','unknownClockMs'])check(Number.isInteger(policy[key])&&policy[key]>=100&&policy[key]<=30000,'Control planning budgets must be 100–30000 ms');
+      check(Number.isInteger(policy.safetyMarginMs)&&policy.safetyMarginMs>=1000&&policy.safetyMarginMs<=15000,'Control safety margin must be 1000–15000 ms');
+      this.supervisor.configure(policy);this.recordControlTrace({type:'control-policy-configured'});this.revision++;this.emit('change',{revision:this.revision,event:'control-policy'});return this.controlPolicySnapshot();
+    }
+    if(op==='stage-fallback'){this.supervisor.stage(token,actions);return this.controlPolicySnapshot();}
     if(op==='set-replay-policy')return this.setReplayPolicy(command.enabled);
     if(op==='switch-team')return this.switchTeam(command);
     if(['start','authorize-sets','save-replays'].includes(op))check(!this.switchingTeam,'Finish the approved team switch before this operation');
-    if(op==='save-replays')return this.preserveSetReplays(c.resolveRoom(room));
+    if(op==='save-replays')return this.preserveSetReplays(c.resolveRoom(room),{assertControl:()=>this.controller.assert(command.controllerLease)});
     if(op==='forfeit'){
       const parent=c.resolveRoom(room);
       check(typeof parent==='string' && /^game-bestof3-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(parent), 'Expected the current authorized BO3 parent room');
@@ -390,6 +491,8 @@ export class AgentSession extends EventEmitter {
       return {authorizedSets:this.authorizedSets,searchesSent:this.searchesSent,remainingSets:this.authorizedSets-this.searchesSent,queued:false};
     }
     if (op === 'start') {
+      check(!this.controller.required||this.supervisor.status().enabled,'Enable the client deadline control policy while idle before searching');
+      check(!this.supervisor.status().halted,'Control recovery halted further searches; review the failure and explicitly reset control policy while idle');
       check(!this.savingReplays,'Finish completed-set replay preservation before starting another set');
       check(!this.replayTasks.size,'Finish completed-set replay report preservation before starting another set');
       this.assertReplayPreserved();
@@ -416,13 +519,10 @@ export class AgentSession extends EventEmitter {
     const action = this.actions().find(action => action.token === token);
     check(action && (op === 'ready' ? action.kind === 'ready' : action.kind !== 'ready'), 'Action token is stale or no longer actionable; inspect fresh state');
     if (op === 'ready') { c.authorize('ready',{room:action.room,confirmed:true});c.confirmReady(action.room);return {status:'sent-not-acknowledged',room:action.room}; }
-    check(Number.isInteger(validForMs) && validForMs >= 100 && validForMs <= 30000, 'Decision validity must be 100–30000 ms');
-    const deadlineAt = Math.min(this.now()+validForMs, action.clock.deadlineAt === null ? Infinity : action.clock.deadlineAt-1000);
-    check(deadlineAt > this.now(), 'Observed turn countdown has expired; inspect fresh state');
-    c.authorize('choose',{room:action.room,confirmed:true});
-    return c.choose(action.room,{rqid:action.rqid,revision:action.revision,actions,deadlineAt});
+    return this.submitChoice(action,actions,'operator',validForMs);
   }
   dispose() {
+    this.supervisor.dispose();
     this.detachMetrics?.();this.detachMetrics=null;
     for (const [event,listener] of this.listeners) this.client.off(event,listener);
     this.listeners=[];this.stopped=true;this.emit('change',{revision:++this.revision,event:'disposed'});

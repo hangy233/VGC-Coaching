@@ -1,6 +1,7 @@
 import {EventEmitter} from 'node:events';
 import {createHash} from 'node:crypto';
 import {createBattleState,reduceBattleLine,reduceBattleRequest,battleStateSnapshot} from './battle-state.mjs';
+import {validateChoice as compileChoice} from './choice-validation.mjs';
 export const FORMAT = 'gen9championsvgc2026regmcbo3';
 export const FIXED_TEAM_SHA256 = 'e80b1aaaf56dff7456904ca7fe54ff5e8048fe541031b76ad50cbe96e34f68b2';
 export const SOCKET = 'wss://sim3.psim.us/showdown/websocket';
@@ -353,62 +354,22 @@ export class ShowdownClient extends EventEmitter {
     this.sent.add(key); this.ws.send(`|/join ${room}`); this.audit('joined',{room});
   }
   cancelSearch() { this.send('cancel-search','', `/cancelsearch ${FORMAT}`, `cancel:${this.epoch}:${this.teamHash}:${this.searchGeneration}`); }
-  choose(room, {rqid, revision, actions, deadlineAt}) {
-    const r = this.state(room), q = r.request;
-    check(r.epoch === this.epoch && q && !q.wait && !r.ended && !r.confirmedChoice, 'No fresh actionable request');
+  validateChoice(room, {rqid, revision, actions, deadlineAt}) {
+    check(roomID(room), 'Invalid room ID');
+    check(room === this.resolveRoom(room), 'Room was renamed; inspect fresh state');
+    const r = this.rooms.get(room), q = r?.request;
+    check(r?.epoch === this.epoch && q && !q.wait && !r.ended && !r.confirmedChoice, 'No fresh actionable request');
     check(Number.isSafeInteger(rqid) && rqid === q.rqid && revision === r.revision, 'Stale rqid or request revision');
     check(Number.isFinite(deadlineAt) && deadlineAt > this.now(), 'Decision deadline expired or missing');
-    check(Array.isArray(actions) && actions.length > 0, 'Structured actions required');
-    let choice;
-    if (q.teamPreview) {
-      check(actions.length === 1 && actions[0].type === 'team', 'Team-preview action required');
-      const order = actions[0].order, count = q.maxChosenTeamSize || q.maxTeamSize || 4;
-      check(Array.isArray(order) && order.length === count && new Set(order).size === order.length && order.every(i => Number.isInteger(i) && i >= 1 && i <= q.side.pokemon.length), 'Invalid team-preview order');
-      choice = `team ${order.join('')}`;
-    } else {
-      const slots = q.forceSwitch?.length || q.active?.length;
-      check(slots === 2 && actions.length === slots, 'Both doubles slots required');
-      const switches = new Set(); let megas = 0;
-      const available = q.side?.pokemon?.filter(p => !p.active && !/ fnt$/.test(p.condition)).length || 0;
-      // Revival Blessing uses a switch request, but selects a fainted target
-      // (even an active one) instead of consuming an available bench replacement.
-      const reviving = i => !!q.forceSwitch?.[i] && !!q.side?.pokemon?.[i]?.reviving;
-      const requiredSwitches = q.forceSwitch?.filter((required, i) => required && !reviving(i)).length || 0;
-      const selectedSwitches = actions.filter((a, i) => a.type === 'switch' && !reviving(i)).length;
-      if (q.forceSwitch) check(selectedSwitches === Math.min(available, requiredSwitches), 'All available forced replacements required');
-      choice = actions.map((a, i) => {
-        if (a.type === 'pass') {
-          check(q.forceSwitch ? (q.forceSwitch[i] === false || !reviving(i) && requiredSwitches > available) : / fnt$/.test(q.side?.pokemon?.[i]?.condition || ''), 'Slot requires a decision'); return 'pass';
-        }
-        if (a.type === 'switch') {
-          const p = q.side?.pokemon?.[a.slot-1];
-          const revival = reviving(i);
-          check(Number.isInteger(a.slot) && p && (revival ? / fnt$/.test(p.condition) : !p.active && !/ fnt$/.test(p.condition)) && !switches.has(a.slot), revival ? 'Invalid revival target' : 'Invalid switch');
-          check(!q.forceSwitch || q.forceSwitch[i], 'Slot does not need a forced switch');
-          if (revival) return `switch ${a.slot}`;
-          check(!q.active?.[i]?.trapped, 'Active slot is trapped'); switches.add(a.slot); return `switch ${a.slot}`;
-        }
-        check(a.type === 'move' && !q.forceSwitch, 'Move unavailable');
-        const active = q.active[i], m = active?.moves?.[a.slot-1];
-        check(Number.isInteger(a.slot) && m && !m.disabled && m.pp !== 0, 'Move unavailable');
-        check(a.target === undefined || [-2,-1,1,2].includes(a.target), 'Invalid target');
-        const targeted = ['normal','any','adjacentAlly','adjacentAllyOrSelf','adjacentFoe'].includes(m.target);
-        if (targeted) {
-          check(a.target !== undefined, 'Explicit target required');
-          const self = -(i+1);
-          if (m.target === 'adjacentAlly') check(a.target < 0 && a.target !== self, 'Target must be the ally');
-          if (m.target === 'adjacentAllyOrSelf') check(a.target < 0, 'Target must be ally or self');
-          if (m.target === 'adjacentFoe') check(a.target > 0, 'Target must be a foe');
-          if (['normal','any'].includes(m.target)) check(a.target !== self, 'Move cannot target self');
-        } else check(a.target === undefined, 'Move does not accept a chosen target');
-        if (a.mega) { check(active.canMegaEvo && ++megas === 1, 'Mega unavailable'); }
-        return `move ${a.slot}${a.target === undefined ? '' : ` ${a.target}`}${a.mega ? ' mega' : ''}`;
-      }).join(', ');
-    }
-    this.send('choose',room,`/choose ${choice}|${rqid}`,`choose:${room}:${rqid}:${revision}`);
-    r.lastAction={rqid,revision,side:q.side?.id || null,actions:structuredClone(actions),expectedMoves:actions.map((action,index)=>action.type==='move'?digestMove(q.active?.[index]?.moves?.[action.slot-1]?.move || q.active?.[index]?.moves?.[action.slot-1]?.id):null),sentAt:this.now(),acceptedAt:null,status:'sent',evidence:[],boundary:null};
+    return {room, rqid, revision, ...compileChoice(q, actions)};
+  }
+  choose(room, {rqid, revision, actions, deadlineAt}) {
+    const compiled = this.validateChoice(room, {rqid, revision, actions, deadlineAt});
+    const r = this.state(room), q = r.request;
+    this.send('choose',room,`/choose ${compiled.choice}|${rqid}`,`choose:${room}:${rqid}:${revision}`);
+    r.lastAction={rqid,revision,side:q.side?.id || null,actions:structuredClone(compiled.actions),expectedMoves:compiled.actions.map((action,index)=>action.type==='move'?digestMove(q.active?.[index]?.moves?.[action.slot-1]?.move || q.active?.[index]?.moves?.[action.slot-1]?.id):null),sentAt:this.now(),acceptedAt:null,status:'sent',evidence:[],boundary:null};
     this.emit('action-status',{room,status:'sent'});
-    return {room,rqid,revision,choice,status:'sent-not-acknowledged'};
+    return {room,rqid,revision,choice:compiled.choice,status:'sent-not-acknowledged'};
   }
   confirmReady(room) {
     const r = this.state(room); check(r.readyPrompt?.epoch === this.epoch, 'No fresh server readiness prompt');

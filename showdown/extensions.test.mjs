@@ -23,7 +23,7 @@ function fixture(options={}){
   const team=Teams.import(TEAM),packed=Teams.pack(team),sent=[],client=new ShowdownClient({expectedTeamHash:digest(team)});
   client.connected=true;client.authenticated=true;client.epoch=1;client.searchState={searching:[],games:{}};
   client.ws={send:line=>sent.push(line),close:()=>{client.connected=false;client.authenticated=false;}};
-  const session=new AgentSession(client,{username:'Fixture',packed,autoReady:false,...options});
+  const session=new AgentSession(client,{username:'Fixture',packed,autoReady:false,controllerRequired:false,...options});
   const own=()=>{session.ownedParents.add(parent);session.ownedRooms.add(parent);session.ownedRooms.add(room);session.roomParents.set(parent,parent);session.roomParents.set(room,parent);session.roomTeams.set(parent,client.expectedTeamHash);session.roomTeams.set(room,client.expectedTeamHash);};
   const request=()=>{own();client.receive(`>${room}\n|gametype|doubles\n|player|p1|Fixture\n|player|p2|Opponent\n|start\n|turn|3\n|request|${JSON.stringify({rqid:7,active:[{moves:[{move:'Protect',pp:10,target:'self'}]},{moves:[{move:'Protect',pp:10,target:'self'}]}],side:{id:'p1',name:'Fixture',pokemon:[{ident:'p1: A',details:'Golisopod, L50',active:true,condition:'100/100'},{ident:'p1: B',details:'Farigiraf, L50',active:true,condition:'100/100'}]}})}`);};
   return {client,session,sent,team,own,request};
@@ -135,10 +135,10 @@ test('battle MCP exposes bounded schemas and legal-team switching without automa
   for(const name of ['battle_capabilities','battle_note_decision','battle_decision_notes','battle_switch_team'])assert(registrations.has(name));
   const entry=registrations.get('battle_switch_team');
   assert.equal(entry.settings.annotations.destructiveHint,true);
-  assert.equal(entry.settings.inputSchema.safeParse({confirmed:true,commandId:'switch',teamText:TEAM}).success,true);
+  assert.equal(entry.settings.inputSchema.safeParse({confirmed:true,commandId:'switch',controllerLease:'a'.repeat(64),teamText:TEAM}).success,true);
   assert.equal(entry.settings.inputSchema.safeParse({confirmed:true,teamText:TEAM}).success,false);
   assert.equal((await entry.handler({confirmed:true,commandId:'bad',teamText:'Pikachu\n- Protect'})).isError,true);assert.equal(calls.length,0);
-  assert.equal((await entry.handler({confirmed:true,commandId:'switch',teamText:TEAM})).isError,false);assert.equal(calls[0].op,'switch-team');assert.equal(calls[0].teamId,digest(Teams.import(TEAM)));assert.equal(calls[0].confirmed,true);
+  assert.equal((await entry.handler({confirmed:true,commandId:'switch',controllerLease:'a'.repeat(64),teamText:TEAM})).isError,false);assert.equal(calls[0].op,'switch-team');assert.equal(calls[0].teamId,digest(Teams.import(TEAM)));assert.equal(calls[0].confirmed,true);
   const noteSchema=registrations.get('battle_note_decision').settings.inputSchema;
   assert.equal(noteSchema.safeParse({commandId:'note',token:'a'.repeat(64),calculationRefs:['unverified arbitrary prose']}).success,false);
 });

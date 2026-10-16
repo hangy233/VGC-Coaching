@@ -41,6 +41,53 @@ test('preview choice order and selected/sent/accepted phases survive duplicate r
   }finally{await f.close();}
 });
 
+test('watchdog fallback, forfeit and uncertain traces are durable operational evidence without changing official results',async()=>{
+  for(const type of ['fallback-sent','watchdog-forfeit','watchdog-uncertain']){
+    const f=await previewFixture();try{
+      f.preview();f.action('sent');f.action('accepted');f.start();
+      f.client.emit('control-trace',{room:f.room+'-privatepw',type,seq:4,at:1234,elapsedMs:120,rqid:2,revision:1,controllerId:'fixture-operator',generation:1,source:'watchdog',status:'sent-not-acknowledged',reasonCode:'DEADLINE_REACHED',password:'NEVER-PERSIST',command:'NEVER-PERSIST'});
+      const {report,evidence}=await f.finish();
+      assert.equal(report.games[0].outcome,'win');assert.equal(report.games[0].quality.operational,true);
+      assert.equal((await getTeamReport({workspace:f.workspace})).totals.games,0);
+      assert.equal(evidence.controlTrace.length,1);assert.equal(evidence.controlTrace[0].type,type);assert.equal(evidence.controlTrace[0].at,1234);assert.equal(evidence.controlTrace[0].turn,1);
+      assert(!JSON.stringify(evidence.controlTrace).includes('NEVER-PERSIST'));assert(!JSON.stringify(evidence.controlTrace).includes('privatepw'));
+      assert.equal(f.recorder.status().features.controlTraceEvidence,true);
+    }finally{await f.close();}
+  }
+});
+
+test('ordinary control telemetry preserves provenance without excluding a clean game',async()=>{
+  const f=await previewFixture();try{
+    f.preview();f.action('sent');f.action('accepted');f.start();
+    f.client.emit('control-trace',{room:f.room,type:'request-received',seq:1,at:1000,rqid:2,revision:1});
+    f.client.emit('control-trace',{room:f.room,type:'choice-validated',seq:2,at:1020,latencyMs:20,rqid:2,revision:1});
+    const {report,evidence}=await f.finish();
+    assert.equal(report.games[0].quality.operational,false);assert.equal(evidence.controlTrace.length,2);assert.equal(evidence.controlTrace[1].latencyMs,20);
+    assert.equal(evidence.events.filter(value=>value.type==='win').length,1);
+    await f.recorder.flush({savePending:true});
+    assert.deepEqual((await readGameEvidence({workspace:f.workspace,teamId:f.teamId,roomId:f.room})).controlTrace,evidence.controlTrace);
+  }finally{await f.close();}
+});
+
+test('turn and disconnect boundaries archive partial control diagnostics before any official result',async()=>{
+  const f=await previewFixture();try{
+    f.preview();f.action('sent');f.action('accepted');f.start();
+    f.client.emit('control-trace',{room:f.room,type:'request-received',seq:1,at:1000,rqid:2,revision:1});
+    f.emit('turn','2');await f.recorder.flush();
+    let evidence=await readGameEvidence({workspace:f.workspace,teamId:f.teamId,roomId:f.room});
+    assert.equal(evidence.complete,false);assert.equal(evidence.completionKind,'partial');assert.deepEqual(evidence.controlTrace.map(value=>value.seq),[1]);
+    f.client.emit('control-trace',{room:f.room,type:'watchdog-uncertain',seq:2,at:1020,rqid:2,revision:1,reasonCode:'socket-write-uncertain'});
+    f.client.emit('disconnected');await f.recorder.flush();
+    evidence=await readGameEvidence({workspace:f.workspace,teamId:f.teamId,roomId:f.room});
+    assert.equal(evidence.complete,false);assert.deepEqual(evidence.controlTrace.map(value=>value.seq),[1,2]);assert.equal(evidence.controlTrace[1].at,1020);
+    assert(!evidence.events.some(value=>['win','tie'].includes(value.type)));
+    const report=await getTeamReport({workspace:f.workspace,includeIncomplete:true,includeOperational:true});
+    assert.equal(report.games[0].completed,false);assert.equal(report.games[0].outcome,'unknown');assert.equal(report.games[0].quality.operational,true);
+    await f.recorder.close();
+    assert.deepEqual((await readGameEvidence({workspace:f.workspace,teamId:f.teamId,roomId:f.room})).controlTrace,evidence.controlTrace);
+  }finally{await f.close();}
+});
+
 test('unsubmitted or rejected previews remain operational when later moves were promptly submitted',async()=>{
   for(const mode of ['unsubmitted','rejected']){
     const f=await previewFixture();try{

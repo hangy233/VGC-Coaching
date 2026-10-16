@@ -78,3 +78,31 @@ test('preflight exposes incomplete authorized replay preservation even after ser
   }
   const result=await battlePreflight(dependencies({replayPolicy:{enabled:true,capable:true,active:false,pendingParents:[]}}));assert.equal(result.ready,true);
 });
+
+test('production safety capabilities require one owner and enabled non-halted deadline protection',async()=>{
+  const protectedSession={capabilities:{operations:['start','choose','ready','metrics-sync','control-claim','control-release','set-control-policy','stage-fallback','turn-status','control-trace'],features:{controllerLease:true,deadlineSupervisor:true}},controller:{required:true,owner:'batch-operator',generation:3,claimedAt:1000},controlPolicy:{enabled:true,forfeitIfStuck:false,planningMs:20000,safetyMarginMs:5000,unknownClockMs:20000,halted:false,haltReason:null,disposed:false}};
+  const ready=await battlePreflight(dependencies(protectedSession));assert.equal(ready.ready,true);assert.deepEqual(ready.session.controller,protectedSession.controller);assert.deepEqual(ready.session.controlPolicy,protectedSession.controlPolicy);
+  for(const change of [
+    {controller:null},
+    {controller:{...protectedSession.controller,owner:null}},
+    {controller:{...protectedSession.controller,owner:''}},
+    {controller:{...protectedSession.controller,required:false}},
+    {controlPolicy:null},
+    {controlPolicy:{...protectedSession.controlPolicy,enabled:false}},
+    {controlPolicy:{...protectedSession.controlPolicy,halted:true,haltReason:'planning-timeout-without-fallback'}},
+    {controlPolicy:{enabled:true}},
+    {controlPolicy:{...protectedSession.controlPolicy,disposed:true}},
+    {capabilities:{...protectedSession.capabilities,features:{controllerLease:true}}},
+    {capabilities:{...protectedSession.capabilities,operations:['start','choose','ready','metrics-sync']}},
+  ]){
+    const result=await battlePreflight(dependencies({...protectedSession,...change}));assert.equal(result.ready,false,JSON.stringify(change));assert(result.blockers.some(message=>/controller|deadline|fallback/iu.test(message)));
+  }
+});
+
+test('legacy capability warnings stay explicit and preflight summaries never expose controller leases',async()=>{
+  const old=await battlePreflight(dependencies());assert.equal(old.ready,true);assert.equal(old.session.controller,null);assert.equal(old.session.controlPolicy,null);
+  assert(old.warnings.some(message=>/does not advertise enforced exclusive controller leases/u.test(message)));assert(old.warnings.some(message=>/no advertised deadline watchdog/u.test(message)));
+  const opaque='d'.repeat(64);
+  const result=await battlePreflight(dependencies({controller:{required:false,owner:'legacy',generation:1,claimedAt:1000,controllerLease:opaque},controlPolicy:{enabled:false,halted:false,controllerLease:opaque,pending:[{controllerLease:opaque}],recentEvents:[{controllerLease:opaque}]}}));
+  assert.equal(result.ready,true);assert.equal(JSON.stringify(result).includes(opaque),false);assert.equal(result.session.controller.owner,'legacy');assert.equal(result.session.controlPolicy.enabled,false);
+});

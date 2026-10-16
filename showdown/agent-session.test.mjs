@@ -11,7 +11,7 @@ function fixture({autoReady=true,authorizedSets=1,...replayOptions}={}) {
   client.connected=true;client.authenticated=true;client.epoch=1;
   client.ws={send:text=>sent.push(text),close:()=>{client.connected=false;client.authenticated=false;client.emit('disconnected');}};
   client.formats='[Gen 9] Champions VGC 2026 Reg M-C (Bo3),e';
-  const session=new AgentSession(client,{username:'TofuRotom',packed,authorizedSets,autoReady,now:()=>time,...replayOptions});
+  const session=new AgentSession(client,{username:'TofuRotom',packed,authorizedSets,autoReady,now:()=>time,controllerRequired:false,...replayOptions});
   const request=(extra={})=>client.receive(`>${room}\n|request|${JSON.stringify({rqid:1,active:[{moves:[{move:'Protect',pp:10,target:'self'}]},{moves:[{move:'Protect',pp:10,target:'self'}]}],side:{id:'p2',name:'TofuRotom',pokemon:[{ident:'p2: A',details:'Politoed, L50',active:true,condition:'100/100'},{ident:'p2: B',details:'Kommo-o, L50',active:true,condition:'100/100'}]},...extra})}`);
   return {client,session,sent,request,tick:value=>{time=value;},start:async()=>{
     const result=await session.execute({id:'start',op:'start',confirmed:true});

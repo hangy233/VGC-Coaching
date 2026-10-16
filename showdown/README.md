@@ -58,7 +58,53 @@ Manager. Saved login does not authorize matchmaking, extend the set allowance,
 or enable background reconnects. After a disconnect, a new explicitly started
 session may use `--saved-login` again within the user's authorized battle scope.
 
-MCP tools `battle_status` and `battle_wait` return compact observed state, open sheets, current action tokens, legal actions and observed countdowns. `battle_start` uploads the locked team and sends one search. `battle_choose` consumes a fresh token plus complete doubles actions. `battle_ready`, `battle_cancel_search`, `battle_forfeit` and `battle_stop` handle the remaining controls. Each action remains subject to the user's actual scope; the default hard limit is one matchmaking search. The session only acquires its expected-format BO3 parent and server-linked children, not unrelated battles on the account.
+MCP tools `battle_status` and `battle_wait` return compact observed state, open sheets, current action tokens, legal actions and observed countdowns. `battle_turn_status` returns only the fresh action, choice, controller and safety information needed for an urgent decision. `battle_start` uploads the locked team and sends one search. `battle_choose` consumes a fresh token plus complete doubles actions. `battle_ready`, `battle_cancel_search`, `battle_forfeit` and `battle_stop` handle the remaining controls. Production control mutations require an exclusive lease from `battle_control_claim`; see below. Each action remains subject to the user's actual scope; the default hard limit is one matchmaking search. The session only acquires its expected-format BO3 parent and server-linked children, not unrelated battles on the account.
+
+### Exclusive controller and deadline watchdog
+
+Claim an idle/new session with `battle_control_claim({confirmed:true,
+commandId:"claim-once",controllerId:"batch-operator"})`. Its private opaque
+`controllerLease` is required on every socket-mutating tool, including safety
+configuration, replay saving and shutdown. State, trace and decision notes do not
+need it. To transfer control, first read `controller.generation`, then claim with
+`takeover:true,expectedGeneration:CURRENT_GENERATION`. This revokes the old lease
+and clears its fallback. A claim label is not ownership. Reuse the original
+command ID after an uncertain reply; concurrent takeovers cannot both match the
+same generation. `battle_control_release` explicitly relinquishes the lease and
+clears its fallback without closing or forfeiting the set.
+
+Deadline protection is off by default. While the server confirms idle, configure
+`battle_set_control_policy` with `confirmed:true`, a unique `commandId`, the lease,
+`enabled:true` and `forfeitIfStuck` matching the user's explicit permission.
+Defaults are `planningMs:20000`, `safetyMarginMs:5000`, and
+`unknownClockMs:20000`; the observed server clock can shorten the deadline.
+The unknown-clock cap is a conservative local limit, not an invented server clock.
+Enabling protection never starts matchmaking or extends the authorized allowance.
+Production `battle_start` requires this protection enabled and not halted.
+
+On every fresh request, the agent stages a complete legal choice using
+`battle_stage_fallback({confirmed:true,commandId:UNIQUE_ID,controllerLease:LEASE,
+token:CURRENT_TOKEN,actions:COMPLETE_PAIR})` before optional research. The enabled
+watchdog can send that agent-selected pair when the operator stalls. Staging is
+not a send or acceptance; ordinary `battle_choose` remains the prompt preferred
+submission. A changed request, disconnect, release or takeover invalidates the
+fallback. The client invents neither strategy nor calculations.
+
+When no fallback exists and `forfeitIfStuck` is enabled, a bounded recovery timeout
+attempts to forfeit the owned BO3 and halts further searches. Preserve that as a
+control failure, verify the official result and server idle, and finish the review.
+Only deliberate idle policy configuration clears the halt. Read
+`battle_control_trace({room:OPTIONAL_OWNED_ROOM,limit:50})` for bounded request,
+stage, send, rejection, acknowledgement and advancement evidence. Separate agent
+intent, sent, accepted, executed, server-defaulted and inactivity outcomes.
+
+Forced replacements expose named options, stable `pokemonId` values and complete
+switch/pass combinations. Supply exactly one of `{type:'switch',pokemonId:ID}` or
+`{type:'switch',slot:N}`; prefer identity to a guessed index. It is resolved and
+revalidated against the latest request before sending. These features require the
+newly loaded client at its next authorized startup; rebuilding MCP does not update
+an existing terminal session. The [agent workflow](AGENT-WORKFLOW.md) gives the
+full guarded sequence.
 
 ### MCP workflow and loaded capabilities
 
@@ -99,7 +145,7 @@ to validate a skill or these APIs.
 ### Authorized replay preservation policy
 
 Replay publication defaults off. Within the user's explicit replay-saving scope,
-call `battle_set_replay_policy({enabled:true, confirmed:true, commandId:"replay-policy"})`
+call `battle_set_replay_policy({enabled:true, confirmed:true, controllerLease:LEASE, commandId:"replay-policy"})`
 while the server confirms idle. A personally started terminal can opt in with
 `--save-replays` instead. The choice remains active throughout this signed-in
 session, including later explicitly authorized allowance extensions. Enabling it
@@ -192,7 +238,7 @@ report URL. See [metrics](../metrics/README.md) and the
 [agent workflow](AGENT-WORKFLOW.md) for report, review and cleanup sequencing.
 
 When the user authorizes forfeiting a stuck set, call
-`battle_forfeit({confirmed:true,commandId:"forfeit-set-once",room:BO3_PARENT_ID})`.
+`battle_forfeit({confirmed:true,controllerLease:LEASE,commandId:"forfeit-set-once",room:BO3_PARENT_ID})`.
 The command ID is required. This sends `/forfeit` to the owned live BO3 parent,
 forfeiting the whole series while keeping the signed-in connection open. It does
 not require a turn token, expand room ownership, reconnect, or queue. Only the
@@ -212,8 +258,8 @@ closing an MCP helper alone leaves the battle client open. See the
 [batch-end procedure](../skills/champions-mc-matchups/references/headless-battle-cycle.md#end-the-batch).
 To reuse an open session for another authorized set, verify with `battle_status` that the server
 reports no searching formats or active games. Call
-`battle_authorize_sets({confirmed:true,additionalSets:1,commandId:"authorize-next-set"})`,
-then separately call `battle_start({confirmed:true,commandId:"start-next-set"})`.
+`battle_authorize_sets({confirmed:true,controllerLease:LEASE,additionalSets:1,commandId:"authorize-next-set"})`,
+then separately call `battle_start({confirmed:true,controllerLease:LEASE,commandId:"start-next-set"})`.
 Authorization requires a live, idle session with no pending match and changes
 only its remaining allowance; it never queues or changes the account/team.
 `additionalSets` is an integer from 1 to 100, with a cumulative maximum of 100.

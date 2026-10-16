@@ -90,7 +90,7 @@ export async function runSession({username,teamFile,authorizedSets=1,autoReady=t
     try {
       bridge=await serveLocalSession(session,{descriptorPath});
       if(client.connected && client.authenticated){
-        output.write(`Signed in. MCP battle controls are ready; live battle events will appear here.\nFormat: ${FORMAT}. Auto-ready within the authorized set: ${autoReady ? 'on' : 'off'}. Save completed BO3 replays with existing privacy: ${saveReplays?'authorized/on':'off'}. Ctrl-C closes the session.\n`);
+        output.write(`Signed in. MCP battle controls are ready; live battle events will appear here.\nFormat: ${FORMAT}. Auto-ready within the authorized set: ${autoReady ? 'on' : 'off'}. Save completed BO3 replays with existing privacy: ${saveReplays?'authorized/on':'off'}.\nBefore any control mutation, claim exclusive control with battle_control_claim. Deadline protection starts off: configure battle_set_control_policy while idle within your battle/forfeit authorization, then stage a fresh complete fallback on each request before optional analysis. Signing in, claiming and enabling protection never queue. Ctrl-C closes the session.\n`);
         await disconnected;
       }
     }finally{client.off('disconnected',onDisconnected);}

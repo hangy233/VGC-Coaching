@@ -105,6 +105,27 @@ function sanitizeDecision(value, turn) {
   }
   return result;
 }
+/** Bounded control telemetry only: never retain commands, errors, URLs or secrets. */
+export function sanitizeControlTrace(value, turn = 0) {
+  if (value?.event !== 'control-trace' || typeof value.type !== 'string' || !/^[A-Za-z0-9_.:-]{1,80}$/u.test(value.type)) return null;
+  const room = canonicalRoom(value.room);
+  if (!ROOM.test(room)) return null;
+  const result = {event:'control-trace', type:value.type, room};
+  const observedTurn = Number.isSafeInteger(value.turn) && value.turn >= 0 ? value.turn : turn;
+  if (Number.isSafeInteger(observedTurn) && observedTurn >= 0) result.turn = observedTurn;
+  for (const field of ['seq', 'rqid', 'revision', 'generation']) if (Number.isSafeInteger(value[field]) && value[field] >= 0) result[field] = value[field];
+  for (const field of ['at', 'elapsedMs', 'latencyMs']) if (time(value[field]) !== undefined) result[field] = value[field];
+  for (const field of ['controllerId', 'source', 'status', 'kind', 'reasonCode']) if (typeof value[field] === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/u.test(value[field])) result[field] = value[field];
+  return result;
+}
+function mergeControlTrace(previous = [], incoming = []) {
+  // Unlike a replayed server history, control telemetry's timestamp is part of
+  // the observation: identical retries at distinct times must remain distinct.
+  const keys = new Set(previous.map(value => JSON.stringify(value))), merged = [...previous];
+  for (const value of incoming) {const key = JSON.stringify(value); if (!keys.has(key)) {merged.push(value); keys.add(key);}}
+  if (merged.length > MAX_EVENTS) throw safeError('compact control trace exceeds its event limit');
+  return merged;
+}
 const completeProtocol = (events, game, previewObservation) => (events.some(event => event.type === 'start') && events.filter(event => ['win', 'tie'].includes(event.type)).length === 1) || Boolean(previewTerminalProof(events, game, previewObservation));
 function verifyProtocolIdentity(events, game, previewObservation) {
   if (!completeProtocol(events, game, previewObservation)) return;
@@ -142,7 +163,7 @@ function mergeCompletedEvidence(previous,incoming){
   }
   const events=[...before.core,...tail];
   if(events.length>MAX_EVENTS)throw safeError('compact game evidence exceeds its event limit');
-  return {...incoming,parentId:previous.parentId||incoming.parentId,events,sheets,decisions,decisionEvidenceIncluded:decisions.length>0};
+  return {...incoming,parentId:previous.parentId||incoming.parentId,events,sheets,decisions,controlTrace:mergeControlTrace(previous.controlTrace, incoming.controlTrace),decisionEvidenceIncluded:decisions.length>0};
 }
 
 /** Compact one game's useful state and decision journal; drop chat and session secrets. */
@@ -155,18 +176,19 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
     if (previewCorroboration !== undefined && !validPreviewCorroboration(previewCorroboration, game)) throw safeError('invalid legacy preview corroboration');
     if (previewObservation !== undefined && (!ownedPreviewProof(game, previewObservation) || !previewCorroboration)) throw safeError('invalid owned preview observation');
     const { collectBattleEvents } = await import('./import.mjs');
-    const data = collectBattleEvents(events, { defaultRoom: roomId }).get(roomId);
+    const data = collectBattleEvents(events.filter(value => value?.event !== 'control-trace'), { defaultRoom: roomId }).get(roomId);
     if (!data?.events.length) throw safeError('no observations for this game');
-    const clean = data.events.map(sanitizeEvent).filter(Boolean), decisions = [];
+    const clean = data.events.map(sanitizeEvent).filter(Boolean), decisions = [], controlTrace = [];
     if (previewTerminalProof(clean, game, previewObservation) && (data.startedObserved || data.progressObserved)) throw safeError('earlier observed battle progress prevents preview-terminal completeness');
     verifyProtocolIdentity(clean, game, previewObservation);
     let turn = 0;
     for (const value of events) {
       if (canonicalRoom(value?.room ?? roomId) !== roomId) continue;
-      if (value.type === 'turn') turn = Number(value.data?.[0]) || 0;
+      if (value.type === 'turn' && value.event !== 'control-trace') turn = Number(value.data?.[0]) || 0;
       const decision = sanitizeDecision(value, turn); if (decision) decisions.push(decision);
+      const trace = sanitizeControlTrace(value, turn); if (trace) controlTrace.push(trace);
     }
-    let document = { schemaVersion: 1, kind: 'sanitized-events', teamId, roomId, parentId: game.parentId, complete: completeProtocol(clean, game, previewObservation), observedHistory: {started: data.startedObserved === true, progress: data.progressObserved === true}, events: clean, sheets: sanitizeSheets({ ...data.sheets, ...sheets }), decisions, decisionEvidenceIncluded: decisions.length > 0, ...(previewObservation ? {previewObservation} : {}) };
+    let document = { schemaVersion: 1, kind: 'sanitized-events', teamId, roomId, parentId: game.parentId, complete: completeProtocol(clean, game, previewObservation), observedHistory: {started: data.startedObserved === true, progress: data.progressObserved === true}, events: clean, sheets: sanitizeSheets({ ...data.sheets, ...sheets }), decisions, controlTrace, decisionEvidenceIncluded: decisions.length > 0, ...(previewObservation ? {previewObservation} : {}) };
     if (previewCorroboration) {
       if (!previewTerminalProof(clean, game, previewObservation)) throw safeError('legacy corroboration needs exact preview-terminal observations');
       document.observedHistory = {started:null,progress:null};
@@ -185,6 +207,9 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
       if (oldHash !== game.metadata.evidence?.sha256 && oldHash !== hash) throw safeError('existing evidence hash does not match its registered identity');
       previous = JSON.parse(old);
       if (previous.roomId !== roomId || previous.teamId !== teamId || previous.kind !== document.kind) throw safeError('existing evidence belongs to another game');
+      if (previous.controlTrace !== undefined && (!Array.isArray(previous.controlTrace) || previous.controlTrace.length > MAX_EVENTS)) throw safeError('control trace schema verification failed');
+      previous.controlTrace = (previous.controlTrace ?? []).map(value => sanitizeControlTrace(value, value.turn ?? 0)).filter(value => value && value.room === roomId);
+      document.controlTrace = mergeControlTrace(previous.controlTrace, document.controlTrace);
       document.observedHistory = {
         started: document.observedHistory.started || previous.observedHistory?.started === true || previous.events.some(event=>event.type==='start') || (previewCorroboration || previous.previewCorroboration ? null : false),
         progress: document.observedHistory.progress || previous.observedHistory?.progress === true || previous.events.some(event=>event.type==='start'||MINOR.has(event.type)||['turn','upkeep','switch','drag','replace','detailschange','swap','move','cant','faint'].includes(event.type)||event.type==='request'&&(Array.isArray(event.request?.active)||Array.isArray(event.request?.forceSwitch)||!event.request?.teamPreview&&event.request?.side?.pokemon?.some(pokemon=>pokemon.active))) || (previewCorroboration || previous.previewCorroboration ? null : false),
@@ -194,7 +219,13 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
       bytes=Buffer.from(`${JSON.stringify(document)}\n`);hash=sha256(bytes);
       if(bytes.length>MAX_BYTES)throw safeError('compact game evidence exceeds its size limit');
       if (previewTerminalProof(clean, game, document.previewObservation) && (document.observedHistory.started || document.observedHistory.progress)) throw safeError('earlier observed battle progress prevents preview-terminal completeness');
-      if (previous.complete && !document.complete) return { roomId, teamId, evidence: game.metadata.evidence, complete: true, eventCount: previous.events.length, decisionEvidenceIncluded: previous.decisionEvidenceIncluded, status: 'preserved' };
+      if (previous.complete && !document.complete) {
+        if (JSON.stringify(previous.controlTrace) === JSON.stringify(document.controlTrace)) return { roomId, teamId, evidence: game.metadata.evidence, complete: true, eventCount: previous.events.length, decisionEvidenceIncluded: previous.decisionEvidenceIncluded, status: 'preserved' };
+        // A late watchdog observation must survive even when its recorder has
+        // only partial protocol history. Keep the completed battle unchanged.
+        document = {...previous, controlTrace:document.controlTrace};
+        bytes = Buffer.from(`${JSON.stringify(document)}\n`); hash = sha256(bytes);
+      }
       if (oldHash === hash && game.metadata.evidence?.sha256 === hash) return { roomId, teamId, evidence: game.metadata.evidence, complete: document.complete, eventCount: clean.length, decisionEvidenceIncluded: document.decisionEvidenceIncluded, status: 'unchanged' };
       if (previous.complete && document.complete && oldHash !== hash) {
         document=mergeCompletedEvidence(previous,document);
@@ -231,7 +262,8 @@ export async function readGameEvidence({ workspace, teamId, roomId, fromTurn, to
       if (sha256(bytes) !== reference.sha256) throw safeError('evidence hash verification failed');
       document = JSON.parse(bytes);
       if (document.schemaVersion !== 1 || document.kind !== 'sanitized-events' || document.roomId !== roomId || document.teamId !== teamId || !Array.isArray(document.events) || document.events.length > MAX_EVENTS || document.complete !== reference.complete) throw safeError('evidence identity or schema verification failed');
-      document = { ...document, events: document.events.map(sanitizeEvent).filter(Boolean), sheets: sanitizeSheets(document.sheets), decisions: (document.decisions ?? []).map(value => sanitizeDecision(value, value.turn ?? 0)).filter(Boolean) };
+      if (document.controlTrace !== undefined && (!Array.isArray(document.controlTrace) || document.controlTrace.length > MAX_EVENTS)) throw safeError('control trace schema verification failed');
+      document = { ...document, events: document.events.map(sanitizeEvent).filter(Boolean), sheets: sanitizeSheets(document.sheets), decisions: (document.decisions ?? []).map(value => sanitizeDecision(value, value.turn ?? 0)).filter(Boolean), controlTrace:(document.controlTrace ?? []).map(value => sanitizeControlTrace(value, value.turn ?? 0)).filter(value => value && value.room === roomId) };
       // Older recorders honestly marked a pre-start concession partial. Keep
       // that read-only state until a normal checked save upgrades the metadata.
       if (document.previewObservation && !ownedPreviewProof(game, document.previewObservation)) throw safeError('invalid owned preview observation');
@@ -245,10 +277,11 @@ export async function readGameEvidence({ workspace, teamId, roomId, fromTurn, to
       const source = await checkedPath(workspace, reference.evidencePath), bytes = await decompress(await readFile(source.path), { maxOutputLength: MAX_BYTES });
       if (sha256(bytes) !== reference.logSha256) throw safeError('replay evidence hash verification failed');
       const events = bytes.toString('utf8').split(/\r?\n/u).filter(line => line.startsWith('|')).map(line => { const [, type, ...data] = line.split('|'); return sanitizeEvent({ type, data }); }).filter(Boolean);
-      document = { events, sheets: {}, decisions: [], complete: completeProtocol(events) }; sourceKind = 'verified-replay';
+      document = { events, sheets: {}, decisions: [], controlTrace:[], complete: completeProtocol(events) }; sourceKind = 'verified-replay';
     } else throw safeError('no durable game evidence is registered');
     const decisions = document.decisions.filter(value => value.turn === 0 || ((fromTurn === undefined || value.turn >= fromTurn) && (toTurn === undefined || value.turn <= toTurn)));
-    return { schemaVersion: 1, teamId, roomId, parentId: game.parentId, events: filteredTurns(document.events, fromTurn, toTurn), sheets: document.sheets, decisions, complete: document.complete === true, completionKind: previewTerminalProof(document.events, game, document.previewObservation) ? 'preview-terminal' : document.complete ? 'started-battle' : 'partial', observedHistory: document.observedHistory ?? null, previewCorroboration:document.previewCorroboration ?? null, previewObservation:document.previewObservation??null, completionLimitation: document.previewObservation ? 'The recorder archive was unavailable. Actual saved replay protocol and separately retained owned preview status corroborate this pre-start ending; no protocol request was reconstructed, earlier-start observation and full private action history remain unavailable.' : document.previewCorroboration ? 'Legacy recording has no ever-start flags. Exact owned current preview state and the saved server terminal corroborated a pre-start ending; earlier-start observation remains unavailable.' : null, decisionEvidenceIncluded: document.decisions.length > 0, sourceKind, evidence: { path: reference.path ?? reference.evidencePath, sha256: reference.sha256 ?? reference.logSha256 }, turnWindow: { fromTurn: fromTurn ?? null, toTurn: toTurn ?? null, setupIncluded: true } };
+    const controlTrace = document.controlTrace.filter(value => value.turn === 0 || ((fromTurn === undefined || value.turn >= fromTurn) && (toTurn === undefined || value.turn <= toTurn)));
+    return { schemaVersion: 1, teamId, roomId, parentId: game.parentId, events: filteredTurns(document.events, fromTurn, toTurn), sheets: document.sheets, decisions, controlTrace, complete: document.complete === true, completionKind: previewTerminalProof(document.events, game, document.previewObservation) ? 'preview-terminal' : document.complete ? 'started-battle' : 'partial', observedHistory: document.observedHistory ?? null, previewCorroboration:document.previewCorroboration ?? null, previewObservation:document.previewObservation??null, completionLimitation: document.previewObservation ? 'The recorder archive was unavailable. Actual saved replay protocol and separately retained owned preview status corroborate this pre-start ending; no protocol request was reconstructed, earlier-start observation and full private action history remain unavailable.' : document.previewCorroboration ? 'Legacy recording has no ever-start flags. Exact owned current preview state and the saved server terminal corroborated a pre-start ending; earlier-start observation remains unavailable.' : null, decisionEvidenceIncluded: document.decisions.length > 0, sourceKind, evidence: { path: reference.path ?? reference.evidencePath, sha256: reference.sha256 ?? reference.logSha256 }, turnWindow: { fromTurn: fromTurn ?? null, toTurn: toTurn ?? null, setupIncluded: true } };
 }
 
 export function reviewedCheckpoint(checkpoint, { teamId, parentId }) {
@@ -356,11 +389,16 @@ async function canonicalSourceCoverage(workspace, content, extension, records, p
         continue;
       }
       if (!ROOM.test(ownRoom)) return 'A structured source row cannot be independently matched to retained game facts.';
-      if (!['battle-event', 'request', 'result', 'sheet', 'action-status', 'choice-status', 'decision', 'choice', undefined].includes(value.event)) return 'An unarchived structured observation or calculation remains in the source.';
+      if (!['battle-event', 'request', 'result', 'sheet', 'action-status', 'choice-status', 'decision', 'choice', 'control-trace', undefined].includes(value.event)) return 'An unarchived structured observation or calculation remains in the source.';
       if (value.event === 'battle-event' || value.event === undefined) {
         if (!PROTOCOL.has(value.type) && !MINOR.has(value.type) && !['request', 'c', 'c:', 'chat', '-message', 'html', 'raw', 'uhtml', 'uhtmlchange'].includes(value.type)) return 'An unsupported protocol observation remains in the source.';
       }
       if (['action-status', 'choice-status', 'decision', 'choice'].includes(value.event) && !sanitizeDecision(value, 0)) return 'An unsupported action journal entry remains in the source.';
+      if (value.event === 'control-trace') {
+        const allowed = new Set(['event', 'type', 'room', 'turn', 'seq', 'at', 'elapsedMs', 'rqid', 'revision', 'controllerId', 'generation', 'source', 'status', 'kind', 'latencyMs', 'reasonCode']);
+        const trace = sanitizeControlTrace(value, 0);
+        if (!trace || Object.keys(value).some(key => !allowed.has(key) || !(key in trace))) return 'An unsupported or unarchived control observation remains in the source.';
+      }
       values.push({ ...value, room: ownRoom });
     } else if (line.startsWith('>')) room = canonicalRoom(line.slice(1).trim());
     else {
@@ -373,7 +411,10 @@ async function canonicalSourceCoverage(workspace, content, extension, records, p
     }
   }
   const { collectBattleEvents } = await import('./import.mjs');
-  const collected = collectBattleEvents(values);
+  const collected = collectBattleEvents(values.filter(value => value?.event !== 'control-trace'));
+  // A source can consist entirely of control observations after the last
+  // protocol write. It still needs an independent canonical coverage check.
+  for (const value of values) if (value.event === 'control-trace' && !collected.has(value.room)) collected.set(value.room, {events:[], sheets:{}});
   for (const [roomId, data] of collected) {
     if (!records.some(record => record.roomId === roomId)) return 'Source game is not part of this retained set.';
     const retained = await readGameEvidence({ workspace, teamId: records[0].teamId, roomId });
@@ -381,13 +422,15 @@ async function canonicalSourceCoverage(workspace, content, extension, records, p
     if (!isSubsequence(projected, retained.events)) return `${roomId}: source contains state or turns absent from retained canonical evidence.`;
     const sheets = sanitizeSheets(data.sheets);
     if (Object.entries(sheets).some(([side, packed]) => retained.sheets[side] !== packed)) return `${roomId}: source contains an open sheet absent from retained evidence.`;
-    let turn = 0; const decisions = [];
+    let turn = 0; const decisions = [], controlTrace = [];
     for (const value of values) {
       if (value.room !== roomId) continue;
-      if (value.type === 'turn') turn = Number(value.data?.[0]) || 0;
+      if (value.type === 'turn' && value.event !== 'control-trace') turn = Number(value.data?.[0]) || 0;
       const decision = sanitizeDecision(value, turn); if (decision) decisions.push(decision);
+      const trace = sanitizeControlTrace(value, turn); if (trace) controlTrace.push(trace);
     }
     if (!isSubsequence(decisions, retained.decisions)) return `${roomId}: source contains selected, accepted or executed decisions absent from retained evidence.`;
+    if (!isSubsequence(controlTrace, retained.controlTrace)) return `${roomId}: source contains control observations absent from retained evidence.`;
   }
   return null;
 }

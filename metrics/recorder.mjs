@@ -2,7 +2,7 @@ import {analyzeBattle} from './parser.mjs';
 import {saveBattle,registerMetricsTeam} from './store.mjs';
 import {canonicalRoom,collectBattleEvents,saveMetricsTeamSnapshot} from './import.mjs';
 import {updateTeamReport} from './live-reports.mjs';
-import {saveGameEvidence} from './retention.mjs';
+import {saveGameEvidence,sanitizeControlTrace} from './retention.mjs';
 import {attachVerifiedReplay} from './replay-evidence.mjs';
 
 function safeFailure(error){
@@ -21,7 +21,7 @@ function safeFailure(error){
 export function attachMetricsRecorder(client,{workspace,username,teamId,team,name='Team',session,onError=()=>{},replayAttacher=attachVerifiedReplay}={}) {
   const buffers=new Map(),listeners=[],parentResults=new Map(),failures=new Map(),observers=new Set(),verifiedReplayUrls=new Map(),activeReplays=new Set();
   let chain=Promise.resolve(),disposed=false,initialized=false,pending=0,lastSavedAt=null,stableReport=null;
-  const status=()=>({enabled:true,recordingSchemaVersion:2,features:{previewDecisionEvidence:true},teamId,state:failures.size?'error':disposed?'closed':pending?'pending':initialized?'ready':'initializing',pending,lastSavedAt,lastError:[...failures.values()].at(-1)||null,stableReport});
+  const status=()=>({enabled:true,recordingSchemaVersion:2,features:{previewDecisionEvidence:true,controlTraceEvidence:true},teamId,state:failures.size?'error':disposed?'closed':pending?'pending':initialized?'ready':'initializing',pending,lastSavedAt,lastError:[...failures.values()].at(-1)||null,stableReport});
   const notify=()=>{for(const observer of observers)try{observer(status());}catch{}};
   const enqueue=(key,operation)=>{
     pending++;notify();
@@ -52,7 +52,7 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
   const owned=room=>!session||session.ownedRooms.has(client.resolveRoom?.(room)||room)&&(!session.roomTeamId||session.roomTeamId(room)===teamId);
   const get=room=>{const id=canonicalRoom(room);if(!/^battle-/.test(id)||!owned(room))return null;if(!buffers.has(id))buffers.set(id,{roomId:id,events:[],truncated:false});return buffers.get(id);};
   const on=(event,handler)=>{client.on(event,handler);listeners.push([event,handler]);};
-  const append=(room,value)=>{const b=get(room);if(!b)return;if(b.events.length>=20000){b.truncated=true;return;}b.events.push({...value,room,at:Date.now()});};
+  const append=(room,value)=>{const b=get(room);if(!b)return;if(b.events.length>=20000){b.truncated=true;return;}b.events.push({...value,room,at:Number.isFinite(value.at)&&value.at>=0?value.at:Date.now()});};
   const finishPreview=(room,transition)=>{
     const b=get(room);if(!b||b.previewClosed)return;
     const preview=b.preview;b.previewClosed=true;
@@ -71,15 +71,18 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
     const officialResult=parentResult||parentResults.get(canonicalRoom(parent));
     const operational=!!b.operational,truncated=b.truncated,previewOutcome=b.previewOutcome;
     enqueue('battle:'+roomId,async()=>{
-      const data=collectBattleEvents(events).get(roomId);if(!data)return;
+      const data=collectBattleEvents(events.filter(value=>value.event!=='control-trace')).get(roomId);if(!data)return;
       const record=analyzeBattle({roomId,username,teamId,team,events:data.events,parentId:parent?canonicalRoom(parent):null,metadata:{source:'live-client',operational}});
       record.team={name,format:'gen9championsvgc2026regmc',roster:team.map(p=>p.species)};
       record.metadata={...(record.metadata||{}),sources:['live-client'],...(officialResult?{setResult:officialResult}:{})};
-      if(operational){record.quality.operational=true;record.quality.warnings.push('Observed inactivity or submission failure; excluded from default team comparisons.');}
+      if(operational){record.quality.operational=true;record.quality.warnings.push('Observed control fallback, inactivity or submission failure; excluded from default team comparisons.');}
       if(previewOutcome&&previewOutcome.status!=='accepted')record.quality.warnings.push(previewOutcome.reason);
       if(truncated){record.quality.complete=false;record.quality.warnings.push('Recorder event limit reached; partial observations only.');}
       const saved=await saveBattle({workspace,record});
-      if(record.completed&&/^battle-gen9championsvgc2026regmc(?:bo3)?-\d+$/.test(roomId))await saveGameEvidence({workspace,teamId,roomId,events,sheets:client.state?.(roomId)?.sheets});
+      // Persist partial state and control diagnostics at the existing turn,
+      // disconnect and explicit-flush boundaries as well. A crash before an
+      // official result must not leave its last submission evidence only in RAM.
+      if(/^battle-gen9championsvgc2026regmc(?:bo3)?-\d+$/.test(roomId))await saveGameEvidence({workspace,teamId,roomId,events,sheets:client.state?.(roomId)?.sheets});
       if(saved.status!=='unchanged'||!stableReport||failures.has('battle:'+roomId))stableReport=await updateTeamReport({workspace,teamId});
     });
   };
@@ -118,6 +121,15 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
     if(b.preview&&!b.previewClosed&&value.submitted&&!b.preview.accepted)b.preview.externalAcknowledgment=true;
     const action=client.state?.(value.room)?.lastAction;
     if(b.pending&&value.submitted&&action?.rqid===b.pending.rqid)b.pending.submitted=true;
+  });
+  on('control-trace',value=>{
+    const b=get(value.room);if(!b)return;
+    const trace=sanitizeControlTrace({...value,event:'control-trace'},null);if(!trace)return;
+    append(value.room,trace);
+    if(['fallback-sent','watchdog-forfeit','watchdog-uncertain'].includes(trace.type))b.operational=true;
+    // A post-result recovery observation is useful evidence too. An idle flush
+    // must not leave it solely in a disposable log until the client closes.
+    if(client.state?.(value.room)?.ended)save(b);
   });
   on('battle-event',value=>{
     append(value.room,{event:'battle-event',type:value.type,data:value.data});

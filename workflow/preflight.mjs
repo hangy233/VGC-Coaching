@@ -11,6 +11,16 @@ import {reviewStatus} from './reviews.mjs';
 const HASH=/^[a-f0-9]{64}$/u;
 const PARENT=/^game-bestof3-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/u;
 const required=['start','choose','ready','metrics-sync'];
+const controlOperations=['control-claim','control-release','set-control-policy','stage-fallback','turn-status','control-trace'];
+const boolean=value=>typeof value==='boolean'?value:null;
+const finite=value=>Number.isFinite(value)?value:null;
+function controlSummary(status){
+  const controller=status.controller,policy=status.controlPolicy;
+  return {
+    controller:controller?{required:boolean(controller.required),owner:typeof controller.owner==='string'?controller.owner:null,generation:Number.isInteger(controller.generation)?controller.generation:null,claimedAt:finite(controller.claimedAt)}:null,
+    controlPolicy:policy?{enabled:boolean(policy.enabled),forfeitIfStuck:boolean(policy.forfeitIfStuck),planningMs:finite(policy.planningMs),safetyMarginMs:finite(policy.safetyMarginMs),unknownClockMs:finite(policy.unknownClockMs),halted:boolean(policy.halted),haltReason:typeof policy.haltReason==='string'?policy.haltReason:null,disposed:boolean(policy.disposed)}:null,
+  };
+}
 const canonical=value=>String(value||'').replace(/-[a-z0-9]+pw$/u,'');
 function localParents(records){
   if(!Array.isArray(records))throw new Error('Local battle history is unavailable');
@@ -61,6 +71,16 @@ export async function battlePreflight({workspace,teamId,parentId,call=callLocalS
     const capabilities=status.capabilities||null;
     const operations=capabilities?.operations||capabilities?.supportedOperations||capabilities?.supportedOps||[];
     check('loaded-capabilities',Array.isArray(operations)&&required.every(operation=>operations.includes(operation)),'The loaded client must advertise the battle and recording operations required by this workflow. Source changes do not update an older client.');
+    const enforcedLease=capabilities?.features?.controllerLease===true;
+    const watchdog=capabilities?.features?.deadlineSupervisor===true;
+    const controls=controlSummary(status);
+    check('exclusive-control-capability',enforcedLease,'The loaded client does not advertise enforced exclusive controller leases. Do not assume competing operators are prevented; source changes require its next normal authorized startup.',false);
+    check('deadline-protection-capability',watchdog,'The loaded client has no advertised deadline watchdog. Do not assume automatic fallback submission or stuck containment exists; source changes require its next normal authorized startup.',enforcedLease);
+    if(enforcedLease){
+      check('loaded-control-operations',Array.isArray(operations)&&controlOperations.every(operation=>operations.includes(operation)),'The loaded client must advertise exclusive control, fallback staging, deadline policy and compact safety evidence operations.');
+      check('controller-owner',controls.controller?.required===true&&typeof controls.controller.owner==='string'&&controls.controller.owner.trim().length>0,'Claim one exclusive controller with battle_control_claim before starting another set; retain its private lease for mutations.');
+      check('deadline-protection',controls.controlPolicy?.enabled===true&&controls.controlPolicy.halted===false&&controls.controlPolicy.disposed!==true,'Enable non-halted deadline protection with battle_set_control_policy while idle before starting another set; review a safety halt before deliberately resetting it.');
+    }
     let sourceRevision=null;
     try{sourceRevision=createHash('sha256').update(await readFile(join(workspace,'showdown','agent-session.mjs'))).digest('hex');}catch{}
     const loadedRevision=capabilities?.buildRevision||null;
@@ -77,7 +97,7 @@ export async function battlePreflight({workspace,teamId,parentId,call=callLocalS
     latestOwned=(status.rooms||[]).filter(room=>room.ended&&PARENT.test(room.id)).at(-1);
     latestParent=latestOwned?.id;
     if(latestOwned?.teamId&&HASH.test(latestOwned.teamId))reviewTeamId=latestOwned.teamId;
-    session={sessionId:status.sessionId,connected:status.connected,authenticated:status.authenticated,stopped:status.stopped,teamId:status.teamSha256,remainingSets:remaining,idle,capabilities,runtime,metrics:status.metrics||null,replayPolicy:status.replayPolicy||null};
+    session={sessionId:status.sessionId,connected:status.connected,authenticated:status.authenticated,stopped:status.stopped,teamId:status.teamSha256,remainingSets:remaining,idle,capabilities,runtime,metrics:status.metrics||null,replayPolicy:status.replayPolicy||null,...controls};
   }
   const skills=skill.status==='fulfilled'?skill.value:null;
   check('skill-sync',skills?.synchronized===true,'The maintained and installed matchup skill must match; inspect skill status and sync reviewed changes.');

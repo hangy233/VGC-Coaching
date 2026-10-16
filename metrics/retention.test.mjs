@@ -64,6 +64,53 @@ test('preview journals retain legal team order and unknown acceptance without in
   assert.equal(read.decisions[2].evidence.transition,'battle-start');assert(!JSON.stringify(read).includes('NEVER-PERSIST'));
 });
 
+test('canonical control traces are bounded allowlisted observations with private IDs and extras removed', async t => {
+  const dir=await workspace(t),events=values();
+  events.splice(6,0,{event:'control-trace',room:`${ROOM}-hiddenpw`,type:'request-received',seq:1,at:100,elapsedMs:1.25,rqid:31,revision:2,controllerId:'operator-one',generation:1,source:'operator',status:'pending',kind:'move',latencyMs:2,reasonCode:'REQUEST_RECEIVED',password:'NEVER-PERSIST',command:'NEVER-PERSIST',url:'https://example.test/private'});
+  events.splice(10,0,{event:'control-trace',room:ROOM,type:'fallback-sent',seq:2,at:150,elapsedMs:51.25,rqid:31,revision:2,status:'sent-not-acknowledged',source:'watchdog'});
+  // A telemetry label must never masquerade as an official protocol result.
+  events.push({event:'control-trace',room:ROOM,type:'win',seq:3,at:200,status:'https://example.test/secret',command:'NEVER-PERSIST'});
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});
+  const read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});
+  assert.deepEqual(read.controlTrace.map(value=>value.type),['request-received','fallback-sent','win']);
+  assert.deepEqual(read.controlTrace.map(value=>value.turn),[1,2,2]);
+  assert.equal(read.controlTrace[0].elapsedMs,1.25);assert.equal(read.controlTrace[0].room,ROOM);assert.equal(read.controlTrace[0].reasonCode,'REQUEST_RECEIVED');
+  assert.equal(read.controlTrace[2].status,undefined);
+  const serialized=JSON.stringify(read.controlTrace);for(const secret of ['NEVER-PERSIST','hiddenpw','https:','password','command','url'])assert(!serialized.includes(secret));
+  assert.equal(read.events.filter(value=>value.type==='win').length,1);
+  const filtered=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,fromTurn:2,toTurn:2});
+  assert.deepEqual(filtered.controlTrace.map(value=>value.seq),[2,3]);
+});
+
+test('later recording preserves earlier control traces, including a late partial-history recovery', async t => {
+  const dir=await workspace(t),trace=(seq,type)=>({room:ROOM,event:'control-trace',type,seq,at:100+seq,rqid:31,revision:1});
+  const first=[...values(),trace(1,'request-received')];
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:first});
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:[...values(),trace(2,'fallback-sent')]});
+  let read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});assert.deepEqual(read.controlTrace.map(value=>value.seq),[1,2]);
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:values()});
+  read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});assert.deepEqual(read.controlTrace.map(value=>value.seq),[1,2]);
+  const updated=await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:[...values().slice(0,6),trace(3,'watchdog-forfeit')]});
+  assert.equal(updated.complete,true);assert.equal(updated.status,'updated');
+  read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});assert.deepEqual(read.controlTrace.map(value=>value.seq),[1,2,3]);
+  assert.equal(read.events.at(-1).type,'win');assert.equal(read.events.at(-1).data[0],'TofuRotom');
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:[...values(),{...trace(2,'fallback-sent'),at:500}]});
+  read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});assert.deepEqual(read.controlTrace.map(value=>value.seq),[1,2,3,2]);
+  assert.equal(read.controlTrace.at(-1).at,500);
+});
+
+test('cleanup protects unarchived or unsupported control traces until canonical coverage exists', async t => {
+  const dir=await prepared(t),trace={room:ROOM,event:'control-trace',type:'watchdog-uncertain',seq:1,at:300,rqid:33,revision:1};
+  const events=[...values(),trace];await write(dir,target,events.map(value=>JSON.stringify(value)).join('\n')+'\n');
+  let plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,false);assert.match(plan.files[0].reason,/control observations absent/);
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});
+  plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,true);
+  await write(dir,target,[...events,{...trace,seq:2,debug:'Useful data not archived'}].map(value=>JSON.stringify(value)).join('\n')+'\n');
+  plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,false);assert.match(plan.files[0].reason,/unsupported or unarchived control/);
+  await write(dir,target,[...events,{...trace,seq:2,status:'https://example.test/private'}].map(value=>JSON.stringify(value)).join('\n')+'\n');
+  plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,false);assert.match(plan.files[0].reason,/unsupported or unarchived control/);
+});
+
 test('partial evidence can complete but cannot downgrade completed evidence or rewrite conflicting history', async t => {
   const dir = await workspace(t);
   const partial = await saveGameEvidence({ workspace: dir, teamId: TEAM, roomId: ROOM, events: values().slice(0, -1) }); assert.equal(partial.complete, false);

@@ -50,7 +50,7 @@ test('room aliases require the exact server rename protocol and matching format/
 
 test('authoritative search privacy replacement recovers the owned parent and linked preview without a rename notice',async()=>{
   const {c,sent}=setup(),packed='Species|item|ability|move',parent='game-bestof3-gen9championsvgc2026regmcbo3-122',privateParent=parent+'-fixtureparentpw',privateChild='battle-gen9championsvgc2026regmcbo3-124-fixturechildpw';
-  const session=new AgentSession(c,{username:'Fixture',packed,autoReady:false});
+  const session=new AgentSession(c,{username:'Fixture',packed,autoReady:false,controllerRequired:false});
   try{
     session.searchesSent=1;session.awaitingSet=true;
     c.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[parent]:'Fixture vs Opponent'}})}`);

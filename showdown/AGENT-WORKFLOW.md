@@ -3,7 +3,8 @@
 The terminal owns login and the live Showdown connection. The MCP controls that
 same object through local IPC. The agent uses the matchup skill for judgment and
 actual MCP `calculate_damage` and `calculate_speed` results for numerical claims.
-The client supplies no strategy, damage arithmetic, or automatic move choices.
+The client supplies no strategy or damage arithmetic. An explicitly enabled
+deadline watchdog can submit a complete legal pair previously chosen by the agent.
 
 The original transport completed one authorized live BO3 on October 15, 2026.
 The new bridge, state, clock and streaming features have fixture/public MCP
@@ -74,22 +75,24 @@ guidance or these tools.
    queue. The readable live battle log appears in this terminal after login,
    with an official watch URL for the BO3 and every game as the server announces
    their room IDs. Keep private room links within the user's sharing scope.
-4. Call `battle_status`, `battle_capabilities` and `battle_preflight` through this
-   repository's MCP. Preflight checks the existing account connection, exact team,
+4. Call `battle_status` and `battle_capabilities` through this repository's MCP.
+   Claim exclusive control and explicitly enable the deadline policy while idle,
+   as described below, before calling `battle_preflight`. Preflight checks the
+   existing account connection, exact team,
    allowance, settled idle state, loaded operations, last review, skill sync and
    report health. Inspect blockers and warnings; `ready:true` grants no additional
    authorization. If the tools are not
    exposed by the host, use the MCP SDK Client/StdioClientTransport against
    `node dist/index.js` on this same host. Do not substitute a separate anonymous
    client or the old temporary command-file bridge.
-5. Within the already authorized scope, call `battle_start` with `confirmed:true`
+5. Within the already authorized scope, call `battle_start` with `confirmed:true`, `controllerLease`
    and a unique `commandId` only after the skill/review checkpoint above. It
    uploads the locked team and sends one search.
    The session enforces its set limit and binds one expected M-C BO3 parent and
    server-linked children. It does not acquire unrelated account battles.
 
 When completed-replay publication is already authorized, configure
-`battle_set_replay_policy({enabled:true,confirmed:true,commandId:"replay-policy"})`
+`battle_set_replay_policy({enabled:true,confirmed:true,controllerLease:LEASE,commandId:"replay-policy"})`
 while idle before the next search, or use `--save-replays` on the next deliberately
 started terminal session. Default is off. It applies only to future owned sets
 and preserves their current privacy; it grants no search or allowance. After an
@@ -132,6 +135,62 @@ The helper consumes the password directly; agent/MCP inputs, outputs and the
 local descriptor contain no saved Showdown secret. See the
 [saved-login setup](README.md#optional-windows-saved-login).
 
+## Exclusive control and deadline protection
+
+Production sessions require one controller lease for all socket-mutating tools:
+start, allowance extension, choose, stage fallback, ready, cancel, forfeit, replay
+policy/saving, team switch, control policy and stop. Read-only state/trace and
+private decision notes do not require a lease. Claim once with:
+
+```text
+battle_control_claim({confirmed:true,commandId:"claim-once",controllerId:"batch-operator"})
+```
+
+Keep the returned `controllerLease` private. A label does not confer ownership;
+even the same label cannot claim an occupied session. Reuse the original command
+ID to recover an uncertain claim. For a deliberate handoff, read the current
+`controller.generation`, then claim with `takeover:true` and that value as
+`expectedGeneration`. A successful takeover revokes the old lease and discards
+its staged fallback. The receiving owner must stage a fresh pair immediately.
+Use `battle_control_release` only when relinquishing responsibility; it clears
+the fallback and does not close or forfeit a set. It does not disable an already
+enabled stuck policy. A lease is not additional battle or publication permission.
+
+Protection starts **off**, independently of readiness and replay policies. Before
+an authorized search, configure it explicitly while the server confirms idle:
+
+```text
+battle_set_control_policy({confirmed:true,commandId:"enable-deadline-policy",controllerLease:LEASE,enabled:true,forfeitIfStuck:true,planningMs:20000,safetyMarginMs:5000,unknownClockMs:20000})
+```
+
+Set `forfeitIfStuck:true` only under the user's existing stuck-forfeit permission.
+Production search requires protection enabled and not halted.
+The bounded planning cutoff, observed-clock safety margin and unknown-clock cap
+are local safeguards, not inferred server deadlines. Inspect `battle_turn_status`
+for the actual deadline/safety state. On every fresh actionable request, stage a
+complete legal pair before optional calculation, notes or reporting:
+
+```text
+battle_stage_fallback({confirmed:true,commandId:"fallback-request-unique",controllerLease:LEASE,token:CURRENT_TOKEN,actions:COMPLETE_LEGAL_PAIR})
+```
+
+The client can submit that pair before the conservative cutoff while the operator
+is paused. Staging is not sending; a later ordinary `battle_choose` can submit
+the preferred pair promptly. Tokens, legality and the lease are checked again at
+send time. Request change, takeover, release and disconnect discard the fallback.
+No generic move or damage calculation is generated by the watchdog.
+
+If the operator stalls before staging, enabled stuck-forfeit protection makes a
+bounded forfeit attempt on the owned parent and halts future searches. Verify the
+official result and idle state, preserve the control failure, and finish its
+review. Clear the halt only by deliberate policy configuration while idle.
+Changing policy while a turn is active cannot erase an imminent deadline.
+
+Use `battle_control_trace({room:OPTIONAL_OWNED_ROOM,limit:50})` to inspect request
+arrival, stage, send, rejection, acknowledgement and server advancement without
+dumping raw logs. Never equate a trace of intent with server acceptance. Watchdog
+submissions and operational forfeits remain control failures for review/metrics.
+
 ## Read, calculate, submit
 
 - Read `battle_status`: `rooms[].state` contains observed HP precision, status,
@@ -154,12 +213,19 @@ local descriptor contain no saved Showdown secret. See the
   recorded inputs/outputs with `battle_calculation_evidence({teamId,id})`.
   A matching receipt supports that tool result for those assumptions. It does
   not verify different claims made elsewhere in narrative notes.
-- `actions[]` gives the current kind, room, token, legal actions and observed clock.
+- `battle_turn_status` gives a compact fresh view; `actions[]` in full status
+  gives the current kind, room, token, legal actions and observed clock. Stage a
+  complete fallback before optional work when deadline protection is enabled.
   Submit complete paired actions via `battle_choose` using that token,
-  `confirmed:true`, a unique `commandId`, and the action array. Preview is one
+  `confirmed:true`, `controllerLease`, a unique `commandId`, and the action array. Preview is one
   `{type:'team',order:[1,2,3,4]}`; ordinary doubles require both slots. Target
   numbers are positive 1/2 for foes and negative -1/-2 for own slots; use the
   request's move targeting categories, not a guessed target.
+- Forced switches expose named legal replacements with a stable `pokemonId` and
+  complete legal switch/pass combinations. Prefer `{type:'switch',pokemonId:ID}`
+  to guessing a slot. Supply exactly one of `pokemonId` or `slot`; the identity
+  is resolved against the fresh request immediately before sending. Never reuse
+  a previous request's party index after a replacement or server default.
 - Tokens bind the session, connection, room, request ID and revision. Replaced,
   submitted or ended requests cannot be acted on. `validForMs` is a local
   freshness budget, not an invented server turn limit. Recognized own-player
@@ -201,11 +267,11 @@ perform this batch-end step.
 `battle_cancel_search` cancels matchmaking;
 `battle_stop` closes the client connection and terminal session. It does not
 send a forfeit; use it for the requested batch-end closure or an explicit
-session-end request. No hidden reconnect
-or automatic bailout move exists.
+session-end request. There is no hidden reconnect. Automatic submission only uses
+the current agent-selected staged pair under the explicitly enabled policy.
 
 If the user has authorized forfeiting when stuck, call
-`battle_forfeit({confirmed:true,commandId:"forfeit-set-once",room:BO3_PARENT_ID})`
+`battle_forfeit({confirmed:true,controllerLease:LEASE,commandId:"forfeit-set-once",room:BO3_PARENT_ID})`
 on the owned live BO3 parent from fresh state. An already-trusted privacy alias
 also resolves to that parent. This forfeits the entire series and keeps the
 authenticated connection open; it needs no turn token and does not acquire an
@@ -234,8 +300,8 @@ When reusing an open session for another authorized set within the batch,
 extend only the requested allowance, then start the next search separately:
 
 ```text
-battle_authorize_sets({confirmed:true,additionalSets:1,commandId:"authorize-next-set"})
-battle_start({confirmed:true,commandId:"start-next-set"})
+battle_authorize_sets({confirmed:true,controllerLease:LEASE,additionalSets:1,commandId:"authorize-next-set"})
+battle_start({confirmed:true,controllerLease:LEASE,commandId:"start-next-set"})
 ```
 
 `battle_authorize_sets` requires a live authenticated session, server-confirmed
@@ -255,7 +321,7 @@ or queue another battle merely because a saved credential exists.
 
 For an explicitly approved roster change, finish the old BO3 checkpoint and
 preservation first. While the existing server connection confirms idle, use
-`battle_switch_team({confirmed:true,commandId:UNIQUE_ID,teamId:REGISTERED_ID})` or
+`battle_switch_team({confirmed:true,controllerLease:LEASE,commandId:UNIQUE_ID,teamId:REGISTERED_ID})` or
 replace `teamId` with the full legal `teamText`; supply exactly one. An optional
 `name` labels its report. The session validates all six, preserves the old
 recorder, prepares the next report and rechecks idle before replacing the team;
