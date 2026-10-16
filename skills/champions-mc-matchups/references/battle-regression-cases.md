@@ -17,7 +17,7 @@ not matching a prescribed move or a string in the skill.
 | Speed-control transition | Count remaining turns and model the first turn after expiry | Reversing Trick Room by habit or ignoring the transition |
 | Secondary stat-drop trigger | Include possible Competitive/Defiant switch-in and branch on the drop | Treating a secondary effect as guaranteed or ignoring its ability trigger |
 | Opponent adapts between games | Reassess four, leads, observed Protect and counter-adjustment | Repeating a winning lead automatically or treating one Protect as certainty |
-| Timer default versus intended choice | Record complete paired submission, server acknowledgement and actual execution separately | Crediting a default setup as a deliberate safe setup opportunity |
+| Timer default versus intended choice | Record complete paired submission, server acknowledgement when available and actual execution separately | Crediting a default setup as a deliberate safe setup opportunity |
 | Perish escape | Active trapping holder, remaining reserves, legal switch/pivot, countdown and partner survival | Assuming an unverified pivot or unavailable reserve saves the position |
 | Conditional attack | Count selections, executions, conditional failures, flinches and KOs separately | Calling a denied action an executed failure or inferring unconditional value |
 | Recovery under pressure | Effective HP gained, overheal, entry damage, move order and subsequent survival | Counting full-HP hits as healing or calling recovery proof of safe entry |
@@ -30,9 +30,11 @@ not matching a prescribed move or a string in the skill.
 | Weather setter reenters the same active weather | Track the original activation and expiry; distinguish setter entry from a new weather activation | Restarting the rain count merely because Drizzle reentered during existing rain |
 | Setup with a support partner | Delivery of the boost, joint incoming pressure, HP cost, disruption and next-turn payoff | Calling default-selected or Encore-forced Soul an intentional setup line; inferring an uncritical KO from a critical one |
 | Recharge turn | Include the recharge board, partner's useful action, opposing switches and loss of control | Recommending a finishing Hyper Beam using only this turn's range or treating one miss as proof the move is always wrong |
-| Low total bank during a handoff | One control owner, fresh request and clock, legal paired fallback, acknowledgement before further analysis | Repeating stale choices until expiry or crediting a server-default action to the intended policy |
+| Low total bank during a handoff | One control owner, fresh request and clock, legal paired fallback, verified send and conditional acceptance evidence | Repeating stale choices until expiry or crediting a server-default action to the intended policy |
 | Optional research consumes the turn | Identify the complete legal pair first, use the early-commit buffers and total bank, verify send, refresh after a new request | Finishing every calculation before choosing, treating an observer alert as submission, or sending the old pair after a forced replacement |
 | Operator pauses after staging, or before any fallback exists | Inspect enabled policy; stage the exact current legal pair before optional work; independently reconcile watchdog send or authorized stuck-forfeit and halt | Treating staging as acceptance, inventing a generic move, retrying an uncertain send, or queuing again after containment |
+| Valid preview, move or replacement sent while the opponent waits beyond five seconds | Preserve its send reservation; ordinary live acknowledgment is absent; wait for observed progress without automatic halt, resend or forfeit | Treating no acknowledgment as a missed own turn or forfeiting an otherwise waiting set |
+| Socket write is uncertain, then a fresh request arrives | Bounded reconciliation and attention, future-search halt, no blind resend or automatic forfeit from missing acknowledgment; still stage/submit fresh requests | Treating uncertainty as acceptance, treating a halt as permission to abandon current turns, or forfeiting solely from an acknowledgment timeout |
 | Party order changes after a server default | Fresh forced request, named replacement identity, complete switch/pass combinations and final legality validation | Reusing an earlier index or counting a rejected switch as sent |
 | Two operators attempt recovery | One current lease; generation-checked takeover; old lease revoked and old fallback discarded; receiver stages anew | Concurrent control, repeated stale takeovers or assuming the same controller label retains ownership |
 | A receiving MCP process starts but cannot reach the signed-in client | Verify its actual read-only status access to the same session/team before transfer or a new queue; retain one responsible operator until acknowledgment | Treating process startup as working controls or leaving the live board unattended during pipe-access setup |
@@ -66,6 +68,14 @@ not matching a prescribed move or a string in the skill.
   identity and a complete switch/pass pair, respects the winning lease, and
   rebuilds the discarded fallback after transfer. It does not guess slot three,
   resend a rejected action unchanged, or claim ownership from its label alone.
+- **Opponent still planning:** Supply separately a valid preview, paired moves
+  and a forced replacement whose local send succeeds, with no live acknowledgment
+  or advancement for longer than five seconds. A passing operator reserves each
+  send, leaves acceptance unknown and waits without resending, halting or
+  forfeiting. Contrast an uncertain write, which needs bounded reconciliation,
+  attention and a future-search halt without an automatic forfeit, with a genuinely
+  unsubmitted request lacking a legal fallback. After the uncertain write, supply
+  a fresh actionable request: it still needs prompt protected submission.
 - **Protection and progress:** Compare our Protect + partner KO route with a
   support-plus-attack aimed into Protect while the other foe can boost. A passing
   review credits the first partner's progress, models the boosted next board in

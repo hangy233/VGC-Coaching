@@ -83,6 +83,12 @@ later revealed by requests. Inspect the recorded preview phase: a server-selecte
 four is not an intentional selection, and a sent choice without acknowledgment
 leaves acceptance unknown. Missing preview history does not prove a default.
 Keep these distinctions in selection-quality and execution review.
+Ordinary successful preview, move and replacement sends do not normally receive
+a live `sentchoice` acknowledgment. The pinned server emits that choice on
+connection restoration, not routinely from its choice handler. A successful local
+send can wait while the opponent plans, including beyond five seconds, without
+proving either acceptance or failure. Keep its duplicate-send reservation; do not
+resend, halt or forfeit merely because no acknowledgment or advancement arrived.
 From each fresh actionable request, identify a complete legal pair immediately.
 With the enabled deadline policy, stage that exact pair using
 `battle_stage_fallback` before calculator calls, history reads or optional notes.
@@ -91,10 +97,18 @@ owner and safety state. Staging is neither a send nor acceptance: the client can
 submit it at its bounded cutoff if the operator stalls. Improve it through an
 ordinary timely `battle_choose` when justified. Every fallback belongs to its
 exact token; request change, disconnect, lease release or takeover invalidates it.
-Without a staged fallback, an enabled `forfeitIfStuck` policy makes a bounded
-whole-set forfeit attempt and halts further searches; it invents no attack.
+For a fresh unsubmitted request with no usable fallback at its planning cutoff,
+an enabled `forfeitIfStuck` policy makes a bounded whole-set forfeit attempt and
+halts further searches; it invents no attack. A successful sent choice is not
+such an unsubmitted request, even when its acceptance remains unknown.
 Inspect its send uncertainty, official result and idle state. Reset a safety halt
 only through deliberate policy configuration while idle, after the control review.
+An uncertain socket write retains its reservation and receives bounded
+reconciliation; if still unresolved, mark attention and halt future searches. Uncertainty alone
+does not authorize an automatic forfeit or a blind resend. Fresh unsubmitted
+requests remain protected and must still receive a staged or prompt legal choice;
+the future-search halt must not leave those turns unattended. Record any known
+rejection or advancement separately instead of inventing a live acknowledgment.
 Before submission, check only unresolved facts that could change it; reuse actual
 MCP results only while all relevant inputs still match. Defer optional notes,
 history reads and extra research until the send is verified, and stop that work
@@ -125,11 +139,13 @@ on an uncertain send, reconcile first rather than blindly repeating the action.
 Use `battle_control_trace` to distinguish request arrival, staging, send,
 rejection, acknowledgment and server advancement. A watchdog or forfeit outcome
 remains an operational failure in the report; it is not evidence of sound play.
+Acknowledgment is conditional evidence, not a routine response that must arrive
+after every local send. Missing it alone is not a control-failure classification.
 
 During automatic context restoration, an external observer can alert the active
 operator using fresh request/choice evidence; it must not create competing move
-ownership. If operation cannot recover and the user authorized forfeiting when
-stuck, use the owned whole-BO3 `battle_forfeit`, then verify the parent result and
+ownership. If an unsubmitted turn cannot recover and the user authorized forfeiting
+when stuck, use the owned whole-BO3 `battle_forfeit`, then verify the parent result and
 server idle. `battle_stop` only disconnects. Never assume a fallback was staged
 or deadline protection enabled: inspect the actually loaded client's safety state.
 
@@ -142,7 +158,9 @@ operator responsible until the receiver acknowledges working controls and
 exclusive ownership. Transfer with `battle_control_claim({takeover:true,
 expectedGeneration:CURRENT_GENERATION,...})`; successful takeover revokes the old
 lease and clears its staged fallback. The receiver must stage a fresh pair
-immediately. A generation mismatch requires a fresh read, not repeated takeovers.
+immediately if a request is actionable; preserve the reservation for an already
+sent choice and wait for actual progress. A generation mismatch requires a fresh
+read, not repeated takeovers.
 During an urgent turn, the current owner should submit and verify a legal pair
 before arranging an optional handoff. A receiver cannot act with the revoked
 lease; if recovery cannot finish, use an already authorized whole-set forfeit or

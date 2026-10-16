@@ -82,14 +82,31 @@ test('takeover revokes pending commands and staged fallback without extending re
     f.timer.advance(15000);assert.equal(f.sent.filter(line=>line.includes('/choose')).length,0);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,1);
   }finally{f.session.dispose();}
 });
-test('uncertain socket write is reserved once, traced and contained without blind retry',async()=>{
+test('uncertain socket write halts future search without forfeiting a possibly delivered choice',async()=>{
   const f=await fixture();try{
     await f.start();f.own();f.request();const action=f.session.actions()[0],send=f.client.ws.send;
     f.client.ws.send=line=>{send(line);if(line.includes('/choose'))throw new Error('Synthetic uncertain socket write');};
     const command={id:'uncertain-once',op:'choose',token:action.token,actions:pair};assert.equal((await f.execute(command)).ok,false);assert.equal((await f.execute(command)).ok,false);
     assert.equal(f.session.actions({includePending:true})[0].submissionStatus,'uncertain');f.timer.advance(5000);
-    assert.equal(f.sent.filter(line=>line.includes('/choose')).length,1);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,1);
+    assert.equal(f.sent.filter(line=>line.includes('/choose')).length,1);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);assert.equal(f.session.supervisor.status().halted,true);
     assert(f.session.controlTrace.some(entry=>entry.type==='watchdog-uncertain'));
+    f.client.ws.send=send;f.request({rqid:33});const fresh=f.session.actions()[0];
+    assert.equal((await f.execute({op:'stage-fallback',token:fresh.token,actions:pair})).ok,true);
+    assert.equal((await f.execute({op:'choose',token:fresh.token,actions:pair})).ok,true);
+    f.timer.advance(90000);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);
+  }finally{f.session.dispose();}
+});
+test('ordinary Showdown preview send can wait for the opponent without a live acknowledgment',async()=>{
+  const f=await fixture();try{
+    await f.start();f.own();const side={id:'p2',name:'TofuRotom',pokemon:['Farigiraf','Golisopod','Rillaboom','Hydreigon'].map(name=>({ident:`p2: ${name}`,details:`${name}, L50`,condition:'100/100',active:false}))};
+    f.request({rqid:3,active:undefined,teamPreview:true,maxChosenTeamSize:4,side});
+    const action=f.session.actions()[0],choice=[{type:'team',order:[4,1,2,3]}];f.timer.advance(12000);
+    await f.execute({op:'stage-fallback',token:action.token,actions:choice});assert.equal((await f.execute({op:'choose',token:action.token,actions:choice})).ok,true);
+    // The real server's ordinary choose() stores a choice without sending
+    // |sentchoice|; that acknowledgment is part of its onConnect() resync.
+    f.timer.advance(95000);
+    assert.equal(f.client.state(room).lastAction.status,'sent');assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);assert.equal(f.session.supervisor.status().halted,false);
+    assert.equal(f.sent.filter(line=>line.includes('/choose')).length,1);
   }finally{f.session.dispose();}
 });
 test('observed resolution without sentchoice retires pending submission, including denied action',async()=>{

@@ -90,13 +90,24 @@ not a send or acceptance; ordinary `battle_choose` remains the prompt preferred
 submission. A changed request, disconnect, release or takeover invalidates the
 fallback. The client invents neither strategy nor calculations.
 
-When no fallback exists and `forfeitIfStuck` is enabled, a bounded recovery timeout
-attempts to forfeit the owned BO3 and halts further searches. Preserve that as a
+When a fresh unsubmitted request has no usable fallback at its planning cutoff
+and `forfeitIfStuck` is enabled, a bounded recovery timeout attempts to forfeit
+the owned BO3 and halts further searches. Preserve that as a
 control failure, verify the official result and server idle, and finish the review.
 Only deliberate idle policy configuration clears the halt. Read
 `battle_control_trace({room:OPTIONAL_OWNED_ROOM,limit:50})` for bounded request,
 stage, send, rejection, acknowledgement and advancement evidence. Separate agent
 intent, sent, accepted, executed, server-defaulted and inactivity outcomes.
+
+Successful local sends remain reserved while the opponent plans. Ordinary server
+choices emit no live `sentchoice` acknowledgment; connection restoration may
+include one for an existing choice. Preview, moves and forced replacements can
+wait beyond five seconds with acceptance unknown. Missing acknowledgment alone
+causes no automatic resend, halt or forfeit. An uncertain socket write instead
+gets bounded reconciliation; if still unresolved, mark attention and halt future searches, without
+blind resubmission or automatic forfeiture solely from missing acknowledgment.
+Fresh unsubmitted requests still require protected prompt choices during that
+halt. This separates actual missed planning from normal waiting for the opponent.
 
 Forced replacements expose named options, stable `pokemonId` values and complete
 switch/pass combinations. Supply exactly one of `{type:'switch',pokemonId:ID}` or
@@ -417,7 +428,7 @@ See the [required BO3 cycle](../skills/champions-mc-matchups/references/headless
 
 ## Failure and reconnect behavior
 
-A choice is identified by room, rqid and request revision. Older rqids, expired decisions, missing paired actions, disabled moves, invalid bench slots, duplicate actions, and stale reconnect state fail closed. Identical repeated requests do not clear deduplication. A changed request (for example unavailable move) gets a new revision. A server `sentchoice` acknowledgement blocks acting on a restored, already-submitted request. Explicit invalid-choice errors permit deliberate corrected decisions at the new revision; stale-rqid/too-late errors require a fresh request.
+A choice is identified by room, rqid and request revision. Older rqids, expired decisions, missing paired actions, disabled moves, invalid bench slots, duplicate actions, and stale reconnect state fail closed. Identical repeated requests do not clear deduplication. A changed request (for example unavailable move) gets a new revision. A server `sentchoice` acknowledgement blocks acting on a restored, already-submitted request; it is not a routine live acknowledgment after every choice. Explicit invalid-choice errors permit deliberate corrected decisions at the new revision; stale-rqid/too-late errors require a fresh request.
 
 Sending marks the action before socket I/O; an ambiguous send is never automatically retried. A sent action is not an acknowledgement. Fresh server requests, errors and battle events establish progress. Reconnect clears identity, grants and request freshness while preserving sent-action keys. Authenticate securely, explicitly rejoin known rooms, inspect fresh state, and decide manually; never replay an outbound queue. Process restart loses in-memory deduplication, so restarting during a live battle requires manual state reconciliation and must not replay prior commands.
 

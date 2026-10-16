@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-16.14**. Read the bundled
+Cycle revision: **2026-10-16.15**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -165,6 +165,11 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
   and the total game bank: repeated animation reads, calculations, and context restoration consume
   the latter even when earlier turns were submitted. Keep a compact current-board
   note and stop optional analysis early enough to submit and verify the fallback.
+  A successful local send can remain acceptance-unknown while the opponent
+  plans: ordinary choices do not normally receive a live acknowledgment.
+  Missing acknowledgment alone warrants neither a resend nor a forfeit.
+  Reconcile an uncertain write separately and keep fresh requests protected;
+  the cycle distinguishes that attention state from an unsubmitted request.
   After a context lapse or timeout, repair this workflow before another queue.
   If authorized to operate the battle UI, verify both
   selections and submission before the deadline; only claim acceptance when

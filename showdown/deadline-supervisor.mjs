@@ -74,21 +74,26 @@ export class DeadlineSupervisor {
         let record=this.records.get(action.token);
         if(!record){
           const receivedAt=finite(action.receivedAt)?action.receivedAt:this.now();
-          record={action:copy(action),receivedAt,cutoffAt:Infinity,hardDeadlineAt:null,clockSource:null,state:'waiting-for-plan',staged:null,attempted:false,containmentAt:null,contained:false};
+          record={action:copy(action),receivedAt,cutoffAt:Infinity,hardDeadlineAt:null,clockSource:null,state:'waiting-for-plan',staged:null,attempted:false,sendOutcome:null,containmentAt:null,contained:false};
           this.records.set(action.token,record);
           this.trace('request-observed',{...this.identity(action),receivedAt});
         }
         record.action=copy(action);
         this.updateDeadline(record);
-        // The session also supplies sent-but-unacknowledged requests. Their
-        // sender reservation must suppress another choice without suppressing
-        // the deadline check. Positive acknowledgment/advancement retires them.
+        // Showdown normally does not acknowledge a live /choose. Its server
+        // emits sentchoice when reconnecting, not routinely after choose(). A
+        // returned local send is therefore allowed to wait for the opponent
+        // indefinitely; missing acknowledgment is not evidence of a failure.
         if(action.actionable===false){
           record.attempted=true;record.staged=null;
           const uncertain=action.submissionStatus==='uncertain';
-          if(!['forfeit-attempted','forfeit-send-returned','forfeit-uncertain'].includes(record.state))record.state=uncertain?'send-uncertain':'submission-pending';
-          if(!record.contained&&!this.forfeitedParents.has(action.parentId))record.containmentAt=Math.min(record.containmentAt??Infinity,this.containmentDeadline(record));
-          if(uncertain&&!this.halted)this.halt('send-uncertain',action);
+          if(uncertain)record.sendOutcome='uncertain';
+          else record.sendOutcome??='returned';
+          if(!['forfeit-attempted','forfeit-send-returned','forfeit-uncertain','attention-required'].includes(record.state))record.state=record.sendOutcome==='uncertain'?'send-uncertain':'sent-awaiting-server';
+          if(record.sendOutcome==='uncertain'){
+            if(!record.contained)record.containmentAt??=this.now()+5000;
+            if(!this.halted)this.halt('send-uncertain',action);
+          }else record.containmentAt=null;
         }
       }
       this.schedule();
@@ -118,7 +123,8 @@ export class DeadlineSupervisor {
 
   stage(token,actions) {
     if(this.disposed||!this.config.enabled)throw new Error('Deadline supervisor is not enabled');
-    if(this.halted)throw new Error('Deadline supervisor is halted; explicitly configure it after recovery');
+    // halted blocks future searches in AgentSession, not protection for the
+    // current owned set after a new request reconciles an uncertain send.
     this.refresh('stage');
     const record=this.records.get(token);
     if(!record)throw new Error('Fallback token is stale or unavailable');
@@ -148,18 +154,10 @@ export class DeadlineSupervisor {
     if(this.timer!==null){this.clearTimer(this.timer);this.timer=null;}
   }
 
-  containmentDeadline(record) {
-    // An agent planning cutoff is not an acknowledgment cutoff. Allow bounded
-    // reconciliation time after a send, limited by the observed server/bank
-    // deadline, and shorten (never extend) this on later observations.
-    const now=this.now();
-    return Math.max(now,Math.min(now+5000,record.hardDeadlineAt===null?Infinity:record.hardDeadlineAt-1000));
-  }
-
   schedule() {
     this.clearPendingTimer();
     if(this.disposed||!this.config.enabled)return;
-    const pending=[...this.records.values()].filter(record=>record.containmentAt!==null||!this.halted&&!record.attempted);
+    const pending=[...this.records.values()].filter(record=>record.containmentAt!==null||!record.attempted);
     if(!pending.length)return;
     const due=Math.min(...pending.map(record=>record.containmentAt??record.cutoffAt));
     this.timer=this.setTimer(()=>{this.timer=null;this.onTimer();},Math.max(0,due-this.now()));
@@ -174,8 +172,8 @@ export class DeadlineSupervisor {
     for(const record of [...this.records.values()]){
       if(record.containmentAt!==null&&record.containmentAt<=this.now()){
         record.containmentAt=null;
-        this.contain(record,'submission-not-confirmed');
-      }else if(!this.halted&&!record.attempted&&record.cutoffAt<=this.now())this.handleCutoff(record);
+        this.attention(record,'uncertain-send-not-reconciled');
+      }else if(!record.attempted&&record.cutoffAt<=this.now())this.handleCutoff(record);
     }
     this.schedule();
   }
@@ -188,7 +186,7 @@ export class DeadlineSupervisor {
     if(!action){this.refresh('request-changed-at-cutoff');return;}
     record.attempted=true;
     if(!record.staged){
-      record.state='no-fallback';this.halt('planning-timeout-without-fallback',action);
+      record.state='no-fallback';
       this.contain(record,'planning-timeout-without-fallback');return;
     }
     let canonical;
@@ -198,7 +196,7 @@ export class DeadlineSupervisor {
       if(!Array.isArray(canonical)||!canonical.length)throw new Error('Invalid canonical fallback');
     }catch(error){
       record.state='fallback-invalid';this.trace('fallback-invalid',{...this.identity(action),message:String(error.message||error)});
-      this.halt('fallback-no-longer-legal',action);this.contain(record,'fallback-no-longer-legal');return;
+      this.contain(record,'fallback-no-longer-legal');return;
     }
     // Validation may invoke session hooks. Recheck before entering the single
     // sender, whose own reservation/deduplication handles a reentrant manual send.
@@ -211,16 +209,26 @@ export class DeadlineSupervisor {
     try{
       const result=this.submit(fresh,canonical,'fallback');
       if(result&&typeof result.then==='function')throw new Error('submit must be synchronous');
-      record.state='send-returned';this.trace('fallback-send-returned',{...this.identity(fresh),serverAcceptanceConfirmed:false});
+      record.sendOutcome='returned';record.state='sent-awaiting-server';record.staged=null;record.containmentAt=null;
+      this.trace('fallback-send-returned',{...this.identity(fresh),serverAcceptanceConfirmed:false});
     }catch(error){
+      record.sendOutcome='uncertain';record.containmentAt??=this.now()+5000;
       record.state='send-uncertain';this.trace('fallback-send-uncertain',{...this.identity(fresh),message:String(error.message||error),retried:false});
       this.halt('fallback-send-uncertain',fresh);
     }
-    // Even a successful local send is not proof of acceptance. The session's
-    // sender supplies reserved-but-unacknowledged contexts; only an unresolved
-    // exact request can trigger containment. Never resubmit the paired choice.
-    record.containmentAt=Math.min(record.containmentAt??Infinity,this.containmentDeadline(record));
+    // Local send return is not acceptance, but acknowledgment silence is also
+    // not rejection. Never retry or forfeit merely because it remains silent.
     this.refresh('after-fallback-send');
+  }
+
+  attention(record,reason) {
+    let action;
+    try{action=this.readActions().find(value=>value.token===record.action.token);}catch{
+      this.halt('state-observation-failed',record.action);return;
+    }
+    if(!action){this.refresh('attention-request-retired');return;}
+    record.contained=true;record.state='attention-required';this.halt(reason,action);
+    this.trace('submission-attention-required',{...this.identity(action),reason,serverAcceptanceConfirmed:false,forfeited:false,retried:false});
   }
 
   contain(record,reason) {
@@ -229,6 +237,10 @@ export class DeadlineSupervisor {
       this.halt('state-observation-failed',record.action);return;
     }
     if(!action){this.refresh('containment-request-retired');return;}
+    // A send reservation (including a throwing write) is not proof that our
+    // action remains required. Only a genuinely unsubmitted actionable request
+    // may use the authorized automatic forfeit path.
+    if(action.actionable===false||record.sendOutcome){this.refresh('submission-already-attempted');return;}
     record.contained=true;
     this.halt(reason,action);record.state='attention-required';
     if(!this.config.forfeitIfStuck){this.trace('containment-not-authorized',{...this.identity(action),reason});return;}

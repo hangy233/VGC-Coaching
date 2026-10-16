@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DeadlineSupervisor} from './deadline-supervisor.mjs';
+import {ShowdownClient} from './client.mjs';
 
 function fixture(options={}) {
   let now=1000,sequence=0;
@@ -55,9 +56,9 @@ test('silence immediately after a new request causes one authorized forfeit and 
   assert.equal(f.forfeits[0].action.parentId,'set-1');assert.match(f.forfeits[0].reason,/without-fallback/);
   assert.equal(f.supervisor.status().halted,true);assert(f.traces.some(event=>event.state==='forfeit-attempted'&&event.controlFailure));
   f.advance(100000);assert.equal(f.forfeits.length,1);
-  f.actions=[{kind:'turn',token:'next-set',room:'battle-2',parentId:'set-2',receivedAt:f.now}];f.supervisor.refresh();
-  f.advance(30000);assert.equal(f.forfeits.length,1);
-  f.supervisor.configure(enable);f.advance(0);assert.equal(f.forfeits.length,2);
+  // AgentSession uses halted to block another search. It does not disable
+  // protection for newly actionable requests in the currently owned set.
+  f.supervisor.configure(enable);assert.equal(f.supervisor.status().halted,false);
 });
 
 test('forfeit is never inferred from enabling the watchdog',()=>{
@@ -133,12 +134,14 @@ test('complete fallback must be legal both when staged and at deadline',()=>{
   assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,1);assert.equal(f.supervisor.status().halted,true);
 });
 
-test('unknown send is never retried and fresh actionable state gets bounded containment',()=>{
+test('unknown send is never retried and bounded attention never becomes an automatic forfeit',()=>{
   let attempts=0;
   const f=fixture({submit:()=>{attempts++;throw new Error('Socket send unknown');}});
   f.supervisor.configure(enable);f.supervisor.stage('turn-1',pair);f.advance(20000);
   assert.equal(attempts,1);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().halted,true);
-  f.advance(4999);assert.equal(f.forfeits.length,0);f.advance(1);assert.equal(f.forfeits.length,1);f.advance(100000);assert.equal(attempts,1);assert.equal(f.forfeits.length,1);
+  f.advance(4999);assert.equal(f.supervisor.status().pending[0].state,'send-uncertain');
+  f.advance(1);assert.equal(f.supervisor.status().pending[0].state,'attention-required');
+  f.advance(100000);assert.equal(attempts,1);assert.equal(f.forfeits.length,0);
 });
 
 test('an uncertain send followed by request advancement is never forfeited',()=>{
@@ -149,34 +152,34 @@ test('an uncertain send followed by request advancement is never forfeited',()=>
   assert.equal(attempts,1);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().halted,true);
 });
 
-test('local send return without reservation or advancement cannot suppress containment',()=>{
+test('a returned send cannot be retried or forfeited even if its adapter leaves the context visible',()=>{
   let attempts=0;
   const f=fixture({submit:()=>{attempts++;}});
   f.supervisor.configure(enable);f.supervisor.stage('turn-1',pair);f.advance(25000);
-  assert.equal(attempts,1);assert.equal(f.forfeits.length,1);assert.equal(f.supervisor.status().halted,true);
+  assert.equal(attempts,1);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().halted,false);
 });
 
-test('reserved manual send remains watched without permitting another choice',()=>{
+test('reserved manual send waits without acknowledgment and without permitting another choice',()=>{
   const f=fixture();f.supervisor.configure(enable);f.advance(5000);
   f.actions[0].actionable=false;f.actions[0].submissionStatus='sent';f.supervisor.refresh('manual-send-reserved');
   assert.throws(()=>f.supervisor.stage('turn-1',pair),/already attempted/);
-  f.advance(5000);assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,1);
-  assert.equal(f.forfeits[0].reason,'submission-not-confirmed');
+  f.advance(100000);assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,0);
+  assert.equal(f.supervisor.status().halted,false);assert.equal(f.supervisor.status().pending[0].state,'sent-awaiting-server');
 });
 
-test('fallback whose send reservation hides choices still gets containment without acknowledgment',()=>{
+test('fallback whose send reservation hides choices can wait for the opponent without acknowledgment',()=>{
   let f,attempts=0;
   f=fixture({submit:()=>{attempts++;f.actions[0].actionable=false;f.actions[0].submissionStatus='sent';}});
   f.supervisor.configure(enable);f.supervisor.stage('turn-1',pair);f.advance(20000);
   assert.equal(attempts,1);assert.equal(f.forfeits.length,0);
-  f.advance(5000);assert.equal(f.forfeits.length,1);assert.equal(attempts,1);
+  f.advance(100000);assert.equal(f.forfeits.length,0);assert.equal(attempts,1);assert.equal(f.supervisor.status().halted,false);
 });
 
-test('uncertain manual send is contained even though its sender reserved the action',()=>{
+test('uncertain manual send raises bounded attention without forfeiting a possibly delivered choice',()=>{
   const f=fixture();f.supervisor.configure(enable);f.advance(1000);
   f.actions[0].actionable=false;f.actions[0].submissionStatus='uncertain';f.supervisor.refresh('socket-throw');
   assert.equal(f.supervisor.status().halted,true);f.advance(5000);
-  assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,1);
+  assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().pending[0].state,'attention-required');
 });
 
 for(const status of ['accepted','execution-observed'])test(`${status} retires a reserved submission without inferring official result`,()=>{
@@ -194,22 +197,73 @@ test('fallback acknowledgment delayed beyond one second is reconciled without a 
   assert.equal(f.forfeits.length,0);
 });
 
-test('pending send acknowledgment grace shortens for fresh turn or bank evidence',()=>{
+test('a pre-send countdown expiring is not proof that a sent choice remains required',()=>{
   const f=fixture();f.supervisor.configure(enable);f.advance(1000);
   f.actions[0].actionable=false;f.actions[0].submissionStatus='sent';f.supervisor.refresh('send');
-  assert.equal(f.supervisor.status().pending[0].containmentAt,7000);
+  assert.equal(f.supervisor.status().pending[0].containmentAt,null);
   f.advance(1000);f.actions[0].clock={deadlineAt:6000,bankDeadlineAt:5500};f.supervisor.refresh('short-bank');
-  assert.equal(f.supervisor.status().pending[0].containmentAt,4500);
+  assert.equal(f.supervisor.status().pending[0].containmentAt,null);
   f.actions[0].clock={deadlineAt:99999};f.supervisor.refresh('longer-clock');
-  assert.equal(f.supervisor.status().pending[0].containmentAt,4500);
-  f.advance(1499);assert.equal(f.forfeits.length,0);f.advance(1);assert.equal(f.forfeits.length,1);
+  assert.equal(f.supervisor.status().pending[0].containmentAt,null);
+  f.advance(100000);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().halted,false);
 });
 
-test('repeated pending reads never extend the acknowledgment grace',()=>{
+test('repeated uncertain reads never extend the bounded attention timeout',()=>{
   const f=fixture();f.supervisor.configure(enable);f.advance(1000);
-  f.actions[0].actionable=false;f.actions[0].submissionStatus='sent';f.supervisor.refresh('send');
+  f.actions[0].actionable=false;f.actions[0].submissionStatus='uncertain';f.supervisor.refresh('send');
   f.advance(3000);f.supervisor.refresh('status-read');assert.equal(f.supervisor.status().pending[0].containmentAt,7000);
-  f.advance(2000);assert.equal(f.forfeits.length,1);
+  f.advance(2000);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().pending[0].state,'attention-required');
+});
+
+for(const kind of ['preview','turn','switch'])test(`${kind}: successful send without routine acknowledgment safely waits beyond 5, 20 and 90 seconds`,()=>{
+  const f=fixture();f.actions[0].kind=kind;f.supervisor.configure(enable);f.advance(1000);
+  f.actions[0].actionable=false;f.actions[0].submissionStatus='sent';f.supervisor.refresh('successful-send');
+  for(const elapsed of [5000,15000,70000]){
+    f.advance(elapsed);f.supervisor.refresh('still-waiting-opponent');
+    assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().halted,false);
+    assert.equal(f.supervisor.status().pending[0].containmentAt,null);
+  }
+  f.actions=[{...f.actions[0],token:'fresh-request',rqid:34,receivedAt:f.now,actionable:true,submissionStatus:undefined,clock:{remainingMs:60000}}];
+  f.supervisor.refresh('actual-new-request');f.supervisor.stage('fresh-request',pair);f.advance(20000);
+  assert.equal(f.sent.length,1);assert.equal(f.sent[0].action.token,'fresh-request');
+});
+
+test('uncertainty halts future searches but a fresh request keeps fallback protection',()=>{
+  const f=fixture();f.supervisor.configure(enable);
+  f.actions[0].actionable=false;f.actions[0].submissionStatus='uncertain';f.supervisor.refresh('unknown-write');f.advance(5000);
+  assert.equal(f.supervisor.status().halted,true);assert.equal(f.forfeits.length,0);
+  f.actions=[{...f.actions[0],token:'next-turn',rqid:33,receivedAt:f.now,actionable:true,submissionStatus:undefined,clock:{remainingMs:60000}}];
+  f.supervisor.refresh('reconciled-by-request');f.supervisor.stage('next-turn',pair);f.advance(20000);
+  assert.equal(f.sent.length,1);assert.equal(f.supervisor.status().halted,true);assert.equal(f.forfeits.length,0);
+});
+
+test('an explicit server rejection creates a fresh actionable recovery deadline',()=>{
+  const f=fixture();f.supervisor.configure(enable);
+  f.actions[0].actionable=false;f.actions[0].submissionStatus='sent';f.supervisor.refresh('sent');f.advance(10000);
+  f.actions=[{...f.actions[0],token:'rejected-revision-2',revision:2,receivedAt:f.now,actionable:true,submissionStatus:'rejected',clock:{remainingMs:30000}}];
+  f.supervisor.refresh('explicit-server-rejection');f.supervisor.stage('rejected-revision-2',pair);f.advance(20000);
+  assert.equal(f.sent.length,1);assert.equal(f.sent[0].action.revision,2);assert.equal(f.forfeits.length,0);
+});
+
+test('real preview wire counterexample: successful /choose has no live sentchoice before opponent selects',()=>{
+  const room='battle-gen9championsvgc2026regmcbo3-2699613961',wire=[];
+  const client=new ShowdownClient();client.connected=true;client.authenticated=true;client.epoch=1;
+  client.ws={send:text=>wire.push(text)};
+  const request={rqid:3,teamPreview:true,maxChosenTeamSize:4,side:{id:'p2',name:'Fixture',pokemon:Array.from({length:6},(_,index)=>({ident:`p2: Pokemon ${index+1}`,details:'Politoed, L50',condition:'100/100'}))}};
+  client.receive(`>${room}\n|request|${JSON.stringify(request)}\n|inactive|Time left: 90 sec this turn | 300 sec total`);
+  const token='preview-exact-failed-request';let f;
+  f=fixture({getActions:()=>{
+    const state=client.state(room);if(!state.request||state.confirmedChoice)return [];
+    const pending=client.sent.has(`choose:${room}:3:${state.revision}`);
+    return [{kind:'preview',token,room,parentId:'set-1',rqid:3,revision:state.revision,receivedAt:1000,clock:{deadlineAt:91000,remainingMs:Math.max(0,91000-f.now)},...(pending?{actionable:false,submissionStatus:state.lastAction.status}:{})}];
+  },validate:(_action,choices)=>client.validateChoice(room,{rqid:3,revision:client.state(room).revision,actions:choices,deadlineAt:Date.now()+10000}).actions});
+  f.supervisor.configure(enable);f.advance(12124);
+  f.supervisor.stage(token,[{type:'team',order:[1,5,3,6]}]);
+  client.authorize('choose',{room,confirmed:true});client.choose(room,{rqid:3,revision:client.state(room).revision,actions:[{type:'team',order:[1,5,3,6]}],deadlineAt:Date.now()+10000});
+  f.supervisor.refresh('operator-sent-preview');
+  assert.deepEqual(wire,[`${room}|/choose team 1536|3`]);assert.equal(client.state(room).lastAction.status,'sent');
+  f.advance(100000);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().halted,false);assert.equal(wire.length,1);
+  assert.equal(client.state(room).confirmedChoice,null);
 });
 
 test('unknown forfeit is reserved once even across explicit reset',()=>{
