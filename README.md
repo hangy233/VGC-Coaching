@@ -228,6 +228,7 @@ npm run test:showdown
 | [Showdown client](showdown/README.md) | Terminal login, saved login, local control and API. |
 | [Agent battle workflow](showdown/AGENT-WORKFLOW.md) | Session setup, deadlines, evidence, review and batch shutdown. |
 | [Required BO3 cycle](skills/champions-mc-matchups/references/headless-battle-cycle.md) | Per-set review, skill adoption and retention checkpoint. |
+| [Engineering and agent-workflow lessons](docs/learnings/README.md) | Decision latency, watchdog behavior, connection recovery, evidence, reflection and remaining limits. |
 | [Repository agent instructions](AGENTS.md) | Expectations for agents working in this checkout. |
 
 Team analytics are inspired by [PASRS](https://devoncorp.press/resources/the-release-of-pasrs-7-0), using this project's own parser and local reports. The server uses Pokémon Showdown, `@pkmn` packages and `@smogon/calc`; it is an independent community project.
