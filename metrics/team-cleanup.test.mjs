@@ -43,6 +43,8 @@ test('deleting a zero-game team removes its snapshot, stable reports, custom exp
   }
   const orphan=`cache/team-metrics/evidence/${SECOND_ROOM}--${teamId}.events.json.gz`;
   await put(workspace,orphan,gzipSync('Orphaned team evidence'));files.push(orphan,await cacheReplay(workspace,SECOND_ROOM));
+  const historical=`cache/team-metrics/evidence/${SECOND_ROOM}--${teamId}.owned-status.json.gz`;
+  await put(workspace,historical,gzipSync('Original synthetic historical status bytes'));files.push(historical);
   const authored=await put(workspace,'teams/original.txt',TEAM),unrelated=await put(workspace,'cache/unrelated-notes.txt','Unrelated notebook');
   const before=(await listTeams({workspace}))[0].usageOrder;
   const plan=await deleteTeamReport({workspace,teamId});

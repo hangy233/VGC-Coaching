@@ -150,7 +150,7 @@ export async function planTeamCleanup({workspace,teamId,sessionCall=callLocalSes
   };
   // Full hashes avoid accidentally deleting a neighboring team version.
   for(const file of await names(workspace,'cache/team-metrics'))if(file.endsWith('--'+teamId+'.json'))await add(file,'game-summary');
-  for(const file of await names(workspace,'cache/team-metrics/evidence'))if(file.endsWith('--'+teamId+'.events.json.gz')||file.endsWith('--'+teamId+'.replay.log.gz')){
+  for(const file of await names(workspace,'cache/team-metrics/evidence'))if(file.endsWith('--'+teamId+'.events.json.gz')||file.endsWith('--'+teamId+'.replay.log.gz')||file.endsWith('--'+teamId+'.owned-status.json.gz')){
     const room=basename(file).split('--')[0];if(/^battle-[a-z0-9]+-\d+$/u.test(room))rooms.add(room);
     await add(file,'game-evidence');
   }

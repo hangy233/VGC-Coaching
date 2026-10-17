@@ -5,6 +5,8 @@ import {getTeamReport, listTeams, MAX_ACTIVE_TEAMS} from './store.mjs';
 import {importBattleFiles, refreshMetricsSources, registerTeamFromFile, registerTeamFromText} from './import.mjs';
 import {callLocalSession} from '../showdown/local-bridge.mjs';
 import {importReplayUrls} from './replays.mjs';
+import {recoverPreviewFromHistoricalStatus} from './replay-evidence.mjs';
+import {CAPTURE_ATTESTATION} from './preview-terminal.mjs';
 import {exportReport, addTeamProfileLinks} from './dashboard.mjs';
 import {updateTeamReport} from './live-reports.mjs';
 import {getAgentTeamReport} from './agent-service.mjs';
@@ -30,7 +32,7 @@ const filters={
   from:date.optional(),to:date.optional(),
 };
 
-export function registerMetricsTools(server,{workspace,replayImporter=importReplayUrls,bo3Finalizer=finalizeBo3,teamDeleter=deleteTeamReport,call=callLocalSession}={}) {
+export function registerMetricsTools(server,{workspace,replayImporter=importReplayUrls,previewRecoverer=recoverPreviewFromHistoricalStatus,bo3Finalizer=finalizeBo3,teamDeleter=deleteTeamReport,call=callLocalSession}={}) {
   if (!workspace) throw new Error('A workspace is required for private team metrics.');
   const result=async action=>{
     try { return {content:[{type:'text',text:JSON.stringify(await action(),null,2)}]}; }
@@ -121,6 +123,12 @@ export function registerMetricsTools(server,{workspace,replayImporter=importRepl
     }});}
     catch{throw new Error('Replay import failed. Check the supported replay URLs, owner username and saved team ID or local team file.');}
   }),{openWorld:true,teamChoice:true,destructive:true});
+  register('team_metrics_recover_preview','Recover an already registered terminal zero-turn game using an explicitly operator-attested HISTORICAL owned MCP status capture and an existing saved server replay. Requires confirmed:true, the exact cache status JSON hash, and a personal capture statement with operator, capture time, tool provenance and reason. Original capture bytes are privately retained and hash-checked on evidence reads; their origin is operator-attested, not independently or cryptographically verified. Never represents historical status as current ownership, reconstructs a request or selected four, changes team/game facts, contacts the battle client, authenticates, searches or uploads a replay. Fetches only the saved replay endpoint; report links remain private.',{
+    teamId,roomId:z.string().regex(/^battle-gen9championsvgc2026regmcbo3-[1-9]\d*$/),
+    statusFile:z.string().min(1).max(2048).describe('Workspace-relative cache JSON status capture; credential, session and control files are refused.'),
+    statusSha256:z.string().regex(/^[a-f0-9]{64}$/),url:z.string().min(1).max(2048),confirmed:z.literal(true),
+    captureAttestation:z.strictObject({statement:z.literal(CAPTURE_ATTESTATION),operator:z.string().min(1).max(100),capturedAt:date,provenance:z.string().min(10).max(2000),reason:z.string().min(10).max(2000)}),
+  },false,args=>result(()=>previewRecoverer({workspace,...args})),{openWorld:true});
   register('team_metrics_export','Export a private standalone HTML dashboard, spreadsheet-friendly CSV, or JSON report. Writes a new file only in cache/team-metrics/reports, never overwrites files, and loads no network assets. Dashboard opponent/result filters recompute its aggregate summaries and all tables from the included game metrics.',{
     ...filters,format:z.enum(['html','csv','json']).default('html'),
     output:z.string().min(1).max(2048).optional().describe('Safe filename such as team-review.html in cache/team-metrics/reports; an existing file is never replaced.'),

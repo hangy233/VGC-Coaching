@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { gzip, gunzip } from 'node:zlib';
 import {acquireMetricsBattleLock,assertMetricsTeamWritable} from './catalog.mjs';
-import { previewTerminalProof, corroboratesPreviewState, validPreviewCorroboration, ownedPreviewObservation, ownedPreviewProof } from './preview-terminal.mjs';
+import { previewTerminalProof, corroboratesPreviewState, validPreviewCorroboration, ownedPreviewObservation, ownedPreviewProof, ownedParentPreviewObservation, ownedParentPreviewProof, historicalOwnedParentPreviewObservation, historicalOwnedParentPreviewProof, validCaptureAttestation } from './preview-terminal.mjs';
 
 const compress = promisify(gzip), decompress = promisify(gunzip);
 const ORIGIN = 'https://replay.pokemonshowdown.com';
@@ -151,6 +151,14 @@ async function registeredReplay({ workspace, teamId, roomId, url, fetchImpl = gl
     localEvidence = await readGameEvidence({ workspace, teamId, roomId });
     previewObservation = localEvidence.previewObservation ?? undefined;
     if (localEvidence.sourceKind === 'sanitized-events') previewProof = previewTerminalProof(localEvidence.events, existing, previewObservation);
+    if (!previewProof && !localEvidence.complete && typeof sessionReader === 'function') {
+      // A fresh reducer cannot recreate the lost private preview request. Bind
+      // the hash-checked zero-progress history to the currently owned BO3 and
+      // require the saved server replay to agree before retaining that proof.
+      previewObservation = ownedParentPreviewObservation(await sessionReader(), existing, localEvidence) ?? undefined;
+      previewProof = previewTerminalProof(localEvidence.events, existing, previewObservation);
+      if (!previewProof) throw bad();
+    }
     if (previewProof && (localEvidence.observedHistory?.started === true || localEvidence.observedHistory?.progress === true)) throw bad();
     if (previewProof && (localEvidence.observedHistory?.started !== false || localEvidence.observedHistory?.progress !== false)) {
       if (localEvidence.complete && existing.metadata.replay?.verified && validPreviewCorroboration(localEvidence.previewCorroboration,existing)) previewCorroboration=localEvidence.previewCorroboration;
@@ -181,6 +189,7 @@ async function registeredReplay({ workspace, teamId, roomId, url, fetchImpl = gl
     localEvidence = {sourceKind:'sanitized-events',complete:false,events:[],decisions,sheets:room.sheets??{},previewObservation};
   }
   const replay = await fetchReplay({ url, roomId, username: existing.username, ownSide: existing.ownSide, outcome: existing.outcome, fetchImpl, previewProof });
+  if (ownedParentPreviewProof(existing, previewObservation)) previewObservation = {...previewObservation, replayLogSha256: replay.metadata.logSha256};
   if (previewObservation && localEvidence.events.length === 0) {
     // Preserve actual replay protocol as protocol and the status projection as
     // a separate observation. A synthesized |request| would misstate provenance.
@@ -201,11 +210,15 @@ export async function fetchRegisteredReplay(args = {}) {
 /** Attach a verified saved replay to an existing identity without changing its private facts. */
 export async function attachVerifiedReplay({ workspace, teamId, roomId, url, fetchImpl = globalThis.fetch, sessionReader } = {}) {
   await assertMetricsTeamWritable({workspace,teamId});
-  const { existing, replay, localEvidence, previewProof, previewCorroboration, previewObservation } = await registeredReplay({workspace,teamId,roomId,url,fetchImpl,sessionReader});
+  return persistVerifiedReplay({workspace,teamId,roomId,...await registeredReplay({workspace,teamId,roomId,url,fetchImpl,sessionReader})});
+}
+
+async function persistVerifiedReplay({workspace,teamId,roomId,existing,replay,localEvidence,previewProof,previewCorroboration,previewObservation}) {
   const { updateBattleMetadata } = await import('./store.mjs');
   // Legacy recorders marked a genuine preview concession partial. Upgrade only
   // after both the immutable local observations and saved server replay agree.
-  if (previewProof && !localEvidence.complete) {
+  const parentPreview = ['owned-parent-preview-terminal','historical-owned-parent-preview-terminal'].includes(previewObservation?.kind);
+  if (previewProof && !localEvidence.complete && !parentPreview) {
     const { saveGameEvidence } = await import('./retention.mjs');
     await saveGameEvidence({ workspace, teamId, roomId, events: [...localEvidence.events, ...localEvidence.decisions], sheets: localEvidence.sheets, previewCorroboration, previewObservation });
   }
@@ -234,6 +247,47 @@ export async function attachVerifiedReplay({ workspace, teamId, roomId, url, fet
   // Do not churn the report timestamp on identical repeated verification.
   if (existing.metadata.replay?.logSha256 === metadata.logSha256 && existing.metadata.replay.url === metadata.url && existing.metadata.replay.evidencePath === metadata.evidencePath) metadata.verifiedAt = existing.metadata.replay.verifiedAt;
   const saved = await updateBattleMetadata({ workspace, teamId, roomId, metadata: { replay: metadata } });
+  if (parentPreview && !localEvidence.complete) {
+    // This recovery path becomes complete only after its exact server replay
+    // is durably hash-checked. It adds no request, choice or execution claim.
+    const {saveGameEvidence} = await import('./retention.mjs');
+    await saveGameEvidence({workspace,teamId,roomId,events:[...localEvidence.events,...localEvidence.decisions,...(localEvidence.controlTrace ?? [])],sheets:localEvidence.sheets,previewObservation});
+  }
   return { roomId, teamId, replay: saved.record.metadata.replay, status: saved.status };
   }finally{await release();}
+}
+
+/** Explicit operator-attested historical recovery. It never reads live IPC. */
+export async function recoverPreviewFromHistoricalStatus({workspace,teamId,roomId,statusFile,statusSha256,url,confirmed,captureAttestation,fetchImpl=globalThis.fetch}={}) {
+  if(confirmed!==true||!HASH.test(teamId??'')||!validCaptureAttestation(captureAttestation))throw new Error('Historical preview recovery requires confirmation and a complete operator capture attestation.');
+  canonicalReplayUrl(url,{roomId});
+  await assertMetricsTeamWritable({workspace,teamId});
+  const {loadMetricsTeam}=await import('./import.mjs');
+  await loadMetricsTeam({workspace,teamId});
+  const {listBattles}=await import('./store.mjs');
+  const existing=(await listBattles({workspace,includeArchived:true})).find(game=>game.teamId===teamId&&game.roomId===roomId);
+  if(!existing?.completed||existing.turns!==0||!existing.metadata.evidence)throw new Error('Historical recovery requires an existing registered terminal zero-turn game with canonical evidence.');
+  const {readGameEvidence}=await import('./retention.mjs');
+  const localEvidence=await readGameEvidence({workspace,teamId,roomId});
+  const {readHistoricalCapture,archiveHistoricalCapture,historicalArchivePath}=await import('./historical-status.mjs');
+  const capture=await readHistoricalCapture({workspace,statusFile,statusSha256});
+  let previewObservation;
+  if(localEvidence.complete){
+    previewObservation=localEvidence.previewObservation;
+    if(!historicalOwnedParentPreviewProof(existing,previewObservation)||previewObservation.snapshot.sha256!==capture.sha256||previewObservation.snapshot.sourceFile!==capture.sourceFile||JSON.stringify(previewObservation.captureAttestation)!==JSON.stringify(captureAttestation))throw new Error('Completed evidence cannot be replaced by another historical capture or attestation.');
+  }else{
+    const snapshot={path:historicalArchivePath(teamId,roomId),sha256:capture.sha256,sourceFile:capture.sourceFile,envelope:capture.envelope,...(capture.replyId?{replyId:capture.replyId}:{})};
+    previewObservation=historicalOwnedParentPreviewObservation(capture.status,existing,localEvidence,{snapshot,attestation:captureAttestation,adoptedAt:new Date().toISOString()});
+  }
+  const previewProof=previewTerminalProof(localEvidence.events,existing,previewObservation);
+  if(!previewProof)throw new Error('Historical capture does not corroborate the exact owned parent, child, team, account and zero-progress history.');
+  const replay=await fetchReplay({url,roomId,username:existing.username,ownSide:existing.ownSide,outcome:existing.outcome,fetchImpl,previewProof});
+  previewObservation={...previewObservation,replayLogSha256:replay.metadata.logSha256};
+  // Nothing is retained until independently fetched server protocol agrees.
+  await archiveHistoricalCapture({workspace,teamId,roomId,capture});
+  const saved=await persistVerifiedReplay({workspace,teamId,roomId,existing,replay,localEvidence,previewProof,previewObservation});
+  const evidence=await readGameEvidence({workspace,teamId,roomId});
+  const {updateTeamReport}=await import('./live-reports.mjs');
+  const stableReport=await updateTeamReport({workspace,teamId});
+  return {...saved,complete:evidence.complete,completionKind:evidence.completionKind,snapshotEvidence:previewObservation.snapshot,provenance:{source:previewObservation.source,adoptedAt:previewObservation.adoptedAt,capturedAt:previewObservation.captureAttestation.capturedAt,sessionId:previewObservation.capturedStatus.sessionId,revision:previewObservation.capturedStatus.revision,captureAttestation:previewObservation.captureAttestation,originLimitation:previewObservation.originLimitation},completionLimitation:evidence.completionLimitation,stableReport};
 }

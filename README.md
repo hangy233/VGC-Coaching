@@ -1,63 +1,70 @@
-# Pokémon VGC Coaching MCP Server
+# Pokémon VGC Coaching MCP
 
-A specialized Model Context Protocol (MCP) server designed for competitive Pokémon VGC analysis. It integrates Smogon usage reports, Champions ladder battle data, and Pokémon Showdown's logic for validation, classification, and metagame analysis.
+An interface made for agents to **analyze Pokémon VGC and Pokémon Champions teams, check proposed adjustments against battle history, and give evidence-based team advice**. This local [Model Context Protocol](https://modelcontextprotocol.io/) server provides tools for team legality, usage data, damage and Speed calculations, replay analysis, private team reports, and Pokémon Showdown best-of-three coaching.
 
-## Features
+Use it to investigate a proposed team adjustment against previous battles, explain recurring matchup problems, or evaluate an approved team through a bounded battle session. Agents can also improve their play through battle reflection, carrying validated lessons into future decisions through maintained coaching skills. The tools supply data and evidence; the agent supplies the game plan and judgment.
 
-- **Validation**: Check Pokémon and teams for legality in specific VGC formats.
-- **Classification**: Analyze team archetypes (Offense, Balance, Stall) and identify synergies.
-- **Usage Statistics**: Fetch Smogon format-wide usage and moveset reports, plus Champions ladder species rankings and set distributions from Pokémon Champions Battle Data, with source and period metadata.
-- **Type Effectiveness**: Instant multiplier calculations for any type combination.
-- **Damage Calculation**: Integrated Smogon-calc for precise battle scenario modeling.
-- **Private team metrics**: Keep ten recent team versions with separate reports. Record moves, knockouts, item removals, selections and results automatically from the client or import saved replay URLs. Includes a live dashboard, agent-readable evidence reports for skill/team reviews, and CSV/JSON exports. Deleting or evicting a report permanently cleans its owned logs and data; blocked shared or active files remain explicit. See [team metrics](metrics/README.md).
-- **Agent battle workflow**: Inspect loaded client capabilities and readiness, retain decision notes and actual calculator evidence, save validated BO3 review revisions, and read/sync maintained guidance through MCP. Report annotations, exact team comparisons and viewer controls are available in the same server.
+The default validation format is **Champions Regulation M-C** (`gen9championsvgc2026regmc`). Live battle control targets its Showdown BO3 format. Pass an explicit supported format for other validation or Smogon usage requests; the live client and private team-registration workflow are built for M-C.
 
-Private battle records, session files, metrics databases, compressed evidence and generated reports belong under the ignored `cache/` directory. New personal team exports and notes under `teams/`, local logs, database files, temporary files and environment secrets are also ignored. Previously published example teams remain tracked. Do not force-add private data or replay access links to Git.
+## What you can ask an agent
 
-## Getting Started
+> Would changing Golisopod from Brave to Adamant have helped in this team's previous games? Find the relevant turns, check Speed with the MCP, and compare the benefits and costs under and outside Trick Room.
 
-### Prerequisites
+> Review this team's Archaludon matchups. Separate positioning mistakes, timing failures and variance from coverage problems. Recommend the smallest useful adjustment and explain what coverage it loses.
 
-- [Node.js](https://nodejs.org/) v22.18.0 or higher (v24 LTS recommended)
-- [npm](https://www.npmjs.com/)
+> Create a report for this team and append these saved Showdown replay URLs. Show each Pokémon's move usage, knockouts and successful item removals.
 
-### Installation & Build
+> Audit this team paste for M-C: legality, roles, speed control, likely leads, important damage benchmarks and unresolved matchups.
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/hangy233/VGC-Coaching.git
-   cd VGC-Coaching
-   ```
+### Assessing an adjustment against battle history
 
-2. Install dependencies:
-   ```bash
-   npm ci
-   ```
+The existing tools support this workflow:
 
-3. Build the project:
-   ```bash
-   npm run build
-   ```
+1. **Find the exact version.** Use `team_metrics_list`, then read `team_metrics_agent_report` and its cached full sets. A move, item, nature or spread revision belongs to a separate team version.
+2. **Find relevant opportunities.** Filter by opposing species, your selected Pokémon, outcome or date. Read sample sizes, refresh warnings and exclusions before interpreting rates.
+3. **Reconstruct the position.** Read the cited turns with `team_metrics_game_evidence`, plus available open sheets, submitted choices and decision notes. Check actual selected reserves, current forms, status, boosts, weather and move order.
+4. **Test the proposed change.** Use actual `calculate_damage` and `calculate_speed` calls with explicit inputs. State unknown opposing investments and unsupported conditions. Check both opponents' plausible actions, including Protect, switches and setup.
+5. **Explain the tradeoff.** Identify positions the revision could improve, coverage or ordering it loses, and whether a better line already existed with the original team. Cite supporting games and distinguish a local improvement from a different game result.
+6. **Evaluate an accepted revision separately.** Validate and register the revised six, then compare later samples through `team_metrics_compare` under matching filters. Changing the live team or starting battles requires the user's authorization.
 
-## Usage
+This is **retrospective scenario analysis**. It can establish a calculated Speed-order change or a damage benchmark in a recorded position. It does not automatically replay an alternate battle, predict every opposing response, or prove that a revised team would have won. Legality, calculated feasibility and results from played games are separate kinds of evidence.
 
-### Current Regulation
+## Self-improvement through battle reflection
 
-The default format is **Pokémon Champions VGC 2026 Regulation M-C**
-(`gen9championsvgc2026regmc`). Team and Pokémon validation, classification, and
-the Smogon usage tools use this format when `format` is omitted. Pass an
-explicit Showdown format ID to analyze a different regulation. The dedicated
-Champions ladder tools select `battleType`, season, and snapshot date instead;
-the provider does not establish a Showdown regulation mapping.
+The battle workflow requires an agent-led review after every BO3 and before the next search. The agent uses retained battle evidence, decision notes, team reports and MCP calculations to examine both successful plans and mistakes, separating tactical decisions, team limitations, control failures and variance.
 
-The coaching skill also uses M-C when no other regulation has been selected.
-Its local session selection is stored in `cache/REG.txt` (ignored by Git).
-See the [official M-C announcement](https://champions-news.pokemon-home.com/en/page/816.html)
-for the regulation details.
+Supported reusable lessons are checked against relevant scenarios, written into the maintained coaching skills, then synced and read before further play. A review can also record a justified **no change** when the evidence does not support a new rule. Future decisions can draw on these lessons, and later reports can help assess whether they worked. See the [required review and skill-adoption cycle](skills/champions-mc-matchups/references/headless-battle-cycle.md).
 
-### Connecting to MCP
+The agent performs the reflection and guidance edits; the MCP provides evidence and checkpoint tools. This improvement loop persists knowledge in skills, reviews and reports. It does not retrain the underlying model or guarantee better battle results.
 
-To use this server with a client like Gemini CLI or Claude Desktop, point it to the built entry point:
+## Capabilities
+
+| Area | Tools and behavior |
+| --- | --- |
+| Team legality and data | `validate_pokemon`, `validate_team`, Pokémon/move/item/ability lookups, type effectiveness and `classify_team`, using the installed data and pinned Showdown rules. |
+| Metagame research | Smogon format/month/rating usage and movesets; Champions ladder rankings and set distributions, with source and period metadata. |
+| Numerical checks | `calculate_damage` and `calculate_speed`, including native Champions points, current status and supported field effects. Optional calculator receipts retain actual inputs/results for reviews. |
+| Private team analytics | Exact team versions, selections/leads, Mega use, executed moves, failures, misses, blocks, direct and attributed indirect KOs, observed item removals, matchup results and sample-quality flags. |
+| Replay and report input | Automatic observation from the local battle client, saved log imports and saved replay URL imports. New games update the same team's report; reimporting the same game updates it without adding a duplicate. |
+| Human and agent reports | Local HTML dashboard, CSV/JSON exports, agent JSON/Markdown briefs, focused retained turn evidence, annotations, cross-version comparisons and report-health checks. |
+| Agent-operated BO3s | Terminal battle-log streaming and watch URLs, open sheets, structured legal choices, exclusive controls, staged fallback choices, bounded set allowances, replay preservation and versioned review checkpoints. |
+
+Move usage counts **observed executions**, not every intended or submitted choice. Knock Off usage, successful item removal and a knockout are distinct measurements. Unknown selections and uncertain KO sources stay explicit.
+
+Incomplete, operationally affected and manually excluded games are omitted by default. Their counts and reasons remain visible. An operationally affected or manually excluded child also excludes its whole parent BO3 from default set performance. Opt into those records when reviewing execution failures rather than silently treating them as clean team tests.
+
+## Install and connect
+
+Use **Node.js 24 or newer** for the full local battle workflow. The package's minimum supported version is Node.js 22.18.0; npm is required. Bring an MCP-capable agent/client separately.
+
+```bash
+git clone https://github.com/hangy233/VGC-Coaching.git
+cd VGC-Coaching
+npm ci
+npm run build
+```
+
+The build compiles the pinned Pokémon Showdown source before the TypeScript server. Configure your MCP client to launch the built stdio entry point:
 
 ```json
 {
@@ -70,350 +77,161 @@ To use this server with a client like Gemini CLI or Claude Desktop, point it to 
 }
 ```
 
-### Damage calculations with status
+Replace the path with your checkout's absolute path. On Windows, a JSON path can use forward slashes, such as `C:/projects/VGC-Coaching/dist/index.js`. Reload the MCP connection after rebuilding to load server changes.
 
-`calculate_damage` accepts optional `attackerOptions.status` and
-`defenderOptions.status`. Use Smogon status codes: `brn` (burn), `par`
-(paralysis), `psn` (poison), `tox` (bad poison), `slp` (sleep), or `frz`
-(freeze). Omit status or use `""` for a healthy Pokémon. Unsupported values
-are rejected instead of silently ignored.
+### Other models and MCP hosts
 
-For example, include `"attackerOptions": { "level": 50, "status": "brn" }`
-to calculate damage from a burned attacker. The calculator applies the
-status mechanics itself, including generation-appropriate ability and move
-interactions such as Guts and Facade. Do not manually halve its result.
-Defender status can also affect moves such as Hex and the result description's
-residual-damage/KO calculation. This models an existing status; it does not
-validate whether the status could have been inflicted.
+The server does not call a model API or require a particular model provider. Use an agent host that can launch a local MCP stdio server and follow its tool schemas. A different host may need its own MCP configuration and project-instruction setup; Codex skill discovery and UI metadata are not a portable instruction loader.
 
-### Using the Skill
+Follow the [model-neutral agent startup guide](docs/AGENT-STARTUP.md) to load current coaching guidance and choose analysis or authorized battle scope. If your host uses another installed-skill directory, set `VGC_COACHING_SKILLS_ROOT` in the server's startup environment to the absolute parent of the two installed skill folders. Without it, the existing Codex directory remains the default. This is trusted startup configuration, not an MCP tool argument. Live control also needs access to the same local workspace and terminal-owned client.
 
-I have bundled a specialized skill file (`smogon-vgc-assistant.skill`) to guide the AI on how to use these tools effectively.
+## Create a report and add games
 
-1. **Install the skill**:
-   ```bash
-   gemini skills install smogon-vgc-assistant.skill --scope workspace
-   ```
+Battle control and report tools are exposed by the **same MCP server**. A report can be used without signing into Showdown or starting a live battle.
 
-2. **Reload in Gemini CLI**:
-   Run `/skills reload` in your interactive session.
+Register a complete legal team from a workspace-local file, or supply the pasted export as `teamText`:
 
-3. **Expert Guidance**: Once loaded, the AI will automatically prioritize the MCP tools as the source of truth, ignoring outdated training memory.
+```json
+{"teamFile":"teams/YOUR_TEAM.txt","name":"My M-C team"}
+```
 
-### Champions M-C Coaching Skills
+Call `team_metrics_register_team` with those arguments and retain the returned `teamId`. In the following examples, replace `FULL_TEAM_FINGERPRINT` with that full ID and `YOUR_USERNAME` with the owner shown in the replay.
 
-Two additional Codex skills separate team construction from battle planning:
+To read existing saved replay URLs, call `team_metrics_import_replays`:
 
-| Skill | Use |
+```json
+{
+  "teamId": "FULL_TEAM_FINGERPRINT",
+  "username": "YOUR_USERNAME",
+  "urls": ["https://replay.pokemonshowdown.com/REPLAY_ID"]
+}
+```
+
+This fetches an already saved replay; it does not publish a battle. Append another game by importing its URL with the same team ID. Use the correct immutable version: a replay does not establish every unrevealed move, item, spread or reserve choice.
+
+To get an agent-readable matchup brief, call `team_metrics_agent_report`:
+
+```json
+{
+  "teamId": "FULL_TEAM_FINGERPRINT",
+  "opponentSpecies": "Archaludon",
+  "includeGames": true
+}
+```
+
+Use `team_metrics_game_evidence` to inspect a supporting game's retained turns. `team_metrics_report` returns detailed measured observations; `team_metrics_compare` compares two version IDs. The complete schemas and import options are documented in [team metrics](metrics/README.md).
+
+See the [synthetic team-report example](docs/examples/TEAM-REPORT-EXAMPLE.md) for actual report fields, sample-quality exclusions, move counts, item removals and evidence-linked review questions. Its observations are illustrative rather than results from a real team.
+
+For a capable live client, `team_metrics_sync_battles` flushes and appends its observations outside action deadlines. Check recorder readiness and errors before treating the report as durable. Existing saved logs can instead be appended through `team_metrics_import`.
+
+### Token usage and context efficiency
+
+Start with a filtered agent brief using `includeGames: false`, then read cited games and relevant turn ranges. The game index and review signals are capped, and `maxEvidence` bounds supporting references. During live play, compact turn status and revision-based waits avoid repeatedly reading full state. Preserve complete required guidance, quality warnings and decisive evidence.
+
+These controls reduce unnecessary context; they are not a hard token budget. The server does not measure model tokens or cost, and `includeGames: true` can still return a large report. See [token-efficiency guidance and limits](docs/TOKEN-EFFICIENCY.md) for request examples, measurement advice and remaining improvements.
+
+### View or export
+
+Call `team_metrics_open_viewer` to start or reuse the verified local viewer and receive its URL. You can also run it from the repository:
+
+```bash
+npm run metrics:view
+```
+
+The default address is `http://127.0.0.1:52615/`. The viewer binds to loopback and checks for updates. Each exact team has a stable HTML profile plus `.agent.json` and `.agent.md` briefs under `cache/team-metrics/reports/teams/`.
+
+`team_metrics_export` produces standalone HTML, CSV or JSON snapshots. The CLI offers the same report/import workflow:
+
+```bash
+npm run metrics -- list
+npm run metrics -- review --team FULL_TEAM_FINGERPRINT --include-games
+```
+
+## Champions calculations and usage sources
+
+For native Champions numerical checks, pass **`gen: 0`** explicitly to `calculate_damage` and `calculate_speed`. Damage inputs use native points in `evs`; Speed inputs use `statPoints`. Stat keys are `hp`, `atk`, `def`, `spa`, `spd` and `spe`.
+
+M-C uses at most 66 total points and 32 per stat, with level 50 and IVs of 31. Do not substitute ordinary 252-EV spreads, zero-Speed IV sets or Terastallization assumptions. Validation uses the string format ID `gen9championsvgc2026regmc`, independently of the calculator's numeric mode.
+
+Supply the current form, ability, item, boosts and status. For example, `status: "brn"` lets the damage calculator apply burn; do not manually halve the result. The current damage schema exposes game type, weather, terrain and gravity, but not every simulator condition: Helping Hand, screens and current HP are not exposed. Mark a benchmark requiring unsupported state as unverified.
+
+Generic move/movepool lookups can differ from Champions-specific rules. Validate complete sets and use the Champions rules data when the mechanics depend on an exception. See the [calculation and rules reference](skills/champions-mc-matchups/references/mc-rules-and-tools.md).
+
+| Data source | Tools | Interpretation |
+| --- | --- | --- |
+| Smogon / Showdown ladder | `get_usage_stats`, `get_pokemon_usage` | Select `format`, optional `month` and `rating`. Omitted month discovers the latest published report; rating fallback is labelled. Missing M-C data is not replaced with another regulation. |
+| Pokémon Champions Battle Data | `get_champions_usage_stats`, `get_champions_pokemon_usage` | Select `battleType`, optional `season` and `date`. The community provider supplies species ranks and species-specific set percentages, not overall species usage percentages or a verified Showdown regulation mapping. |
+
+Keep the populations and resolved periods separate. Champions battle data is provided by [Pokémon Champions Battle Data](https://championsbattledata.com/api_guide), an unofficial community source. Follow its [usage rules](https://championsbattledata.com/api-rules/), including linked attribution in public output and limits on redistribution or permanent mirroring.
+
+## Optional Showdown BO3 client
+
+The lightweight client keeps one authenticated Showdown connection in a visible local terminal. The agent controls that same object through OS-local IPC; no browser battle UI is required. Strategy comes from the agent, and the client does not generate a battle policy.
+
+After building, start a terminal session with an approved team and a bounded allowance:
+
+```bash
+npm run battle:session -- YOUR_USERNAME --team teams/YOUR_TEAM.txt --sets 1
+```
+
+On Windows PowerShell, use `npm.cmd` if required by your shell configuration. Enter the password directly into the hidden terminal prompt. Optional Windows Credential Manager login is documented in [saved-login setup](showdown/README.md#optional-windows-saved-login); the broker supplies authentication without exposing the password to the agent.
+
+Login does not queue a battle. The controlling agent must claim exclusive control, configure deadline protection while idle, check guidance/review readiness with `battle_preflight`, and call `battle_start` within the user's authorized scope. Every fresh request needs a prompt complete legal paired choice; `battle_stage_fallback` can protect an agent-selected pair before optional analysis.
+
+The terminal streams readable events and prints watch URLs for the set and each game. Automatic readiness advances games within the current BO3; another set requires a separate search. Replay publication is opt-in through `battle_set_replay_policy` or `--save-replays`, within the user's sharing authorization and the room's existing privacy.
+
+After **every BO3**, including the final one, the agent must:
+
+1. Verify the official parent result and all expected child games.
+2. Preserve authorized replays, sync metrics and read the exact team's evidence.
+3. Review decisions, useful counterexamples, control failures and variance separately.
+4. Record a supported skill lesson or justified no-change result; verify skill sync and the actual `battle_review_save` / `battle_review_status` checkpoint.
+5. Inspect and apply bounded retention. At the end of the authorized batch, stop the client and verify shutdown.
+
+Preflight and review tools validate stored evidence and readiness; they do not prove tactical judgment or enforce the entire agent workflow inside `battle_start`. A successful local send, server acceptance and observed execution are separate facts. Missing routine acknowledgment alone is not a reason to resend or forfeit, and a local planning timeout is not proof of server expiry.
+
+Rebuilding or restarting MCP does not update an already running battle client. Inspect `battle_capabilities` and use the loaded process's advertised features. See the [client setup/API](showdown/README.md) and [agent workflow](showdown/AGENT-WORKFLOW.md) for controls, recovery and lifecycle details.
+
+## Coaching skills
+
+| Maintained source | Purpose |
 | --- | --- |
-| [champions-mc-teambuilding](skills/champions-mc-teambuilding/SKILL.md) | Build or refine a six, assign roles, choose moves/items/stat points, and test matchup coverage. |
-| [champions-mc-matchups](skills/champions-mc-matchups/SKILL.md) | Choose four and leads, plan counterplay, and review replays using information available at each turn. |
+| [champions-mc-teambuilding](skills/champions-mc-teambuilding/SKILL.md) | Build/refine a six, assess roles and coverage, and evaluate proposed revisions against exact-team history. |
+| [champions-mc-matchups](skills/champions-mc-matchups/SKILL.md) | Choose four, plan paired actions, review replays and run authorized BO3 cycles with a per-set review checkpoint. |
 
-Their source folders contain `SKILL.md`, Codex UI metadata, and references to
-expert guides and verified M-C rules. Copy each complete folder into
-`$CODEX_HOME/skills` (normally `~/.codex/skills`) for Codex discovery. Invoke them
-as `$champions-mc-teambuilding` and `$champions-mc-matchups`; automatic selection
-also remains enabled.
+Install complete skill folders, including references and metadata, into your agent host's skill directory. For Codex this is normally `$CODEX_HOME/skills` or `~/.codex/skills`. The repository folders are the maintained source.
 
-For the matchup skill, use the whole-folder sync helper instead of copying just
-`SKILL.md`:
+Agents can use `battle_skill_status`, `battle_skill_sync` and `battle_skill_read` to compare, install reviewed guidance and read the complete current files. Installation has a dry run and private backups; source editing and tactical validation remain deliberate review work. The matchup skill also provides a [manual sync helper](skills/champions-mc-matchups/scripts/sync-skill.mjs).
 
-```powershell
-node skills/champions-mc-matchups/scripts/sync-skill.mjs --check
-node skills/champions-mc-matchups/scripts/sync-skill.mjs --install --backup cache/skill-sync-before-install
-node skills/champions-mc-matchups/scripts/sync-skill.mjs --check
-```
+## Local data and retention
 
-The installer backs up overwritten files, never deletes destination-only files,
-and verifies all content hashes. Read the updated skill after syncing. Before each
-new authorized BO3, its [required cycle](skills/champions-mc-matchups/references/headless-battle-cycle.md)
-requires the previous set's private decision review, a supported lesson or explicit
-no-change reason, relevant validation and verified skill sync. This applies after
-the final set too. Project `AGENTS.md`, the skill entrypoint/default prompt and MCP
-`battle_start` description expose the requirement; review completion is an agent
-responsibility, not a runtime restriction enforced by the transport.
+The private database, team snapshots, replay caches, calculator receipts, decision journals, BO3 reviews and generated reports live under ignored `cache/` paths. New personal exports under `teams/` are ignored too; previously tracked example teams remain versioned. Keep private replay access URLs out of commits and shared skills. Sharing a report can share its contained team, opponent names and replay links.
 
-Agents can use `battle_skill_status`, `battle_skill_sync` (dry run first) and
-`battle_skill_read` for this same workflow. The read returns current complete
-guidance and a short-lived content receipt for `battle_review_save`.
-`battle_review_get`/`battle_review_status` verify stored checkpoint coverage;
-`battle_preflight` combines session, allowance, skill, prior review and report
-checks without queueing or authenticating. Content delivery and evidence checks
-do not establish tactical judgment. Updated source does not change a running
-client; inspect `battle_capabilities` before depending on new operations.
+The catalog retains the **10 most recently used exact team versions**. Adding an eleventh permanently cleans the evicted version's report and owned data; explicit deletion uses the same cascade. Active writers, shared files and uncertain ownership remain visible blockers rather than being deleted unsafely. Deleted history is not a recoverable archive.
 
-The guide research and rules baseline were checked on October 2, 2026. Historical
-VGC guides contribute methodology only; recommendations must pass Champions M-C
-checks. In this project's installed calculator, use explicit `gen: 0` and native
-Champions stat points for damage, while validation uses
-`gen9championsvgc2026regmc`. The bundled references explain generic-movepool
-limitations, item eligibility, and fields that validation silently removes.
+Per-BO3 cleanup is different: it retains useful compact battle evidence, results, reviews and calculations while removing only eligible closed disposable run files after verification. A replay URL alone cannot replace private selection and decision evidence. See [retention and deletion details](metrics/README.md).
 
-## Historical Example Usage (Scarlet/Violet Regulation I)
-
-This example uses a historical format. Pass `format: "gen9vgc2025regi"`
-explicitly; the current Champions M-C default has different rules and eligibility.
-
-### User Request
-> "Analyze this Reg I team:
-> 
-> Calyrex-Shadow @ Focus Sash  
-> Ability: As One (Spectrier)  
-> Level: 50  
-> Tera Type: Poison  
-> EVs: 4 HP / 252 SpA / 252 Spe  
-> Timid Nature  
-> IVs: 0 Atk  
-> - Astral Barrage  
-> - Nasty Plot  
-> - Psyshock  
-> - Protect  
-> 
-> Zamazenta-Crowned @ Rusted Shield  
-> Ability: Dauntless Shield  
-> Level: 50  
-> Tera Type: Fire  
-> EVs: 252 HP / 4 Atk / 84 Def / 36 SpD / 132 Spe  
-> Jolly Nature  
-> - Close Combat  
-> - Iron Head  
-> - Wide Guard  
-> - Protect  
-> 
-> Chien-Pao @ Life Orb  
-> Ability: Sword of Ruin  
-> Level: 50  
-> Tera Type: Ghost  
-> EVs: 4 HP / 252 Atk / 252 Spe  
-> Jolly Nature  
-> - Ice Spinner  
-> - Sucker Punch  
-> - Sacred Sword  
-> - Protect  
-> 
-> Raging Bolt @ Assault Vest  
-> Ability: Protosynthesis  
-> Level: 50  
-> Tera Type: Fairy  
-> EVs: 244 HP / 76 Def / 180 SpA / 4 SpD / 4 Spe  
-> Modest Nature  
-> IVs: 20 Atk  
-> - Thunderclap  
-> - Draco Meteor  
-> - Thunderbolt  
-> - Electroweb  
-> 
-> Amoonguss @ Sitrus Berry  
-> Ability: Regenerator  
-> Level: 50  
-> Tera Type: Water  
-> EVs: 252 HP / 164 Def / 92 SpD  
-> Sassy Nature  
-> IVs: 0 Atk / 0 Spe  
-> - Spore  
-> - Rage Powder  
-> - Pollen Puff  
-> - Protect  
-> 
-> Ogerpon-Cornerstone @ Cornerstone Mask  
-> Ability: Sturdy  
-> Level: 50  
-> Tera Type: Rock  
-> EVs: 4 HP / 252 Atk / 252 Spe  
-> Jolly Nature  
-> - Ivy Cudgel  
-> - Horn Leech  
-> - Encore  
-> - Spiky Shield"
-
-### AI Analysis (powered by MCP)
-I've analyzed your team and cross-referenced it with Regulation G/I trends. While my automated tool is still refining its data extraction, I have sufficient competitive knowledge to provide a high-level audit.
-
-#### **Team Strategy & Core Synergies**
-*   **Archetype:** **Dual Restricted Balance/Offense**
-*   **Lead Pressure:** **Calyrex-S + Chien-Pao** is a terrifying offensive duo. While *Sword of Ruin* doesn't boost Calyrex's special output, it significantly lowers the bulk of opponents, making them easier to pick off with *Astral Barrage* or *Psyshock*. More importantly, Chien-Pao's presence forces your opponent to respect physical threats, often leading to misplays in their defensive positioning.
-*   **Positional Bulk:** **Zamazenta-C + Amoonguss** provides the defensive backbone. *Rage Powder* and *Spore* are vital for allowing Zamazenta to cycle damage or set up if needed.
-
-#### **Suggestions for Improvement**
-
-1.  **Zamazenta-Crowned: Move Selection**
-    *   **Current:** *Close Combat*
-    *   **Suggestion:** **Body Press**
-    *   **Reasoning:** Zamazenta-C's primary strength is its astronomical Defense (boosted by *Dauntless Shield*). *Body Press* uses Defense for damage calculation, allowing you to deal massive damage without the stat drops from *Close Combat*. It also makes you less vulnerable to *Intimidate*.
-
-2.  **Calyrex-Shadow: Tera Type & Synergy**
-    *   **Current:** *Tera Poison*
-    *   **Suggestion:** **Tera Ghost** or **Tera Stellar**
-    *   **Reasoning:** *Tera Poison* is good defensively against Fairy/Fighting, but Calyrex-S often wants the raw power of **Tera Ghost** to secure OHKOs with *Astral Barrage*. Alternatively, **Tera Fairy** is excellent for resisting Dark-type moves (like *Sucker Punch* or *Dark Pulse*) that are your biggest threats.
-
-3.  **Speed Control Optimization**
-    *   Your team relies heavily on natural speed (Calyrex, Chien-Pao) and priority (*Thunderclap*, *Sucker Punch*). However, you have no way to counter opposing **Tailwind** or **Trick Room** outside of Amoonguss.
-    *   **Suggestion:** Consider adding **Tailwind** or a Pokémon with **Icy Wind/Electroweb** (you have *Electroweb* on Raging Bolt, which is good). If you find yourself struggling against faster teams, a manual Tailwind user (like Tornadus or Whimsicott) might be more reliable.
-
-4.  **Item Choice: Chien-Pao**
-    *   **Current:** *Life Orb*
-    *   **Suggestion:** **Focus Sash** (if moved from Calyrex) or **Choice Band**
-    *   **Reasoning:** Chien-Pao is incredibly frail. If Calyrex-S moves to *Life Orb* or *Choice Specs*, Chien-Pao should almost always carry the *Focus Sash*. If Calyrex keeps the Sash, *Choice Band* Chien-Pao can pick up surprising KOs on bulky targets like Incineroar.
-
-#### **Type Effectiveness Summary (Key Matchups)**
-*   **Against opposing Calyrex-S**: Your Zamazenta's *Wide Guard* is your primary win condition.
-*   **Against Urshifu-R**: Amoonguss and Raging Bolt are your best answers. Ensure Amoonguss is healthy to redirect *Surging Strikes*.
-*   **Against Miraidon**: Raging Bolt's *Assault Vest* and Ogerpon-C's *Sturdy* are crucial.
-
-#### **Final Recommendation**
-Swap **Close Combat** for **Body Press** on Zamazenta immediately. This is the single biggest "meta" upgrade you can make to this team's efficiency.
-
-## Staying Up-to-Date
-
-To ensure you have the latest Pokémon data, Regulation rules, and metagame trends, you should periodically update the underlying Smogon and @pkmn packages.
-
-### Pokémon Showdown Rules Snapshot
-
-The published `pokemon-showdown` 0.11.11 release does not include M-C. This
-project therefore pins the official source snapshot
-[`a5df8274e85b0889bf2a9b3422a08b39732374fc`](https://github.com/smogon/pokemon-showdown/tree/a5df8274e85b0889bf2a9b3422a08b39732374fc)
-in `package.json` and `package-lock.json`. `npm run build` compiles this rules
-snapshot before compiling the MCP server, including after a fresh `npm ci`.
-
-To update the rules later, install a verified newer commit tarball (or a published
-release that includes the required format), then run `npm test`. Commit both
-package files so fresh installations use the same rules.
-
-### Updating Logic & Data
-The core Pokémon logic is provided by `pokemon-showdown` and `@pkmn/dex`.
-
-To update the published Pokémon data packages and rebuild the project while
-preserving the verified Showdown rules snapshot:
-```bash
-npm run update-data
-```
-
-Alternatively, you can update packages manually:
-```bash
-# Update core logic packages
-npm install @pkmn/dex@latest @pkmn/data@latest @pkmn/stats@latest @smogon/calc@latest
-# Rebuild the project
-npm run build
-```
-
-### Updating Metagame Usage
-
-Both sources return structured JSON with provenance: source links, the resolved
-period, and source-specific qualifications. Keep the populations separate when
-comparing results.
-
-| Source | Summary tool | Pokémon detail tool | Selection |
-| --- | --- | --- | --- |
-| Smogon / Pokémon Showdown ladder | `get_usage_stats` | `get_pokemon_usage` | `format` (M-C default), optional `month` (`YYYY-MM`), optional `rating` (`0`, `1500`, `1630`, or `1760`). |
-| Champions ladder, via the community provider Pokémon Champions Battle Data | `get_champions_usage_stats` | `get_champions_pokemon_usage` | `battleType` (`Doubles` default or `Singles`), optional `season` (for example `M6`), optional `date` (`YYYY-MM-DD`). |
-
-Both summary tools accept `limit` (default `20`, maximum `100`). Both detail
-tools require `pokemon`. For Smogon, an explicit rating requests that exact
-cutoff; omitted ratings try `1760`, then `0`, and label any fallback. Without
-`month`, the tools discover the latest actually published monthly reports.
-Automatic discovery searches the 12 most recent published months; pass `month`
-explicitly for an older archive.
-Missing M-C reports are reported as unavailable rather than replaced with another
-regulation. September 2026 M-C reports were verified as published on October 2,
-2026 at [Smogon's statistics archive](https://www.smogon.com/stats/2026-09/).
-
-The Champions tools resolve snapshots from the provider's
-[metadata index](https://championsbattledata.com/data/meta/index.json); omitted
-season/date select the latest available data. The verified latest snapshot on
-October 2, 2026 was season `M6`, dated `2026-10-02`. Its species list reports
-**ranks**, without overall species usage percentages or a battle count.
-Pokémon detail reports contain move, item, ability, nature, and stat-point
-percentages plus teammate ranks. Those percentages describe a species' sets,
-not its share of all teams. Season `M6` must not be assumed to mean Regulation
-M-C: the provider supplies no verified Showdown-format mapping.
-Malformed upstream stat-point spreads are omitted from the affected Pokémon's
-detail report with a warning; valid rankings and other Pokémon remain available.
-
-Battle data provided by
-[Pokémon Champions Battle Data](https://championsbattledata.com/api_guide), an
-unofficial community project. Its [API usage rules](https://championsbattledata.com/api-rules/)
-require attribution for public use, allow reasonable caching, and prohibit a
-standalone raw-data service or permanent mirror without permission.
-
-### Verification
+## Development and documentation
 
 ```bash
 npm test
+npm run test:metrics
+npm run test:showdown
 ```
 
-This builds the server and checks the default regulation, Champions legality,
-both usage sources, and their MCP tools. Usage tests use fixed source fixtures
-and do not require live downloads.
+`npm test` builds the project and runs the core, transport and metrics tests. Fixture tests do not establish live ladder performance. The build pins [this Showdown source snapshot](https://github.com/smogon/pokemon-showdown/tree/a5df8274e85b0889bf2a9b3422a08b39732374fc); update the rules deliberately and commit both package files when changing that dependency. `npm run update-data` updates the published Pokémon data/calculator packages and rebuilds, while preserving that Showdown pin.
 
-## Available Tools
+| Documentation | Contents |
+| --- | --- |
+| [Team metrics](metrics/README.md) | Inputs, metrics definitions, filters, dashboard, agent reports, storage and cleanup. |
+| [Showdown client](showdown/README.md) | Terminal login, saved login, local control and API. |
+| [Agent battle workflow](showdown/AGENT-WORKFLOW.md) | Session setup, deadlines, evidence, review and batch shutdown. |
+| [Required BO3 cycle](skills/champions-mc-matchups/references/headless-battle-cycle.md) | Per-set review, skill adoption and retention checkpoint. |
+| [Repository agent instructions](AGENTS.md) | Expectations for agents working in this checkout. |
 
-| Tool | Description |
-| :--- | :--- |
-| `validate_team` | Checks team legality (default: `gen9championsvgc2026regmc`). |
-| `classify_team` | Returns tags like 'weatherless', 'offense', and stalliness scores. |
-| `get_usage_stats` | Smogon usage rankings for a format/month/rating; optional `limit` (20 default, 100 maximum). |
-| `get_pokemon_usage` | Smogon Pokémon moveset report for a format/month/rating. |
-| `get_champions_usage_stats` | Champions ladder species ranks for a battle type/season/date; optional `limit` (20 default, 100 maximum). |
-| `get_champions_pokemon_usage` | Champions ladder Pokémon set percentages and teammate ranks for a battle type/season/date. |
-| `get_type_effectiveness` | Calculates multiplier for an attack vs defender types. |
-| `calculate_damage` | Advanced damage calculation using Smogon-calc. |
-| `calculate_speed` | Native Champions raw stats, effective Speed, same-priority order and ties for 1–6 explicit snapshots. |
-| `battle_calculation_evidence` | Read retained actual calculator inputs/results. Both calculator tools accept optional exact-team/game `evidenceContext` and return a receipt for notes/reviews. |
-| `battle_status`, `battle_wait` | Compact state, current action tokens, observed clocks and event-driven waiting on the terminal-owned session. |
-| `battle_capabilities`, `battle_preflight` | Inspect the loaded runtime and observed readiness, including prior review, skill adoption and report health. No battle or login is started. |
-| `battle_note_decision`, `battle_decision_notes` | Save/read bounded reasoning and predictions tied to an observed action token; distinct from executed protocol evidence. |
-| `battle_review_save`, `battle_review_get`, `battle_review_status` | Store versioned private BO3 checkpoints with official-result, exact-child, evidence and adopted-guidance checks. |
-| `battle_skill_status`, `battle_skill_read`, `battle_skill_sync` | Compare, read and install maintained complete Champions guidance with fixed paths, private backups and content checks. |
-| `battle_start`, `battle_choose`, `battle_ready` | Guarded M-C BO3 search, complete doubles decisions and readiness within the authorized set limit. |
-| `battle_switch_team` | Apply an approved legal six while server-confirmed idle, preserving login and allowance; creates/reuses its exact-version report. |
-| `battle_cancel_search`, `battle_stop` | Cancel matchmaking or close the signed-in local session. |
-| `battle_authorize_sets`, `battle_forfeit`, `battle_save_replays` | Extend an explicitly authorized allowance, forfeit an owned set, or save its completed replays. |
-| `battle_set_replay_policy` | Opt in to saving future owned BO3 replays after official completion and server idle; verify report preservation before another search. Defaults off. |
-| `team_metrics_register_team` | Create an exact-version team report from pasted `teamText` or a local `teamFile`. |
-| `team_metrics_delete_team` | Preview or permanently remove a team's report, summaries, evidence, exports and owned closed logs; retained files and blockers remain explicit. |
-| `team_metrics_sync_battles` | Append/update the live client's observations and confirm local report persistence. |
-| `team_metrics_import`, `team_metrics_import_replays` | Append saved logs or replay URLs without duplicating existing games; verified replay links appear in the report. |
-| `team_metrics_list`, `team_metrics_report`, `team_metrics_agent_report` | Find team versions and query human/agent-readable metrics. |
-| `team_metrics_game_evidence`, `team_metrics_export`, `team_metrics_finalize_bo3` | Read retained turns, export reports, and preserve/clean a reviewed completed set. |
-| `team_metrics_health` | Read-only snapshot, replay, evidence, source and cleanup diagnostics. |
-| `team_metrics_game_annotations`, `team_metrics_annotate_game` | Read/append audited notes and manual exclusion/re-inclusion reasons without changing official outcomes. |
-| `team_metrics_compare` | Compare exact immutable team sets and descriptive results under matching filters. |
-| `team_metrics_viewer_status`, `team_metrics_open_viewer` | Verify/reuse or start the local report viewer and return its team URL. |
+Team analytics are inspired by [PASRS](https://devoncorp.press/resources/the-release-of-pasrs-7-0), using this project's own parser and local reports. The server uses Pokémon Showdown, `@pkmn` packages and `@smogon/calc`; it is an independent community project.
 
 ## License
 
-ISC
-
-## Headless Showdown client
-
-The Node 24 client keeps authentication in a user-operated terminal. The MCP
-controls the same client over OS-local IPC, with compact observed battle state,
-fresh action tokens, BO3 readiness, and a readable live log in that terminal.
-All numerical damage and Speed analysis stays in the MCP.
-
-Build/restart the MCP server, then start the terminal session from this repository:
-
-```powershell
-npm.cmd run battle:session -- YOUR_USERNAME --team YOUR_TEAM.txt --sets 1
-```
-
-Enter the password directly in the hidden prompt. Login does not queue; an
-authorized `battle_start` call searches for one set. The team is validated and
-locked until an explicit approved idle `battle_switch_team`; switching sends no
-login, upload or search and grants no additional sets. Automatic readiness only advances games inside its
-authorized BO3. `--manual-ready` disables it. No browser battle UI is needed.
-See [setup/API](showdown/README.md) and [play → conclude → update](showdown/AGENT-WORKFLOW.md).
-Battle and report tools share the same MCP server. After a game or BO3, use
-`team_metrics_sync_battles` before querying the exact team's report. The recorder's
-readiness and failures appear in `battle_status.metrics`; older running clients
-continue to use saved-log or replay imports until their next normal start.
-See the [report API](metrics/README.md) for creation, appending, querying and storage.
-When the user has authorized replay saving, configure `battle_set_replay_policy`
-while idle or explicitly add `--save-replays` at session startup. It preserves
-future completed sets without automatically starting another battle. Preview
-decision evidence keeps submitted order, acceptance and observed selections
-separate so defaulted or unknown choices do not become intentional selections.
-Run `npm run test:all` for MCP and client tests. The original transport completed
-one authorized live BO3 on October 15, 2026. The new MCP bridge, structured state,
-Speed tool and log streaming are verified with isolated fixtures and public MCP
-calls; no additional live battle was queued to test these changes.
+ISC.

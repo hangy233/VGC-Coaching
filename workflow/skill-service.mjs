@@ -12,6 +12,13 @@ const TTL = 60 * 60 * 1000;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const fail = message => new Error('Battle skill: ' + message);
 const contains = (root, path) => { const part = relative(root, path); return part === '' || (part !== '..' && !part.startsWith('..' + sep) && !isAbsolute(part)); };
+// A trusted host configures the parent folder before starting MCP. Keep it fixed
+// for this process; tool callers cannot redirect installation or review checks.
+const configuredSkillsRoot = process.env.VGC_COACHING_SKILLS_ROOT;
+if (configuredSkillsRoot !== undefined && (!configuredSkillsRoot.trim() || !isAbsolute(configuredSkillsRoot))) {
+  throw fail('VGC_COACHING_SKILLS_ROOT must be a non-empty absolute path to the installed skills parent folder');
+}
+const installedSkillsRoot = resolve(configuredSkillsRoot ?? join(process.env.CODEX_HOME || join(process.env.USERPROFILE || homedir(), '.codex'), 'skills'));
 
 async function rejectLinks(path) {
   const absolute = resolve(path), parsed = (await import('node:path')).parse(absolute);
@@ -53,8 +60,11 @@ function locations({ workspace, skill = 'champions-mc-matchups', target }) {
   if (typeof workspace !== 'string' || !SKILLS.has(skill)) throw fail('choose a maintained Champions skill');
   const source = resolve(workspace, 'skills', skill);
   // target is an internal test injection only; it is never an MCP input field.
-  const installed = resolve(target || join(process.env.CODEX_HOME || join(process.env.USERPROFILE || homedir(), '.codex'), 'skills', skill));
-  if (contains(source, installed) || contains(installed, source)) throw fail('source and installed folders must be separate');
+  const installed = resolve(target || join(installedSkillsRoot, skill));
+  for (const maintainedSkill of SKILLS) {
+    const maintainedSource = resolve(workspace, 'skills', maintainedSkill);
+    if (contains(maintainedSource, installed) || contains(installed, maintainedSource)) throw fail('source and installed folders must be separate');
+  }
   return { skill, workspace: resolve(workspace), source, installed };
 }
 

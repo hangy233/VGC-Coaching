@@ -220,6 +220,43 @@ the critical hit was necessary to win.
 
 ## Legality and mechanics traps
 
+### Sucker Punch needs a pending attack
+
+Sucker Punch fails after its target has already acted, even when that earlier
+attack was blocked. In particular, Fake Out acts in an earlier priority bracket;
+Armor Tail blocking its effect does not restore the user's pending action.
+Helping Hand plus Sucker Punch into that Pokemon can therefore spend both our
+actions without damage. Compare an ordinary attack or another target whose
+damaging action is still pending, including its Protect and redirection branches.
+An ordinary attack that remains pending can still justify Sucker Punch; this is
+not a reason to discard the move on every Fake Out turn.
+
+Actual MCP `get_move` describes both the attacking-action and already-moved
+failure conditions. The pinned `data/moves.ts` Sucker Punch handler checks
+`queue.willMove(target)`; the Champions Fake Out override preserves its earlier
+priority. This verifies timing, not numerical damage or a guaranteed alternative.
+
+### Mega Sol can differ from the field weather
+
+Verify Mega Meganium's current **Mega Sol** rather than carrying over its base
+ability. In the pinned Champions engine, its relevant move effects use effective
+sun even while the field shows rain. Its Weather Ball is therefore Fire, and
+Solar Beam can attack without a charging turn. A rain pivot does not make either
+move safe for a Fire-weak or Water-type recipient. Check the complete incoming
+pair before bringing in Rillaboom, Politoed or Mega Golisopod.
+
+This does not replace the shared weather with Drought. The override follows
+the acting Mega Sol user, including weather queries made on its target during
+that move; a target merely having Mega Sol does not give incoming moves sun.
+Ordinary Politoed Weather Ball can still use rain, and Archaludon's Electro Shot
+still checks actual rain. The pinned
+`sim/pokemon.ts` effective-weather override explicitly excludes Electro Shot;
+`data/abilities.ts` defines Mega Sol, and `data/moves.ts` uses effective weather
+for Weather Ball and Solar Beam. These are mechanics checks, not damage or
+survival benchmarks. For numerical advice use actual MCP results, verify whether
+the supplied ability is modeled, and disclose unsupported states without manual
+weather or damage adjustments.
+
 Actual MCP checks on 2026-10-02 rejected Safety Goggles, Assault Vest, Incineroar
 with Knock Off, a 67-point total, a 33-point stat, and zero-Speed IVs in M-C.
 They accepted the legal Chople Incineroar set used above. These are regression

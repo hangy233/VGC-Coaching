@@ -7,17 +7,18 @@ import {mkdtemp,mkdir,rm,rmdir,writeFile,unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {attachMetricsRecorder} from './recorder.mjs';
-import {getTeamReport} from './store.mjs';
+import {getTeamReport,listBattles} from './store.mjs';
 import {readGameEvidence} from './retention.mjs';
+import {attachVerifiedReplay} from './replay-evidence.mjs';
 
 const {Teams}=createRequire(import.meta.url)('pokemon-showdown');
 
-async function previewFixture(){
+async function previewFixture({replayAttacher}={}){
   const workspace=await mkdtemp(join(tmpdir(),'vgcm-preview-')),client=new EventEmitter(),room='battle-gen9championsvgc2026regmcbo3-60',state={sheets:{}};
   const team=[['Sylveon','Pixilate'],['Farigiraf','Armor Tail'],['Politoed','Drizzle'],['Golisopod','Emergency Exit'],['Kommo-o','Soundproof'],['Rillaboom','Grassy Surge']].map(([species,ability])=>({species,ability,level:50,nature:'Modest',evs:{hp:32,spa:32,spd:2},moves:['Protect']}));
   const teamId=createHash('sha256').update(Teams.pack(team)).digest('hex');
   client.state=()=>state;
-  const recorder=attachMetricsRecorder(client,{workspace,username:'Fixture',teamId,team});
+  const recorder=attachMetricsRecorder(client,{workspace,username:'Fixture',teamId,team,replayAttacher});
   const emit=(type,...data)=>client.emit('battle-event',{room,type,data});
   const pokemon=['Sylveon','Farigiraf','Politoed','Golisopod','Kommo-o','Rillaboom'].map((species,index)=>({ident:`p1: ${species}`,details:species+', L50',active:index<2,condition:'100/100'}));
   const request=request=>client.emit('request',{room,request});
@@ -157,6 +158,44 @@ test('a whole-series concession during preview archives without treating its mes
     assert.deepEqual(evidence.decisions.map(value=>value.status),['selected','sent']);
     assert(evidence.decisions.every(value=>value.accepted===undefined&&value.executed===undefined&&value.serverDefaulted===undefined));
   }finally{await f.close();}
+});
+
+test('preview departure preserves identities through recorder, canonical evidence and verified replay attachment',async()=>{
+  for(const side of ['p1','p2'])for(const afterTerminal of [false,true]){
+    let fetches=0;
+    const lifecycle=`|player|${side}|`,terminal='|win|Fixture';
+    const replayLog=['|gametype|doubles','|tier|[Gen 9 Champions] VGC 2026 Reg M-C (Bo3)',
+      '|player|p1|Fixture','|player|p2|Opponent','|teampreview|4',
+      ...(afterTerminal?[terminal,lifecycle]:[lifecycle,terminal])].join('\n');
+    const f=await previewFixture({replayAttacher:args=>attachVerifiedReplay({...args,fetchImpl:async()=>{
+      fetches++;return new Response(JSON.stringify({id:f.room.slice(7),formatid:'gen9championsvgc2026regmcbo3',log:replayLog}));
+    }})});
+    try{
+      f.emit('tier','[Gen 9 Champions] VGC 2026 Reg M-C (Bo3)');f.emit('teampreview','4');
+      f.preview();f.action('sent');
+      f.emit('-message','Opponent lost due to inactivity.');
+      if(!afterTerminal)f.emit('player',side,'');
+      f.emit('win','Fixture');
+      if(afterTerminal)f.emit('player',side,'');
+      assert.equal((await f.recorder.flush({savePending:true})).state,'ready');
+      f.client.emit('replay-verified',{roomId:f.room,url:`https://replay.pokemonshowdown.com/${f.room.slice(7)}`});
+      const status=await f.recorder.flush();
+      assert.equal(status.state,'ready');assert.equal(status.lastError,null);assert.equal(fetches,1);
+      const [record]=await listBattles({workspace:f.workspace});
+      assert.deepEqual(record.players,{p1:'Fixture',p2:'Opponent'});assert.equal(record.ownSide,'p1');
+      assert.equal(record.completed,true);assert.equal(record.outcome,'win');assert.equal(record.turns,0);
+      assert.equal(record.quality.operational,true);assert.equal(record.selectionKnown,false);assert.deepEqual(record.selected,[]);
+      assert.equal(record.metadata.replay.verified,true);assert(record.metadata.replay.evidencePath);
+      assert.equal((await getTeamReport({workspace:f.workspace})).totals.games,0);
+      const evidence=await readGameEvidence({workspace:f.workspace,teamId:f.teamId,roomId:f.room});
+      assert.equal(evidence.complete,true);assert.equal(evidence.completionKind,'preview-terminal');
+      assert.deepEqual(evidence.observedHistory,{started:false,progress:false});
+      assert(evidence.events.some(value=>value.type==='player'&&value.data[0]===side&&value.data[1]===''));
+      assert.deepEqual(evidence.decisions.map(value=>value.status),['selected','sent']);
+      assert(evidence.decisions.every(value=>!value.accepted&&!value.executed&&!value.serverDefaulted));
+      assert.equal(typeof f.client.send,'undefined');
+    }finally{await f.close();}
+  }
 });
 
 test('recorder reports allowlisted failure codes without leaking private error messages or replay URLs',async()=>{

@@ -51,6 +51,21 @@ then removed on the next turn. Count both the boost and the broken Disguise.
 Conversely, our Protect plus an attacking partner produced actual KOs in sets
 7–9. Neither a protected attack nor a Protect selection alone proves a bad turn.
 
+**Read why the opponent would preserve a target.** When our revealed attacks
+credibly threaten a knockout, ask whether the target is needed to answer one of
+our remaining Pokemon and whether a plausible available reserve takes the intended
+attacks better. Those incentives strengthen a Protect or switch hypothesis. Open
+sheets do not confirm an unrevealed reserve was selected, and an opponent may
+attack or sacrifice the target to gain damage, position, or a free entry. Compare
+doubling the slot with split pressure or attack plus support. Include the switch-in's
+effect on both attacks, their partner's progress, and the next board. Two attacks
+that share one resisted or immune switch-in may spend both actions for little
+return; Sucker Punch also needs an attacking target when it resolves. A double
+target can remain worthwhile when needed to remove a threat, when it pressures
+the plausible recipient too, or when denying the target's attack outweighs the
+alternative. Record the read as a hypothesis before the outcome when the clock
+permits; a retrospective explanation does not establish prediction accuracy.
+
 **Carry early support into the receiver's action.** Helping Hand places a
 one-turn effect on its ally; knocking out the helper afterward does not cancel
 it. The [pinned move handler](https://github.com/smogon/pokemon-showdown/blob/a5df8274e85b0889bf2a9b3422a08b39732374fc/data/moves.ts#L8573-L8604)
@@ -92,6 +107,21 @@ no new rain activation on that entry, followed by rain expiring that turn.
 Reentry after expiry did establish new rain while the partner delivered Trick
 Room, so this is not a reason to discard weather pivots. Check the actual new
 activation and opposing responses before relying on the next weather window.
+
+**Weight the opponent's incentive to overwrite our weather.** When our weather
+suppresses their attacks or enables our plan, an available setter or other usable
+override that reverses that advantage is a leading high-likelihood response to
+test first. This is a planning read, not a measured probability or certain switch.
+Distinguish a confirmed selected reserve from a setter merely registered on the
+sheet, and verify the usable activation, including an unspent Mega weather change.
+Rebuild both slots at resolution: Weather Ball can change type into an immunity,
+while weather-dependent Speed or survival can change before either attack.
+Compare a type-stable attack, pressure on the setter, or a protected positioning
+turn that preserves our weather setter for a later entry. Account for their
+partner's progress and the cost of our pivot; do not automatically counter-switch
+or discard Weather Ball. If the setter is unavailable or overwriting weather
+does not help their current plan, reduce that branch's weight and retain their
+attack, Protect or setup alternatives. Use actual MCP checks for numerical claims.
 
 **Require a protected route to setup and payoff.** Check incoming paired damage,
 denial, setup cost, and the next attacking turn before choosing Clangorous Soul

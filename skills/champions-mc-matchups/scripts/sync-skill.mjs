@@ -92,7 +92,14 @@ function options(argv) {
   }
   if (seen.has('--check') && seen.has('--install')) throw new Error('Choose either --check or --install.');
   result.source ||= path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-  result.target ||= path.join(process.env.CODEX_HOME || path.join(process.env.USERPROFILE || homedir(), '.codex'), 'skills', 'champions-mc-matchups');
+  if (!result.target) {
+    const configuredRoot = process.env.VGC_COACHING_SKILLS_ROOT;
+    if (configuredRoot !== undefined && (!configuredRoot.trim() || !path.isAbsolute(configuredRoot))) {
+      throw new Error('VGC_COACHING_SKILLS_ROOT must be a non-empty absolute path to the installed skills parent folder');
+    }
+    const skillsRoot = configuredRoot ?? path.join(process.env.CODEX_HOME || path.join(process.env.USERPROFILE || homedir(), '.codex'), 'skills');
+    result.target = path.join(skillsRoot, 'champions-mc-matchups');
+  }
   result.source = path.resolve(result.source);
   result.target = path.resolve(result.target);
   return result;
@@ -102,6 +109,9 @@ let report = { synchronized: false, sourceSha256: null, installedSha256: null, f
 try {
   const config = options(process.argv.slice(2));
   separate(config.source, config.target);
+  for (const skill of ['champions-mc-matchups', 'champions-mc-teambuilding']) {
+    separate(path.join(path.dirname(config.source), skill), config.target);
+  }
   const source = await scan(config.source, true);
   const installed = await scan(config.target);
   const delta = differences(source.entries, installed.entries);

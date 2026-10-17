@@ -109,12 +109,12 @@ test('CLI rejects unknown options, invalid team IDs and unsupported command opti
   assert.throws(()=>parseArguments(['export','--format','xml']),/Invalid --format/);
 });
 
-test('MCP tools expose strict local-only schemas and no battle controls',async()=>{
+test('MCP tools expose strict schemas, explicit network scope and no battle controls',async()=>{
   const {registerMetricsTools}=await import('./mcp-tools.mjs');
   const registrations=new Map();
   registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace:process.cwd()});
-  for(const name of ['team_metrics_list','team_metrics_report','team_metrics_agent_report','team_metrics_register_team','team_metrics_delete_team','team_metrics_sync_battles','team_metrics_game_evidence','team_metrics_finalize_bo3','team_metrics_import','team_metrics_import_replays','team_metrics_export'])assert(registrations.has(name));
-  for(const [name,{settings}] of registrations)assert.equal(settings.annotations.openWorldHint,['team_metrics_import_replays','team_metrics_finalize_bo3','team_metrics_sync_battles'].includes(name));
+  for(const name of ['team_metrics_list','team_metrics_report','team_metrics_agent_report','team_metrics_register_team','team_metrics_delete_team','team_metrics_sync_battles','team_metrics_game_evidence','team_metrics_finalize_bo3','team_metrics_import','team_metrics_import_replays','team_metrics_recover_preview','team_metrics_export'])assert(registrations.has(name));
+  for(const [name,{settings}] of registrations)assert.equal(settings.annotations.openWorldHint,['team_metrics_import_replays','team_metrics_recover_preview','team_metrics_finalize_bo3','team_metrics_sync_battles'].includes(name));
   assert.equal(registrations.get('team_metrics_report').settings.annotations.readOnlyHint,true);
   assert.equal(registrations.get('team_metrics_import').settings.annotations.readOnlyHint,false);
   assert.equal(registrations.get('team_metrics_finalize_bo3').settings.annotations.destructiveHint,true);

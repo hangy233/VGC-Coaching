@@ -20,13 +20,17 @@ not matching a prescribed move or a string in the skill.
 | Timer default versus intended choice | Record complete paired submission, server acknowledgement when available and actual execution separately | Crediting a default setup as a deliberate safe setup opportunity |
 | Perish escape | Active trapping holder, remaining reserves, legal switch/pivot, countdown and partner survival | Assuming an unverified pivot or unavailable reserve saves the position |
 | Conditional attack | Count selections, executions, conditional failures, flinches and KOs separately | Calling a denied action an executed failure or inferring unconditional value |
+| Sucker Punch after blocked Fake Out | Check whether the target still has a pending damaging action after earlier priority resolves; compare ordinary pressure or another pending attacker | Assuming Armor Tail blocking Fake Out makes its user eligible for a later Sucker Punch |
 | Recovery under pressure | Effective HP gained, overheal, entry damage, move order and subsequent survival | Counting full-HP hits as healing or calling recovery proof of safe entry |
 | Paired progress | Both opponents, partner KO route, Protect/redirection, current ability holder | Judging one failed move without its partner's progress, or assuming a departed holder protects priority |
 | Helper faints before its ally attacks | Whether support already resolved, effect recipient and duration, receiver's attack delivery, both our slots | Treating the helper's KO as cancellation of already-applied Helping Hand, or counting a helped attack that never executes |
 | Delivery before payoff | Incoming joint damage, speed and denial before outgoing range | Calling a high damage roll a usable plan when the attacker cannot act |
 | Revealed Encore / Disable support beside King's Shield | Last executed moves, actual lock timing, current priority protection, partner target and legal switch route | Repeating a damage-only answer while both actions can be denied; claiming Armor Tail blocks every use of those moves |
 | Protection beside a setup threat | Model both the protected target and its partner's boost, including Disguise or other progress already made | Calling a spread hit free progress while ignoring Swords Dance, or declaring setup decisive without checking the next turn |
+| Threatened target has preservation value or a safer recipient | Identify its answer role, credible knockout pressure, plausible selected reserves, both attacks into the recipient and partner progress; compare split pressure | Doubling by damage alone, assuming a switch is certain, or treating a registered reserve as selected |
 | Current form and weather pivot | Rebuild the execution board after switches, weather moves and Mega Evolution; identify any forced replacement | Using rain or a Mega ability because its provider is on the roster, or treating an Emergency Exit replacement as optional analysis time |
+| Mega Sol beside actual rain | Verify current Mega Meganium ability and its move's effective weather; include Fire Weather Ball and immediate Solar Beam while checking the partner's actual weather separately | Calling its Weather Ball Water from the rain icon, assuming a charging turn, or treating Mega Sol as a global sun setter that disables rain Electro Shot |
+| Our favorable weather can be overwritten | Prioritize the incentive-supported opposing overwrite branch, actual setter availability and activation order; recheck Weather Ball type, immunity, Speed and both slots; compare a type-stable attack or preservation line | Treating current weather as secure, assuming every registered setter was selected, or automatically counter-switching without checking partner progress |
 | Weather setter reenters the same active weather | Track the original activation and expiry; distinguish setter entry from a new weather activation | Restarting the rain count merely because Drizzle reentered during existing rain |
 | Setup with a support partner | Delivery of the boost, joint incoming pressure, HP cost, disruption and next-turn payoff | Calling default-selected or Encore-forced Soul an intentional setup line; inferring an uncritical KO from a critical one |
 | Recharge turn | Include the recharge board, partner's useful action, opposing switches and loss of control | Recommending a finishing Hyper Beam using only this turn's range or treating one miss as proof the move is always wrong |
@@ -58,6 +62,12 @@ not matching a prescribed move or a string in the skill.
   and remaining routes in both boards. It can retain Sucker Punch when justified;
   it must not turn one failed read into a universal ban or promise an alternative
   wins without checking its delivery.
+- **Pending attack:** Supply an opposing Fake Out that Armor Tail blocks before
+  our helped Sucker Punch, then a different foe with an ordinary damaging move
+  still pending. A passing review rejects Sucker Punch into the already-acted
+  Fake Out user, compares an ordinary attack or the other target, and checks
+  Protect, redirection and partner progress. It can retain Sucker Punch into the
+  pending attacker without inventing a knockout or banning it for the whole turn.
 - **Deadline containment:** Supply a staged pair followed by a shortened clock,
   a new request that invalidates it, and an operator pause before any pair exists.
   A passing operator distinguishes the configured runtime behavior from assumed
@@ -103,6 +113,16 @@ not matching a prescribed move or a string in the skill.
   review credits the first partner's progress, models the boosted next board in
   the second, and also credits a broken Disguise when that actually happened.
   It does not score every protected attack or defensive turn as a misplay.
+- **Preservation incentives:** Supply a threatened target that is the opponent's
+  remaining answer to our attacker, a revealed healthy reserve that takes both
+  intended attacks better, and an active partner that can set up. Compare a board
+  where that reserve is merely registered, then one with no legal switch or
+  Protect and a necessary removal that needs both hits. A passing operator weighs
+  Protect/switch against attacking or sacrificing, evaluates both actions into
+  the recipient, and compares split pressure or useful support. It can still
+  double when the resulting branch justifies it; it neither predicts defense
+  with certainty nor invents a numerical KO. The retained read must be separate
+  from the observed result and any later explanation.
 - **Support preservation:** Supply a board with Farigiraf active, relevant
   priority denial on the open sheet and a possible switch, then a board where
   keeping Farigiraf loses immediately to direct attacks. A passing review checks
@@ -115,12 +135,28 @@ not matching a prescribed move or a string in the skill.
   tracks the recipient's effect and actual attack delivery independently from
   the helper's survival. It checks the resulting paired pressure without
   inventing an unsupported numerical Helping Hand benchmark.
+- **Weather incentives:** Supply our rain attacker facing Flash Fire beside an
+  opposing confirmed reserve Torkoal, then an unspent Mega Charizard weather
+  change, then a setter only registered on the sheet. A passing operator treats
+  the useful override as a leading response, reconstructs Weather Ball's type
+  and both opponents' progress, and compares a type-stable attack or setter
+  preservation without inventing a numerical payoff. Contrast a confirmed
+  unavailable setter and a weather pivot that gives our partner decisive free
+  progress: the operator can retain Weather Ball or attack when justified. It
+  neither assumes an override is certain nor always answers with its own pivot.
 - **Weather duration:** Compare Politoed reentry while rain is already active
   with reentry after rain has ended or been replaced. A passing review retains
   the existing rain window in the first board and checks a new Drizzle activation
   in the second. It models the partner's action and the expiry transition rather
   than assuming every entry refreshes rain or that a weather pivot guarantees
   survival.
+- **Actor-specific weather:** Supply Mega Meganium with Mega Sol using Weather
+  Ball or Solar Beam during actual rain, alongside an ordinary rain attacker.
+  A passing review checks its effective sun before selecting a Grass-, Water-
+  or Fire-weak switch-in, while retaining actual rain for Politoed Weather Ball
+  and Archaludon Electro Shot. Contrast ordinary Incineroar Fire pressure that
+  rain really can reduce. Do not invent numerical survival or silently apply
+  Mega Sol to other actors; unsupported MCP states stay unverified.
 - **Attribution and uncertainty:** Supply an accepted selection whose user
   faints first, a defaulted Soul, an Encore-forced Soul, an explicit miss, a
   critical-hit KO and a concession before the finishing move. A passing review

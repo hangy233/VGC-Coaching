@@ -34,7 +34,8 @@ export function analyzeBattle({roomId, username, teamId, team = [], events = [],
   const players = {p1: null, p2: null};
   let ownSide = null;
   for (const event of events) {
-    if (event?.type === 'player' && ['p1', 'p2'].includes(event.data?.[0])) players[event.data[0]] = text(event.data[1]);
+    // An empty player event means the player left; it does not erase identity.
+    if (event?.type === 'player' && ['p1', 'p2'].includes(event.data?.[0]) && id(event.data[1])) players[event.data[0]] = text(event.data[1]);
   }
   for (const [side, name] of Object.entries(players)) if (name && id(name) === id(username)) ownSide = side;
   for (const event of events) {

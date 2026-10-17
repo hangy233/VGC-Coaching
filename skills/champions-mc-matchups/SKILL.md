@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-16.17**. Read the bundled
+Cycle revision: **2026-10-17.21**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -136,6 +136,21 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
 - **Preserve the answer:** Map each remaining opposing win condition to a primary
   answer, a practical backup, and required HP or field conditions. Before trading
   one away, check whether the remaining team still has a feasible endgame.
+- **Expect contested weather:** When our weather gives us an advantage, treat an
+  available opposing overwrite that restores their advantage as a leading
+  high-likelihood response. Evaluate that branch before relying on the current
+  weather for an attack or move order. Check the setter's actual availability
+  and activation timing; retain an attack/Protect branch rather than assuming
+  the override is certain. Use the [weather-incentive lesson](references/live-battle-lessons.md).
+- **Read their preservation incentives:** A credible knockout threat, a target
+  needed to answer our remaining Pokemon, or an available switch-in that takes
+  the intended attacks better strengthens the Protect/switch branch. Identify
+  the target's role and plausible recipient; registered reserves remain unconfirmed
+  until revealed. Before doubling that slot, compare split pressure or attack plus
+  support, including what their other active Pokemon gains. Retain an attack or
+  sacrifice branch: these incentives do not establish the opponent's choice.
+  A double target can still be justified by necessary removal, useful damage into
+  the switch-in, or limited partner progress; state its payoff and main failure.
 - **Order the damage:** State the required attack order and chip threshold when
   they matter. Check Protect, misses, redirection, and the first attacker fainting;
   do not count a second hit without a route to deliver it. Include speed-control

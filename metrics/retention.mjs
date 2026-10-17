@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { gzip, gunzip } from 'node:zlib';
 import { acquireMetricsBattleLock } from './catalog.mjs';
 import { listBattles, updateBattleMetadata } from './store.mjs';
-import { previewTerminalProof, validPreviewCorroboration, ownedPreviewProof } from './preview-terminal.mjs';
+import { previewTerminalProof, validPreviewCorroboration, ownedPreviewProof, ownedParentPreviewProof, historicalOwnedParentPreviewProof } from './preview-terminal.mjs';
 
 const compress = promisify(gzip), decompress = promisify(gunzip);
 const MAX_BYTES = 12 * 1024 * 1024, MAX_EVENTS = 20000;
@@ -144,6 +144,23 @@ function verifyProtocolIdentity(events, game, previewObservation) {
   if (game.outcome !== 'unknown' && game.outcome !== result) throw safeError('completed protocol result differs from the registered game');
 }
 
+/** A recovered parent observation is usable only with its durable server replay. */
+async function verifyOwnedParentReplay(workspace, game, observation) {
+  const historical = observation?.kind === 'historical-owned-parent-preview-terminal';
+  if (!(historical ? historicalOwnedParentPreviewProof(game, observation) : ownedParentPreviewProof(game, observation))) throw safeError('invalid owned parent preview observation');
+  if (historical) {
+    const {verifyHistoricalStatusArchive} = await import('./historical-status.mjs');
+    await verifyHistoricalStatusArchive({workspace,game,observation});
+  }
+  const replay = game.metadata.replay;
+  if (!HASH.test(observation.replayLogSha256 ?? '') || replay?.verified !== true || replay.logSha256 !== observation.replayLogSha256 || replay.evidencePath !== `cache/team-metrics/evidence/${game.roomId}--${game.teamId}.replay.log.gz`) throw safeError('owned parent preview needs its verified saved replay');
+  const source = await checkedPath(workspace, replay.evidencePath), bytes = await decompress(await readFile(source.path), {maxOutputLength: MAX_BYTES});
+  if (sha256(bytes) !== replay.logSha256) throw safeError('owned parent preview replay hash verification failed');
+  const {collectBattleEvents, decodeInput} = await import('./import.mjs');
+  const data = collectBattleEvents(decodeInput({path:'replay.json',text:JSON.stringify({id:game.roomId,log:bytes.toString('utf8')})})).get(game.roomId);
+  if (!data || data.startedObserved || data.progressObserved || !previewTerminalProof(data.events.map(sanitizeEvent).filter(Boolean), game, observation)) throw safeError('owned parent preview conflicts with the saved server replay');
+}
+
 const sameObservedFact=(a,b)=>JSON.stringify({...a,at:undefined})===JSON.stringify({...b,at:undefined});
 function factSubsequence(source,target){let index=0;for(const value of source){while(index<target.length&&!sameObservedFact(value,target[index]))index++;if(index===target.length)return false;index++;}return true;}
 function preserveObservedFacts(previous,incoming){let index=0;return incoming.map(value=>index<previous.length&&sameObservedFact(previous[index],value)?previous[index++]:value);}
@@ -178,7 +195,11 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
   try {
     const game = await storedGame(workspace, teamId, roomId);
     if (previewCorroboration !== undefined && !validPreviewCorroboration(previewCorroboration, game)) throw safeError('invalid legacy preview corroboration');
-    if (previewObservation !== undefined && (!ownedPreviewProof(game, previewObservation) || !previewCorroboration)) throw safeError('invalid owned preview observation');
+    const parentPreview = ['owned-parent-preview-terminal','historical-owned-parent-preview-terminal'].includes(previewObservation?.kind);
+    if (parentPreview) {
+      if (previewCorroboration || game.metadata.evidence?.complete !== true && previewObservation.canonicalHistory?.sha256 !== game.metadata.evidence?.sha256) throw safeError('owned parent preview does not match the existing canonical history');
+      await verifyOwnedParentReplay(workspace, game, previewObservation);
+    } else if (previewObservation !== undefined && (!ownedPreviewProof(game, previewObservation) || !previewCorroboration)) throw safeError('invalid owned preview observation');
     const { collectBattleEvents } = await import('./import.mjs');
     const data = collectBattleEvents(events.filter(value => value?.event !== 'control-trace'), { defaultRoom: roomId }).get(roomId);
     if (!data?.events.length) throw safeError('no observations for this game');
@@ -211,6 +232,7 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
       if (oldHash !== game.metadata.evidence?.sha256 && oldHash !== hash) throw safeError('existing evidence hash does not match its registered identity');
       previous = JSON.parse(old);
       if (previous.roomId !== roomId || previous.teamId !== teamId || previous.kind !== document.kind) throw safeError('existing evidence belongs to another game');
+      if (previous.complete && parentPreview && JSON.stringify(previous.previewObservation) !== JSON.stringify(previewObservation)) throw safeError('completed evidence differs; retain it for review');
       if (previous.controlTrace !== undefined && (!Array.isArray(previous.controlTrace) || previous.controlTrace.length > MAX_EVENTS)) throw safeError('control trace schema verification failed');
       previous.controlTrace = (previous.controlTrace ?? []).map(value => sanitizeControlTrace(value, value.turn ?? 0)).filter(value => value && value.room === roomId);
       document.controlTrace = mergeControlTrace(previous.controlTrace, document.controlTrace);
@@ -220,6 +242,7 @@ export async function saveGameEvidence({ workspace, teamId, roomId, events, shee
       };
       if (previous.previewCorroboration && !document.previewCorroboration) document.previewCorroboration = previous.previewCorroboration;
       if (previous.previewObservation && !document.previewObservation) document.previewObservation = previous.previewObservation;
+      if (parentPreview && !previous.complete && (previous.observedHistory?.started !== false || previous.observedHistory?.progress !== false || !factSubsequence(previous.events, document.events))) throw safeError('owned parent preview requires intact canonical zero-progress observations');
       bytes=Buffer.from(`${JSON.stringify(document)}\n`);hash=sha256(bytes);
       if(bytes.length>MAX_BYTES)throw safeError('compact game evidence exceeds its size limit');
       if (previewTerminalProof(clean, game, document.previewObservation) && (document.observedHistory.started || document.observedHistory.progress)) throw safeError('earlier observed battle progress prevents preview-terminal completeness');
@@ -270,7 +293,8 @@ export async function readGameEvidence({ workspace, teamId, roomId, fromTurn, to
       document = { ...document, events: document.events.map(sanitizeEvent).filter(Boolean), sheets: sanitizeSheets(document.sheets), decisions: (document.decisions ?? []).map(value => sanitizeDecision(value, value.turn ?? 0)).filter(Boolean), controlTrace:(document.controlTrace ?? []).map(value => sanitizeControlTrace(value, value.turn ?? 0)).filter(value => value && value.room === roomId) };
       // Older recorders honestly marked a pre-start concession partial. Keep
       // that read-only state until a normal checked save upgrades the metadata.
-      if (document.previewObservation && !ownedPreviewProof(game, document.previewObservation)) throw safeError('invalid owned preview observation');
+      if (['owned-parent-preview-terminal','historical-owned-parent-preview-terminal'].includes(document.previewObservation?.kind)) await verifyOwnedParentReplay(workspace, game, document.previewObservation);
+      else if (document.previewObservation && !ownedPreviewProof(game, document.previewObservation)) throw safeError('invalid owned preview observation');
       if (document.complete !== completeProtocol(document.events, game, document.previewObservation) && !(document.complete === false && previewTerminalProof(document.events, game, document.previewObservation))) throw safeError('canonical protocol completeness does not match its metadata');
       if (document.complete && previewTerminalProof(document.events, game, document.previewObservation) && (document.observedHistory?.started === true || document.observedHistory?.progress === true)) throw safeError('preview-terminal evidence conflicts with earlier observed progress');
       if (document.complete && previewTerminalProof(document.events, game, document.previewObservation) && (document.observedHistory?.started !== false || document.observedHistory?.progress !== false) && !validPreviewCorroboration(document.previewCorroboration,game)) throw safeError('preview-terminal evidence lacks its observed-history attestation');
@@ -285,7 +309,7 @@ export async function readGameEvidence({ workspace, teamId, roomId, fromTurn, to
     } else throw safeError('no durable game evidence is registered');
     const decisions = document.decisions.filter(value => value.turn === 0 || ((fromTurn === undefined || value.turn >= fromTurn) && (toTurn === undefined || value.turn <= toTurn)));
     const controlTrace = document.controlTrace.filter(value => value.turn === 0 || ((fromTurn === undefined || value.turn >= fromTurn) && (toTurn === undefined || value.turn <= toTurn)));
-    return { schemaVersion: 1, teamId, roomId, parentId: game.parentId, events: filteredTurns(document.events, fromTurn, toTurn), sheets: document.sheets, decisions, controlTrace, complete: document.complete === true, completionKind: previewTerminalProof(document.events, game, document.previewObservation) ? 'preview-terminal' : document.complete ? 'started-battle' : 'partial', observedHistory: document.observedHistory ?? null, previewCorroboration:document.previewCorroboration ?? null, previewObservation:document.previewObservation??null, completionLimitation: document.previewObservation ? 'The recorder archive was unavailable. Actual saved replay protocol and separately retained owned preview status corroborate this pre-start ending; no protocol request was reconstructed, earlier-start observation and full private action history remain unavailable.' : document.previewCorroboration ? 'Legacy recording has no ever-start flags. Exact owned current preview state and the saved server terminal corroborated a pre-start ending; earlier-start observation remains unavailable.' : null, decisionEvidenceIncluded: document.decisions.length > 0, sourceKind, evidence: { path: reference.path ?? reference.evidencePath, sha256: reference.sha256 ?? reference.logSha256 }, turnWindow: { fromTurn: fromTurn ?? null, toTurn: toTurn ?? null, setupIncluded: true } };
+    return { schemaVersion: 1, teamId, roomId, parentId: game.parentId, events: filteredTurns(document.events, fromTurn, toTurn), sheets: document.sheets, decisions, controlTrace, complete: document.complete === true, completionKind: previewTerminalProof(document.events, game, document.previewObservation) ? 'preview-terminal' : document.complete ? 'started-battle' : 'partial', observedHistory: document.observedHistory ?? null, previewCorroboration:document.previewCorroboration ?? null, previewObservation:document.previewObservation??null, completionLimitation: document.previewObservation?.kind === 'historical-owned-parent-preview-terminal' ? `${document.previewObservation.originLimitation} Original capture bytes, historical owned parent/child identities and zero-progress canonical history agree with the saved server replay. No request or selection was reconstructed; private choices, acceptance and full action history remain unavailable.` : document.previewObservation?.kind === 'owned-parent-preview-terminal' ? 'The private preview request was lost on reconnect. Hash-checked canonical zero-progress history, separately observed owned parent/child results and the saved server replay corroborate this pre-start ending. No request or selection was reconstructed; private selections, acceptance and full action history remain unavailable.' : document.previewObservation ? 'The recorder archive was unavailable. Actual saved replay protocol and separately retained owned preview status corroborate this pre-start ending; no protocol request was reconstructed, earlier-start observation and full private action history remain unavailable.' : document.previewCorroboration ? 'Legacy recording has no ever-start flags. Exact owned current preview state and the saved server terminal corroborated a pre-start ending; earlier-start observation remains unavailable.' : null, decisionEvidenceIncluded: document.decisions.length > 0, sourceKind, evidence: { path: reference.path ?? reference.evidencePath, sha256: reference.sha256 ?? reference.logSha256 }, turnWindow: { fromTurn: fromTurn ?? null, toTurn: toTurn ?? null, setupIncluded: true } };
 }
 
 export function reviewedCheckpoint(checkpoint, { teamId, parentId }) {

@@ -452,6 +452,21 @@ test('an unknown report fingerprint cannot register a phantom team or evict a kn
   assert.deepEqual(await listTeams({ workspace: dir, includeArchived: true }), before);
 });
 
+test('a recovered preview identity survives a later blank identity observation from an older recorder', async t => {
+  const dir = await workspace(t);
+  const stale = record({turns: 0, players: {p1: 'TofuRotom', p2: ''}, selected: [], selectionKnown: false,
+    leads: [], pokemon: [], quality: {complete: false, operational: true, warnings: []}});
+  await saveBattle({workspace: dir, record: stale});
+  assert.equal((await listBattles({workspace: dir}))[0].players.p2, '');
+  await saveBattle({workspace: dir, record: {...stale, players: {p1: 'TofuRotom', p2: 'Opponent'}}});
+  await saveBattle({workspace: dir, record: stale});
+  const rows = await listBattles({workspace: dir});
+  assert.equal(rows.length, 1); assert.deepEqual(rows[0].players, {p1: 'TofuRotom', p2: 'Opponent'});
+  assert.equal(rows[0].turns, 0); assert.equal(rows[0].outcome, 'win');
+  assert.equal(rows[0].selectionKnown, false); assert.deepEqual(rows[0].selected, []);
+  assert.equal(rows[0].quality.operational, true); assert.equal(rows[0].quality.complete, false);
+});
+
 test('a full public replay retains known private selections, parent and players while updating actual metrics', async t => {
   const dir = await workspace(t);
   const privateBattle = record({

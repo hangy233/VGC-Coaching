@@ -7,6 +7,19 @@ const headers = () => [event('player', 'p1', 'TofuRotom'), event('player', 'p2',
 const parse = (events, options = {}) => analyzeBattle({roomId: 'battle-gen9championsvgc2026regmc-123-secretpw', username: 'TofuRotom', teamId: 'team-1', team: [{species: 'Golisopod', name: 'Goli'}, {species: 'Sylveon', name: 'Sylv'}], events, ...options});
 const mon = (result, species) => result.pokemon.find(pokemon => pokemon.species === species);
 
+test('blank player lifecycle events retain both identities before and after a terminal', () => {
+  for (const side of ['p1', 'p2']) for (const afterTerminal of [false, true]) {
+    const terminal = event('win', 'TofuRotom'), departure = event('player', side, '');
+    const result = parse([...headers(), ...(afterTerminal ? [terminal, departure] : [departure, terminal])]);
+    assert.deepEqual(result.players, {p1: 'TofuRotom', p2: 'Opponent'});
+    assert.equal(result.ownSide, 'p1'); assert.equal(result.outcome, 'win'); assert.equal(result.completed, true);
+  }
+  const renamed = parse([...headers(), event('player', 'p2', 'Other'), event('player', 'p2', ''), event('win', 'Other')]);
+  assert.equal(renamed.players.p2, 'Other'); assert.equal(renamed.outcome, 'loss');
+  const unknown = parse([event('player', 'p1', 'TofuRotom'), event('player', 'p2', ''), event('win', 'TofuRotom')]);
+  assert.equal(unknown.players.p2, null);
+});
+
 test('overlapping fragments without a history boundary remain explicitly incomplete',()=>{
   const result=parse([...headers(),event('switch','p1a: Goli','Golisopod, L50','100/100'),event('turn','1'),event('move','p1a: Goli','Protect','p1a: Goli'),event('turn','1'),event('move','p1a: Goli','Protect','p1a: Goli'),event('win','TofuRotom')]);
   assert.equal(result.quality.complete,false);assert(result.quality.warnings.some(w=>w.includes('overlapping history ambiguous')));

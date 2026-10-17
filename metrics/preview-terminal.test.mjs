@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { previewTerminalProof } from './preview-terminal.mjs';
+import { analyzeBattle } from './parser.mjs';
 
 const game = () => ({teamId:'a'.repeat(64),roomId:'battle-gen9championsvgc2026regmcbo3-123',username:'Fixture',ownSide:'p1',players:{p1:'Fixture',p2:'Opponent'},completed:true,outcome:'loss',turns:0,leads:[],pokemon:[]});
 const events = () => [
@@ -25,4 +26,19 @@ test('private completed preview proof binds exact player pair, zero progress and
     const list=events();list.splice(6,0,{type,data:['1']});assert.equal(previewTerminalProof(list,game()),null,type);
   }
   for(const patch of [{turns:1},{completed:false},{outcome:'win'},{leads:['Golisopod']},{pokemon:[{lead:false,switchIns:1,moves:[]}]},{pokemon:[{moves:[{uses:1}]}]}])assert.equal(previewTerminalProof(events(),{...game(),...patch}),null);
+});
+
+test('derived preview identity accepts departures but still rejects conflicting nonempty player observations',()=>{
+  for(const side of ['p1','p2'])for(const afterTerminal of [false,true]){
+    const list=events(),departure={type:'player',data:[side,'']};
+    list.splice(afterTerminal?list.length:list.length-1,0,departure);
+    const record=analyzeBattle({...game(),events:list});
+    assert.deepEqual(record.players,{p1:'Fixture',p2:'Opponent'});
+    assert.equal(previewTerminalProof(list,record)?.kind,'preview-terminal');
+  }
+  const conflicting=events();conflicting.splice(-1,0,{type:'player',data:['p2','Other']},{type:'player',data:['p2','']});
+  const record=analyzeBattle({...game(),events:conflicting});
+  assert.equal(record.players.p2,'Other');assert.equal(previewTerminalProof(conflicting,record),null);
+  const progressed=events();progressed.splice(-1,0,{type:'turn',data:['1']},{type:'player',data:['p2','']});
+  assert.equal(previewTerminalProof(progressed,analyzeBattle({...game(),events:progressed})),null);
 });
