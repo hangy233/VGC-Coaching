@@ -6,6 +6,8 @@ Use it to investigate a proposed team adjustment against previous battles, expla
 
 The default validation format is **Champions Regulation M-C** (`gen9championsvgc2026regmc`). Live battle control targets its Showdown BO3 format. Pass an explicit supported format for other validation or Smogon usage requests; the live client and private team-registration workflow are built for M-C.
 
+Get the [free MCP companion skill on Agensi](https://www.agensi.io/skills/pok-mon-vgc-coaching-mcp-companion) for setup and coaching instructions. Follow [Install and connect](#install-and-connect) below to set up the local MCP server.
+
 ## What you can ask an agent
 
 > Would changing Golisopod from Brave to Adamant have helped in this team's previous games? Find the relevant turns, check Speed with the MCP, and compare the benefits and costs under and outside Trick Room.
