@@ -16,7 +16,10 @@ not matching a prescribed move or a string in the skill.
 | Chip before a finishing attack | Current form/ability, actual move order, full-HP ability, recovery, Protect and misses | Summing isolated full-HP ranges as guaranteed combined damage |
 | Speed-control transition | Count remaining turns and model the first turn after expiry | Reversing Trick Room by habit or ignoring the transition |
 | Secondary stat-drop trigger | Include possible Competitive/Defiant switch-in and branch on the drop | Treating a secondary effect as guaranteed or ignoring its ability trigger |
+| Special hit beside a later physical attack into Stamina | Include the Defense raise after the damaging special hit, then assess the physical partner's delivery; distinguish the defense each move uses | Claiming Moonblast or Earth Power does not trigger Stamina, or banning useful special pressure because it triggers a physical Defense raise |
 | Opponent adapts between games | Reassess four, leads, observed Protect and counter-adjustment | Repeating a winning lead automatically or treating one Protect as certainty |
+| A temporary advantage is established | Name the obstacle, useful attack or entry, and surviving pair after control expires | Spending the advantage on repeated passive turns or rushing an attack that cannot be delivered |
+| Safe-looking play leaves no winning route | Compare the resulting endgame with a plausible forcing read and its failure branch | Choosing survival by habit, or taking a risky prediction when ordinary pressure already covers the finish |
 | Timer default versus intended choice | Record complete paired submission, server acknowledgement when available and actual execution separately | Crediting a default setup as a deliberate safe setup opportunity |
 | Perish escape | Active trapping holder, remaining reserves, legal switch/pivot, countdown and partner survival | Assuming an unverified pivot or unavailable reserve saves the position |
 | Conditional attack | Count selections, executions, conditional failures, flinches and KOs separately | Calling a denied action an executed failure or inferring unconditional value |
@@ -25,6 +28,7 @@ not matching a prescribed move or a string in the skill.
 | Paired progress | Both opponents, partner KO route, Protect/redirection, current ability holder | Judging one failed move without its partner's progress, or assuming a departed holder protects priority |
 | Helper faints before its ally attacks | Whether support already resolved, effect recipient and duration, receiver's attack delivery, both our slots | Treating the helper's KO as cancellation of already-applied Helping Hand, or counting a helped attack that never executes |
 | Delivery before payoff | Incoming joint damage, speed and denial before outgoing range | Calling a high damage roll a usable plan when the attacker cannot act |
+| Psychic Noise beside a draining attacker | Whether Noise can reach the user before its attack, current immunity/protection/ability, existing Heal Block, non-draining alternative and partner progress | Counting Leech Life damage while treating Heal Block as only lost healing, or banning drain when Noise hits the partner or cannot apply first |
 | Revealed Encore / Disable support beside King's Shield | Last executed moves, actual lock timing, current priority protection, partner target and legal switch route | Repeating a damage-only answer while both actions can be denied; claiming Armor Tail blocks every use of those moves |
 | Protection beside a setup threat | Model both the protected target and its partner's boost, including Disguise or other progress already made | Calling a spread hit free progress while ignoring Swords Dance, or declaring setup decisive without checking the next turn |
 | Threatened target has preservation value or a safer recipient | Identify its answer role, credible knockout pressure, plausible selected reserves, both attacks into the recipient and partner progress; compare split pressure | Doubling by damage alone, assuming a switch is certain, or treating a registered reserve as selected |
@@ -47,9 +51,59 @@ not matching a prescribed move or a string in the skill.
 | Authorized emergency defaults with no staged pair | Verify loaded opt-in policy; revalidate one complete current pair, no automatic Mega, distinct emergency provenance and operational exclusion; staged or reserved sends retain priority | Generating without authorization, claiming strategic judgment, duplicate sends, or hiding defaults in clean team results |
 | A receiving MCP process starts but cannot reach the signed-in client | Verify its actual read-only status access to the same session/team before transfer or a new queue; retain one responsible operator until acknowledgment | Treating process startup as working controls or leaving the live board unattended during pipe-access setup |
 | Batch boundary with saved login available | Keep the client through intermediate BO3 checkpoints; after the final durable preservation/review and bounded retention, stop and verify it; carry remaining authorization into the next approved batch | Disconnecting mid-batch or before preservation, closing only an MCP helper, or treating a saved credential/new client as extra battle allowance |
+| Winning batch avoids the previously blocking core | Compare exact versions, roster/selection/opportunity counts, control and variance; carry the unencountered weakness forward and retain evidenced winning plans | Declaring the matchup fixed from the overall score or discarding earlier failed batches |
+| A carried plan meets a later opportunity | Read the trigger and branches, distinguish intentional application/execution/conversion, and retain valid deviations or unknowns | Claiming adoption from a matching hash, forcing the card into its counterexample, or inventing an opportunity from roster presence |
 
 ## Counterexample exercises
 
+- **Batch patterns and follow-through:** Supply a prior batch with a repeatedly
+  selected setup core and a later winning batch with that species only registered
+  once but never selected. A passing review keeps the weakness untested, separates
+  control failures from tactical evidence, and preserves actual winning sequences
+  with their conditions. Then provide a batch with an eligible answer-preservation
+  opportunity, one documented application, a recurring missed application, and a
+  board matching the card's counterexample. The reviewer records each separately,
+  improves the application trigger rather than duplicating the old rule, and does
+  not count a reasonable deviation as failure. Cross-set citations belong in the
+  final checkpoint's validation text, not another parent's decision evidence.
+- **Reinforce a winning sequence:** Supply successful split pressure through one
+  foe's Protect, a critical final KO and a concession before a proposed finish.
+  A passing batch review retains the observed partner progress, leaves normal-hit
+  necessity and the unplayed finish unresolved, and carries a concrete forcing
+  plan into the next preparation. Contrast a necessary double target and a board
+  where preserving the setter is essential: the plan must allow those branches.
+  A source/installed hash match alone cannot establish later tactical application.
+- **Convert initiative:** Give a healthy Trick Room board with one opposing
+  obstacle to the reserve attacker, then a board where Room is about to end and
+  the reserve is a fast cleaner. A passing operator names an attack or entry
+  that advances the finish and compares the resulting board after expiration;
+  it does not use the same control plan for both or invent a KO. Contrast a
+  defensive turn that lets the partner remove the obstacle with two passive
+  actions that only let a useful control window expire.
+- **Force a response:** Give a threatened foe likely to Protect beside a setup
+  partner, then a sole remaining foe with Protect, and then an obstacle whose
+  removal requires both attacks while its partner has little progress. A passing
+  operator compares partner pressure, useful positioning and a double target;
+  it can double in the latter cases when justified, and keeps an attacking or
+  sacrificing response possible. It does not call a failed double inherently
+  bad or assume a defensive read is certain.
+- **Purposeful trade and risk:** Give a spent setter whose sacrifice creates a
+  useful attacker entry, then the same setter as the only feasible route to a
+  necessary second control window. Add a losing passive line with one plausible
+  forcing read, then an advantageous board covered by ordinary paired pressure.
+  A passing operator can accept the purposeful trade or supported read, preserves
+  the necessary answer in the counterexample, and avoids needless prediction
+  when ahead. It names what the trade buys and what a wrong read loses without
+  promising an alternate win or treating aggression as permission to ignore
+  known immunities, denial, deadlines or actual MCP requirements.
+- **Draining-attack denial:** Supply a Leech Life user facing an opposing Psychic
+  Noise that can act first and affect it, with an ally able to Protect or attack.
+  A passing operator compares a non-draining attack or protected positioning and
+  preserves the partner's useful action; a resisted Noise is still a denial risk.
+  Contrast Noise targeting the partner, being blocked, or acting after the drain:
+  the operator can retain Leech Life when its delivery is justified. It checks
+  existing Heal Block and later expiry rather than treating the move as globally
+  unusable, and uses actual MCP for any numerical damage or Speed claim.
 - **Early commitment:** Compare a short clock with a useful but unavailable
   numerical check, a new forced-switch request that invalidates the old pair,
   and a healthy clock with a known priority blocker. A passing operator commits

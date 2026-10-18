@@ -25,6 +25,9 @@ of skill files, review reports, and chat.
    context or signed-in client. If it is incomplete, finish that review now. The
    first search of a new batch does not erase an unreviewed earlier set. An initial
    run with no earlier set can record that fact instead.
+   At a new batch boundary, also read the previous batch's pattern synthesis
+   and applicable answer/winning-plan cards from its final checkpoint, as
+   described below. Carry unresolved tests forward; do not start from the score alone.
 4. Read `battle_status` and `battle_capabilities` on the existing authorized client.
    On a newly started client advertising exclusive control and deadline protection,
    claim one controller with `battle_control_claim`. Keep the returned opaque
@@ -61,6 +64,10 @@ of skill files, review reports, and chat.
 Read the full open sheet before choosing four. Separate its registered six from
 the opponent's unknown selected four. Map each opposing win condition to an
 available answer and backup, including the required HP, weather or speed control.
+Use the [proactive win plans](proactive-win-plans.md) to retain a compact objective:
+next obstacle -> forcing pair -> next-board payoff. Convert the lead's pressure
+and temporary control into attacks or useful entries; preservation must support
+a remaining route. This adds no separate live-turn research or reporting step.
 
 After submitting preview, switch immediately to compact current-request and board
 extraction. The first turn can arrive while a tool response is being returned or
@@ -366,6 +373,12 @@ where the rule should not be applied. Add a rule only when it changes decisions;
 if the evidence is already covered or inconclusive, record a justified no-change
 review rather than accumulating a match diary. Put detailed rules in a relevant
 reference and keep their discovery path visible from `SKILL.md`.
+Include initiative in that judgment: review a created opportunity and a missed
+conversion when the evidence contains them, rather than learning only prohibitions.
+Check whether the proposed attacking alternative still works against a plausible
+Protect, switch or opposing attack, and preserve a counterexample where restraint
+or an intentional support trade is better. Do not manufacture either a failure
+or a new rule merely to fill these categories.
 
 Use aggregate selection, move use, knockout attribution and confirmed item
 removals as descriptive evidence. A zero-use move, low selection rate or worse
@@ -442,6 +455,70 @@ Backfilled reviews must say they are retrospective. They repair future guidance
 but do not prove that this cycle was followed between past sets. Skill edits and
 reviews never authorize a roster change, replay publication, authentication,
 another set beyond the user's limit, or a Git commit/push.
+
+## Synthesize each completed batch
+
+After the final BO3 review, review the whole user-defined batch for recurring
+obstacles and successful plans, including bottlenecks inside wins. Use the exact
+team's report and focused evidence, and compare relevant earlier batches of that
+same version. Keep changed teams separate. Retain every official result; disclose
+filters, cutoff, control failures, concessions and variance. Distinguish opposing
+roster presence, confirmed selection and actual opportunities to use an answer.
+Unknown opportunities are not failures. If a threat did not appear, its earlier
+weakness remains untested. A winning batch, especially one selected by a win-based
+stopping condition, does not establish a stronger win rate or a solved matchup.
+
+Group recurring problems by the threat/core and the mechanism that stopped us:
+missing coverage, loss of the answer, denied attack delivery, weather/control
+transitions, exploitable locks, passive turns, or submission failure. Read the
+decisive turns before attributing a loss to one species. An existing tactic missed
+again needs a concrete application correction; it does not automatically need
+another general rule. Keep genuine structural gaps and inconclusive cases explicit.
+
+For the useful priority patterns, retain compact working cards:
+
+| Field | What the next operator needs |
+| --- | --- |
+| Trigger and evidence | Relevant opposing core/board, exact version, supporting game/turn references, selection and opportunity counts or explicit unknowns |
+| Answer and finish | Preferred four/lead/back when relevant, next obstacle, forcing pair, intended follow-up and answer to preserve |
+| Response branches | Plausible opposing paired attack, Protect/switch recipient or support progress, our alternative and what changes the plan |
+| Feasibility and limits | Actual MCP damage/Speed inputs/results where needed, unknown investments, unsupported states and a counterexample |
+| Next test | Observable behavior or conversion to check when this situation actually recurs; proposed, supported, contradicted, application missed, or untested |
+
+Reinforce what worked as well as fixing failures. Preserve the delivered sequence
+and its useful partner progress: how pressure forced defense, control bought
+removals, or a purposeful trade created an attacking entry. Include conditions
+and a counterexample where restraint or another route is better. A critical KO,
+concession, raw move count or eventual win does not validate an unplayed finish
+or make that sequence compulsory on every similar-looking board.
+
+Close the loop in the next authorized batch. Read the latest cards into the
+operator's compact preparation before searching. At preview and consequential
+boards, apply the relevant trigger or state why a different branch is needed;
+do not add live-turn research that delays a legal paired submission. In the
+ordinary per-BO3 reviews, distinguish eligible opportunity, intentional choice,
+actual execution and useful conversion. At the next batch boundary, compare
+those opportunities with the intended test and update each card's status. A
+reasonable counterexample is not a missed application; zero opportunities means
+untested. Matching skill hashes proves content adoption, not tactical application.
+
+Persist the compact synthesis in the final BO3's existing versioned checkpoint,
+using `validation` entries for cross-set patterns, prior checkpoint references
+and next-batch tests. The tool validates decision/positive/reusable-outcome game
+references against that parent's children only; cite other parents in validation
+text, not as this parent's verified decision evidence. This keeps the synthesis
+owned by the team and covered by its existing deletion cascade, rather than
+creating an unmanaged batch-report location. An existing batch ledger can link
+to this checkpoint. Keep detailed evidence private; promote only supported,
+anonymized reusable changes to shared guidance, validate and sync them, or retain
+an explicit no-change reason. Apply the normal checkpoint/retention sequence to
+a revised final review. A later backfill must preserve its retrospective timing.
+
+Report the recurring obstacles, answers to test, winning patterns to retain and
+remaining uncertainty alongside the batch result. This is a required agent
+workflow, not an additional runtime guard in `battle_start`. It grants no new
+battles, authentication, replay publication or roster changes; use any existing
+between-batch change authorization only after assessing gains and lost roles.
 
 ## End the batch
 

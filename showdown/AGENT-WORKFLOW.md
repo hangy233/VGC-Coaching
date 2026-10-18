@@ -522,6 +522,17 @@ after syncing, and report the checkpoint before any further authorized queue.
 Keep roster changes within the user's accepted scope and revalidate them before
 an approved idle team switch or the next normal locked-team session.
 
+After every user-defined batch, also complete the portable cycle's
+[batch pattern review](../skills/champions-mc-matchups/references/headless-battle-cycle.md#synthesize-each-completed-batch).
+Use the whole batch and comparable exact-team history to identify recurring
+obstacles, develop concrete answers, and reinforce successful sequences. Save
+cross-set findings and next-batch tests in the final BO3 checkpoint's existing
+`validation` entries; other parents' games are not this parent's verified
+decision references. Read those plans before the next authorized batch and
+check eligible opportunities, actual application and conversion in its reviews.
+No encounter means untested, and a passing service check is not proof of tactical
+adoption. This adds no runtime search guard or battle allowance.
+
 See [matchup skill](../skills/champions-mc-matchups/SKILL.md),
 [teambuilding skill](../skills/champions-mc-teambuilding/SKILL.md), and
 [transport details](README.md).

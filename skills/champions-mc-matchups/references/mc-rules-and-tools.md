@@ -220,6 +220,25 @@ the critical hit was necessary to win.
 
 ## Legality and mechanics traps
 
+### Psychic Noise can deny a draining attack
+
+Psychic Noise's Heal Block makes healing and draining moves unusable; it does
+not merely remove the healing from an otherwise successful attack. Before
+choosing Leech Life or another draining move, check whether a plausible earlier
+Psychic Noise can reach that user, including the current move order, immunity,
+protection and relevant ability. A resisted hit can still apply the denial.
+Compare a non-draining attack or protected positioning, and
+account for the other active Pokemon's progress.
+
+An observed reviewed turn had Psychic Noise apply Heal Block before a selected
+Leech Life, which was then unable to execute. Actual MCP `get_move` describes
+healing and draining moves as unusable, and the pinned `data/moves.ts` Heal Block
+handler disables healing-flag moves and stops them before execution. Psychic
+Noise applies that volatile effect. This is a denial check, not a damage or
+Speed benchmark. Do not ban draining attacks when Noise cannot affect that user
+before its attack, hits the partner, or is blocked; recheck the actual current
+request and effect duration on later turns.
+
 ### Sucker Punch needs a pending attack
 
 Sucker Punch fails after its target has already acted, even when that earlier
@@ -280,6 +299,11 @@ When relevant, verify these interactions from Champions move and ability data:
   favorable. Thermal Exchange prevents burns but does not grant Fire immunity.
 - Competitive and Defiant can punish stat drops. Recheck the target's current
   ability after Mega Evolution instead of carrying over the base-form ability.
+- Stamina triggers after damaging hits, including noncontact special attacks.
+  Moonblast and Earth Power still raise its Defense, although those moves use
+  Special Defense for their damage. Include that raise when planning a later
+  physical partner's hit; special pressure does not suppress the ability. The
+  pinned `data/abilities.ts` handler uses `onDamagingHit` with no contact filter.
 
 Reverify an interaction when the rules snapshot changes or the recommendation
 depends on it; this reference is not a substitute for the current tool result.

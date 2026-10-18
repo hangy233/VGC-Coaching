@@ -21,6 +21,13 @@ do not handwrite a completed status to bypass evidence checks. Run
 and readiness; tactical judgment and this instruction are not a runtime review
 guard in `battle_start`.
 
+After each user-defined batch, follow the cycle's batch pattern review: find
+recurring opposing cores and blocking mechanisms, develop checked answers, and
+retain successful forcing sequences with applicability limits. Store the compact
+synthesis in the final BO3's team-owned checkpoint. Before the next authorized
+batch, read those plans; audit their actual application when opportunities recur.
+A winning score or synchronized skill alone does not prove they were applied.
+
 Close the battle client after each user-defined batch, unless the user gives a
 newer keep-open instruction. Keep it open between BO3s within that batch. After
 the final official result and server idle, finish replay preservation, metrics,

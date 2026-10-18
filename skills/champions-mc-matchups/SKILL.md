@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-17.22**. Read the bundled
+Cycle revision: **2026-10-18.25**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -33,6 +33,13 @@ before another authorized queue. Report a brief **review complete / lesson or no
 change / sync verified**, plus replay coverage and any retained cleanup blockers.
 Never invent a new rule merely to show activity.
 This is an agent workflow requirement, not a review check enforced by `battle_start`.
+
+After each user-defined batch, complete the cycle's
+[batch pattern review](references/headless-battle-cycle.md#synthesize-each-completed-batch).
+Find recurring obstacles and successful forcing sequences across its sets and
+comparable history; develop concrete answers and carry them into the next
+authorized batch. Check actual application when opportunities recur, rather
+than treating written guidance or a winning score as proof of improvement.
 
 Keep the client open between BO3s within an authorized batch. At the batch's
 stopping condition, complete preservation, the final review and bounded retention,
@@ -74,6 +81,14 @@ switch route needs an available reserve. Do not infer Shadow Tag from Gengar's
 species alone; verify its current form and ability.
 
 ## Team preview and a game plan
+
+Read [proactive win plans](references/proactive-win-plans.md) before preview or
+live play. Choose what our pair will force and how the next board converts that
+progress into a win. Favor purposeful pressure when it advances that route;
+preservation, Protect and switching should earn an attacking window or retain a
+needed answer. A play can be safe this turn yet concede the game over the next
+two. These priorities do not replace paired-response checks or MCP verification,
+and do not justify doubling every target or taking unsupported risks.
 
 Identify the opponent's likely attacking combinations, speed control, support
 that enables them, and alternate plans. Treat these as hypotheses unless revealed.
@@ -128,6 +143,9 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
   the targeted slot, not only the Pokemon present when the move was selected.
   Check move denial as well as survival: an earlier Throat Chop can disable a
   selected sound move even when its damage is resisted and Fake Out is blocked.
+  Recovery prevention can also deny an attack: read the
+  [Psychic Noise and draining-move check](references/mc-rules-and-tools.md#psychic-noise-can-deny-a-draining-attack)
+  when a healing or draining move is part of the plan.
   Apply the same check to forced mid-turn replacements: identify which attacks
   remain pending and whether they can hit the incoming Pokemon after the trigger.
   For an escape pivot, check that it can resolve before the deadline: Fake Out,
