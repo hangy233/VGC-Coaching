@@ -49,8 +49,10 @@ test('MCP controls a persistent terminal-owned session with token freshness and 
     const reclaimed=decode(await call('battle_control_claim',{confirmed:true,commandId:'reclaim-before-search',controllerId:'fixture-operator'}));assert(reclaimed.ok);controllerLease=reclaimed.result.controllerLease;
     assert.equal(decode(await call('battle_start',{confirmed:true,commandId:'unprotected-search'})).ok,false);assert.equal(sent.length,0);
     assert((await call('battle_set_control_policy',{confirmed:true,commandId:'invalid-policy',enabled:true,forfeitIfStuck:false,planningMs:30001})).isError);
+    assert((await call('battle_set_control_policy',{confirmed:true,commandId:'invalid-default-policy',enabled:true,forfeitIfStuck:false,emergencyDefaultChoice:'true'})).isError);
     assert((await call('battle_control_trace',{limit:201})).isError);
-    const policy=decode(await call('battle_set_control_policy',{confirmed:true,commandId:'enable-policy',enabled:true,forfeitIfStuck:false,planningMs:30000,unknownClockMs:30000}));assert(policy.ok);assert.equal(sent.length,0);
+    const emergencyPolicy=decode(await call('battle_set_control_policy',{confirmed:true,commandId:'opt-in-emergency-default',enabled:true,forfeitIfStuck:false,emergencyDefaultChoice:true,planningMs:30000,unknownClockMs:30000}));assert(emergencyPolicy.ok);assert.equal(emergencyPolicy.result.emergencyDefaultChoice,true);assert.equal(sent.length,0);
+    const policy=decode(await call('battle_set_control_policy',{confirmed:true,commandId:'enable-policy',enabled:true,forfeitIfStuck:false,planningMs:30000,unknownClockMs:30000}));assert(policy.ok);assert.equal(policy.result.emergencyDefaultChoice,false);assert.equal(sent.length,0);
     const rejected=await call('battle_start',{confirmed:false});assert(rejected.isError);assert.equal(sent.length,0);
     assert((await call('battle_authorize_sets',{confirmed:false,additionalSets:1})).isError);
     for(const additionalSets of [0,1.5,101,'1'])assert((await call('battle_authorize_sets',{confirmed:true,additionalSets})).isError);

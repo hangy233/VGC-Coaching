@@ -1,19 +1,20 @@
-const DEFAULTS = Object.freeze({enabled:false,forfeitIfStuck:false,planningMs:20000,safetyMarginMs:5000,unknownClockMs:20000});
+const DEFAULTS = Object.freeze({enabled:false,forfeitIfStuck:false,emergencyDefaultChoice:false,planningMs:20000,safetyMarginMs:5000,unknownClockMs:20000});
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const copy = value => structuredClone(value);
 
 /**
- * A local deadline guard, not a strategy engine. It can only use a complete,
- * explicitly staged action or invoke the session's authorized containment path.
+ * A local deadline guard. It prefers a complete explicitly staged action;
+ * an opt-in synchronous selector can supply a legal emergency default.
  * All callbacks must be synchronous so checking and reserving a send is atomic
  * with respect to other session commands in the same JavaScript event loop.
  */
 export class DeadlineSupervisor {
-  constructor({now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout,getActions,validate,submit,forfeit,onTrace=()=>{}}={}) {
-    for (const [name,callback] of Object.entries({now,setTimer,clearTimer,getActions,validate,submit,forfeit,onTrace})) {
+  constructor({now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout,getActions,validate,submit,forfeit,selectDefault=()=>null,onTrace=()=>{}}={}) {
+    for (const [name,callback] of Object.entries({now,setTimer,clearTimer,getActions,validate,submit,forfeit,selectDefault,onTrace})) {
       if (typeof callback !== 'function') throw new TypeError(`${name} must be a function`);
     }
-    Object.assign(this,{now,setTimer,clearTimer,getActions,validate,submit,forfeit,onTrace});
+    Object.assign(this,{now,setTimer,clearTimer,getActions,validate,submit,forfeit,selectDefault,onTrace});
+    this.authorityEpoch=0;
     this.config={...DEFAULTS};this.records=new Map();this.history=[];this.timer=null;
     this.halted=false;this.haltReason=null;this.disposed=false;this.refreshing=false;this.observationFault=false;
     this.forfeitedParents=new Set();
@@ -22,7 +23,7 @@ export class DeadlineSupervisor {
   configure(options={}) {
     if(this.disposed)throw new Error('Deadline supervisor is disposed');
     const config={...this.config,...options};
-    for(const key of ['enabled','forfeitIfStuck'])if(typeof config[key]!=='boolean')throw new TypeError(`${key} must be boolean`);
+    for(const key of ['enabled','forfeitIfStuck','emergencyDefaultChoice'])if(typeof config[key]!=='boolean')throw new TypeError(`${key} must be boolean`);
     for(const key of ['planningMs','safetyMarginMs','unknownClockMs'])if(!Number.isInteger(config[key])||config[key]<1||config[key]>300000)throw new TypeError(`${key} must be an integer from 1 to 300000`);
     this.config=config;this.halted=false;this.haltReason=null;
     // Explicit configuration permits future searches; it never retries a send
@@ -79,7 +80,7 @@ export class DeadlineSupervisor {
         let record=this.records.get(action.token);
         if(!record){
           const receivedAt=finite(action.receivedAt)?action.receivedAt:this.now();
-          record={action:copy(action),receivedAt,cutoffAt:Infinity,planningDeadlineAt:receivedAt+this.config.planningMs,unknownCutoffAt:receivedAt+Math.min(this.config.planningMs,this.config.unknownClockMs),hardDeadlineAt:null,turnDeadlineAt:null,bankDeadlineAt:null,emergencyAt:null,clockSource:null,observedClockSource:null,clockObservedAt:null,timerDisabledAt:null,clockFreshForRequest:false,deadlineBasis:'local-unknown-budget',state:'waiting-for-plan',staged:null,attempted:false,sendOutcome:null,containmentAt:null,contained:false,recovering:false,recoveryStartedAt:null,recoveryReason:null,recoveryAttentionAt:null,emergencyHandled:false};
+          record={action:copy(action),receivedAt,cutoffAt:Infinity,planningDeadlineAt:receivedAt+this.config.planningMs,unknownCutoffAt:receivedAt+Math.min(this.config.planningMs,this.config.unknownClockMs),hardDeadlineAt:null,turnDeadlineAt:null,bankDeadlineAt:null,emergencyAt:null,clockSource:null,observedClockSource:null,clockObservedAt:null,timerDisabledAt:null,clockFreshForRequest:false,deadlineBasis:'local-unknown-budget',state:'waiting-for-plan',staged:null,stagedSource:null,defaultAttempted:false,attempted:false,sendOutcome:null,containmentAt:null,contained:false,recovering:false,recoveryStartedAt:null,recoveryReason:null,recoveryAttentionAt:null,emergencyHandled:false};
           this.records.set(action.token,record);
           this.trace('request-observed',{...this.identity(action),receivedAt});
         }
@@ -173,7 +174,7 @@ export class DeadlineSupervisor {
     const canonical=this.validate(action,copy(actions));
     if(canonical&&typeof canonical.then==='function')throw new TypeError('validate must be synchronous');
     if(!Array.isArray(canonical)||!canonical.length)throw new TypeError('validate must return a complete canonical action array');
-    record.staged=copy(canonical);record.state='fallback-staged';
+    record.staged=copy(canonical);record.stagedSource='fallback';record.state='fallback-staged';
     this.trace('fallback-staged',{...this.identity(action),...this.deadlineFacts(record),recovering:record.recovering});
     // A short clock may already have expired while the caller prepared its plan.
     this.schedule();
@@ -181,8 +182,9 @@ export class DeadlineSupervisor {
   }
 
   invalidateStaged(reason='controller-changed') {
+    this.authorityEpoch++;
     for(const record of this.records.values())if(record.staged&&!record.attempted){
-      record.staged=null;record.state='waiting-for-plan';
+      record.staged=null;record.stagedSource=null;record.defaultAttempted=false;record.state='waiting-for-plan';
       this.trace('fallback-invalidated',{...this.identity(record.action),reason,cutoffAt:record.cutoffAt});
     }
     return this.status();
@@ -235,6 +237,7 @@ export class DeadlineSupervisor {
   }
 
   handleCutoff(record) {
+    const authorityEpoch=this.authorityEpoch;
     let action;
     try{action=this.readActions().find(value=>value.token===record.action.token);}catch{
       this.observationFailed(record.action);return;
@@ -244,7 +247,9 @@ export class DeadlineSupervisor {
     record.action=copy(action);this.updateDeadline(record);
     if(!record.recovering&&record.cutoffAt>this.now())return;
     if(!record.staged){
-      this.beginRecovery(record,'planning-timeout-without-fallback');return;
+      if(!this.prepareEmergencyDefault(record,action)){
+        this.beginRecovery(record,'planning-timeout-without-fallback');return;
+      }
     }
     let canonical;
     try{
@@ -253,6 +258,8 @@ export class DeadlineSupervisor {
       if(!Array.isArray(canonical)||!canonical.length)throw new Error('Invalid canonical fallback');
     }catch(error){
       record.state='fallback-invalid';this.trace('fallback-invalid',{...this.identity(action),message:String(error.message||error)});
+      record.staged=null;record.stagedSource=null;
+      if(this.prepareEmergencyDefault(record,action)){this.handleCutoff(record);return;}
       this.beginRecovery(record,'fallback-no-longer-legal');return;
     }
     // Validation may invoke session hooks. Recheck before entering the single
@@ -261,14 +268,16 @@ export class DeadlineSupervisor {
     try{fresh=this.readActions().find(value=>value.token===action.token);}catch{
       this.observationFailed(record.action);return;
     }
+    if(authorityEpoch!==this.authorityEpoch){record.staged=null;record.stagedSource=null;record.defaultAttempted=false;this.refresh('takeover-won-race');return;}
     if(!fresh||fresh.actionable===false){this.refresh('manual-send-won-race');return;}
+    const source=record.stagedSource||'fallback';
     record.attempted=true;record.state='submitting';record.recoveryAttentionAt=null;
-    this.trace('fallback-send-attempted',{...this.identity(fresh),...this.deadlineFacts(record),source:'fallback'});
+    this.trace('fallback-send-attempted',{...this.identity(fresh),...this.deadlineFacts(record),source,...(source==='emergency-default'?{controlFailure:true}:{})});
     try{
-      const result=this.submit(fresh,canonical,'fallback');
+      const result=this.submit(fresh,canonical,source);
       if(result&&typeof result.then==='function')throw new Error('submit must be synchronous');
       record.sendOutcome='returned';record.state='sent-awaiting-server';record.staged=null;record.containmentAt=null;
-      this.trace('fallback-send-returned',{...this.identity(fresh),serverAcceptanceConfirmed:false});
+      this.trace('fallback-send-returned',{...this.identity(fresh),source,serverAcceptanceConfirmed:false});
     }catch(error){
       record.sendOutcome='uncertain';record.containmentAt??=this.now()+5000;
       record.state='send-uncertain';this.trace('fallback-send-uncertain',{...this.identity(fresh),message:String(error.message||error),retried:false});
@@ -277,6 +286,23 @@ export class DeadlineSupervisor {
     // Local send return is not acceptance, but acknowledgment silence is also
     // not rejection. Never retry or forfeit merely because it remains silent.
     this.refresh('after-fallback-send');
+  }
+
+  prepareEmergencyDefault(record,action){
+    if(!this.config.emergencyDefaultChoice||record.defaultAttempted)return false;
+    record.defaultAttempted=true;
+    try{
+      const choices=this.selectDefault(copy(action));
+      if(choices&&typeof choices.then==='function')throw new Error('selectDefault must be synchronous');
+      if(!Array.isArray(choices)||!choices.length)throw new Error('No complete emergency choice');
+      record.staged=copy(choices);record.stagedSource='emergency-default';
+      this.halt('emergency-default-used',action);
+      this.trace('emergency-default-selected',{...this.identity(action),source:'emergency-default',controlFailure:true});
+      return true;
+    }catch(error){
+      this.trace('emergency-default-unavailable',{...this.identity(action),source:'emergency-default',controlFailure:true,reason:'no-legal-default'});
+      return false;
+    }
   }
 
   attention(record,reason) {
@@ -338,7 +364,7 @@ export class DeadlineSupervisor {
   }
 
   status() {
-    return {enabled:this.config.enabled,forfeitIfStuck:this.config.forfeitIfStuck,planningMs:this.config.planningMs,safetyMarginMs:this.config.safetyMarginMs,unknownClockMs:this.config.unknownClockMs,halted:this.halted,haltReason:this.haltReason,observationFault:this.observationFault,disposed:this.disposed,pending:[...this.records.values()].map(record=>({...this.identity(record.action),...this.deadlineFacts(record),receivedAt:record.receivedAt,state:record.state,hasFallback:!!record.staged,attempted:record.attempted,containmentAt:record.containmentAt,recovering:record.recovering,recoveryAttentionAt:record.recoveryAttentionAt,emergencyHandled:record.emergencyHandled})),recentEvents:copy(this.history)};
+    return {enabled:this.config.enabled,forfeitIfStuck:this.config.forfeitIfStuck,emergencyDefaultChoice:this.config.emergencyDefaultChoice,planningMs:this.config.planningMs,safetyMarginMs:this.config.safetyMarginMs,unknownClockMs:this.config.unknownClockMs,halted:this.halted,haltReason:this.haltReason,observationFault:this.observationFault,disposed:this.disposed,pending:[...this.records.values()].map(record=>({...this.identity(record.action),...this.deadlineFacts(record),receivedAt:record.receivedAt,state:record.state,hasFallback:!!record.staged,fallbackSource:record.stagedSource,attempted:record.attempted,containmentAt:record.containmentAt,recovering:record.recovering,recoveryAttentionAt:record.recoveryAttentionAt,emergencyHandled:record.emergencyHandled})),recentEvents:copy(this.history)};
   }
 
   dispose() {

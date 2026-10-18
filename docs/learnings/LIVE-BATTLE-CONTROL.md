@@ -17,13 +17,13 @@ Use revision-based `battle_wait` for progress instead of repeatedly fetching raw
 
 Implementation: [turn board](../../showdown/turn-board.mjs), [agent session](../../showdown/agent-session.mjs), [live action workflow](../../showdown/AGENT-WORKFLOW.md#read-calculate-submit).
 
-## The watchdog submits a plan; it does not make one
+## Staged plans take priority over emergency defaults
 
-The watchdog has no default moveset, damage heuristic or fast tactical model. The agent makes the initial judgment and stages the complete actions required by the current request: a preview order, ordinary doubles pair or legal replacement combination.
+The agent makes the initial judgment and stages the complete actions required by the current request: a preview order, ordinary doubles pair or legal replacement combination. By default the watchdog only submits that plan. The separately authorized `emergencyDefaultChoice:true` option can now produce a deterministic legal default if no usable pair exists at the cutoff; it uses move metadata and request legality, with no damage heuristic, Speed calculation or tactical model.
 
 While the request remains fresh and unsubmitted, the agent can replace its provisional pair or submit the final decision. With deadline protection explicitly enabled, the watchdog can send the staged pair at its cutoff. It rechecks freshness and legality immediately before sending, with a final check to avoid racing a manual submission.
 
-Legality is not tactical quality. The watchdog will not recognize that a legal fallback is a poor read, correct a bad target, or infer a better switch. A changed request, controller handoff, release or disconnect invalidates its staged plan. If no usable pair exists, it enters recovery attention rather than inventing an action.
+Legality is not tactical quality. The emergency selector prefers ordinary attacks over conditional attacks, handles preview and replacements, and never activates Mega Evolution. It cannot predict protection or identify a winning move. Its `emergency-default` provenance is retained as an operational control failure, and future searches halt for review. A changed request, controller handoff, release or disconnect invalidates the old plan. Without the opt-in or a valid default, the existing bounded recovery applies. Sent or uncertain choices are never replaced merely because acknowledgment is missing.
 
 Implementation and fixtures: [deadline supervisor](../../showdown/deadline-supervisor.mjs), [watchdog tests](../../showdown/deadline-supervisor.test.mjs), [control safety tests](../../showdown/control-safety.test.mjs).
 

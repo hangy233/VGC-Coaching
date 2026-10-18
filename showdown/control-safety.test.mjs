@@ -11,7 +11,7 @@ function clock(){
   let time=1000,next=0;const timers=new Map();
   return {now:()=>time,setTimer:(fn,ms)=>{const id=++next;timers.set(id,{at:time+ms,fn});return id;},clearTimer:id=>timers.delete(id),advance(ms){const end=time+ms;let count=0;for(;;){const due=[...timers].filter(([,timer])=>timer.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!due)break;if(++count>100)throw new Error('Timer loop');time=due[1].at;timers.delete(due[0]);due[1].fn();}time=end;},timers};
 }
-async function fixture({forfeitIfStuck=true,enabled=true}={}){
+async function fixture({forfeitIfStuck=true,enabled=true,emergencyDefaultChoice=false}={}){
   const timer=clock(),packed='Species|item|ability|move',sent=[],client=new ShowdownClient({expectedTeamHash:createHash('sha256').update(packed).digest('hex'),now:timer.now});
   client.connected=true;client.authenticated=true;client.epoch=1;client.formats='[Gen 9] Champions VGC 2026 Reg M-C (Bo3),e';client.searchState={searching:[],games:{}};
   client.ws={send:line=>sent.push(line),close:()=>{client.connected=false;client.authenticated=false;client.emit('disconnected');}};
@@ -21,7 +21,7 @@ async function fixture({forfeitIfStuck=true,enabled=true}={}){
   const claimed=await raw({op:'control-claim',controllerId:'operator'});assert.equal(claimed.ok,true);
   const lease=claimed.result.controllerLease;
   const execute=command=>raw({controllerLease:lease,...command});
-  const configured=await execute({op:'set-control-policy',enabled,forfeitIfStuck});assert.equal(configured.ok,true,configured.error);
+  const configured=await execute({op:'set-control-policy',enabled,forfeitIfStuck,emergencyDefaultChoice});assert.equal(configured.ok,true,configured.error);
   const start=()=>execute({op:'start'});
   const own=()=>{client.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[parent]:'TofuRotom vs Opponent'}})}`);client.receive(`>${parent}\n|uhtml|game|<a href="/${room}">Game 1</a>`);};
   const request=(extra={})=>client.receive(`>${room}\n|request|${JSON.stringify({rqid:31,active:[{moves:[{move:'Protect',pp:10,target:'self'}]},{moves:[{move:'Protect',pp:10,target:'self'}]}],side:{id:'p2',name:'TofuRotom',pokemon:[{ident:'p2: Farigiraf',details:'Farigiraf, L50',active:true,condition:'17/227'},{ident:'p2: Golisopod',details:'Golisopod-Mega, L50',active:true,condition:'83/182'},{ident:'p2: Rillaboom',details:'Rillaboom, L50',active:false,condition:'0 fnt'},{ident:'p2: Hydreigon',details:'Hydreigon, L50',active:false,condition:'88/168'}]},...extra})}`);
@@ -34,6 +34,36 @@ test('production requires a lease and enabled policy before any search; status n
     for(const result of [f.session.snapshot(),f.session.turnSnapshot(),f.session.readControlTrace()])assert(!JSON.stringify(result).includes(f.lease));
     assert.equal((await f.execute({op:'set-control-policy',enabled:true,forfeitIfStuck:true,safetyMarginMs:999})).ok,false);
     assert.equal(f.sent.length,0);
+  }finally{f.session.dispose();}
+});
+
+test('opt-in emergency selects a complete legal pair for the sole observed foe, without Mega',async()=>{
+  const f=await fixture({emergencyDefaultChoice:true});try{
+    await f.start();f.own();
+    f.client.receive(`>${room}\n|switch|p1b: Charizard|Charizard-Mega-Y, L50|48/100`);
+    f.request({active:[{canMegaEvo:true,moves:[{move:'Sucker Punch',target:'normal',pp:5},{move:'Iron Head',target:'normal',pp:10}]},{moves:[{move:'Weather Ball',target:'normal',pp:10}]}]});
+    f.timer.advance(20000);
+    assert.deepEqual(f.sent.filter(line=>line.includes('/choose')),[`${room}|/choose move 2 2, move 1 2|31`]);
+    assert.equal(f.client.state(room).lastAction.status,'sent');
+    assert(f.session.controlTrace.some(entry=>entry.type==='emergency-default-sent'&&entry.source==='emergency-default'&&entry.controlFailure));
+    assert.equal(f.session.supervisor.status().halted,true);
+    assert.equal(f.session.capabilities().features.emergencyDefaultChoice,true);
+    f.timer.advance(90000);assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);
+    assert.equal(f.sent.filter(line=>line.includes('/choose')).length,1);
+  }finally{f.session.dispose();}
+});
+
+test('opt-in emergency survives a silent operator through fresh turns, preview and forced replacement',async()=>{
+  const f=await fixture({emergencyDefaultChoice:true});try{
+    await f.start();f.own();f.request({teamPreview:true,maxChosenTeamSize:4});f.timer.advance(20000);
+    assert(f.sent.includes(`${room}|/choose team 1234|31`));
+    f.request({rqid:33});f.timer.advance(20000);
+    assert(f.sent.includes(`${room}|/choose move 1, move 1|33`));
+    const current=structuredClone(f.client.state(room).request);delete current.active;current.rqid=35;current.forceSwitch=[true,true];current.side.pokemon[0].condition=current.side.pokemon[1].condition='0 fnt';f.request(current);f.timer.advance(20000);
+    assert(f.sent.includes(`${room}|/choose pass, switch 4|35`));
+    assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);
+    f.client.receive(`>${room}\n|win|Opponent\n>${parent}\n|win|Opponent`);f.client.receive('|updatesearch|{"searching":[],"games":null}');
+    assert.match((await f.start()).error,/halted/);
   }finally{f.session.dispose();}
 });
 test('S6 rqid31: staged pair submits during operator silence, acknowledgment prevents containment',async()=>{

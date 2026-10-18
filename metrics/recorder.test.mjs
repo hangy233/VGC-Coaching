@@ -71,6 +71,21 @@ test('ordinary control telemetry preserves provenance without excluding a clean 
   }finally{await f.close();}
 });
 
+test('emergency default choices retain distinct provenance and exclude performance without inventing acceptance',async()=>{
+  for(const type of ['selected','emergency-default-sent','watchdog-emergency-default-selected']){
+    const f=await previewFixture();try{
+      f.preview();f.action('sent');f.action('accepted');f.start();
+      f.client.emit('control-trace',{room:f.room,type,seq:7,at:2000,rqid:2,revision:1,source:'emergency-default',status:'sent-not-acknowledged',password:'NEVER-PERSIST',actions:[{type:'move',slot:1}]});
+      const {report,evidence}=await f.finish(),trace=evidence.controlTrace[0];
+      assert.equal(report.games[0].outcome,'win');assert.equal(report.games[0].quality.operational,true);
+      assert.equal((await getTeamReport({workspace:f.workspace})).totals.games,0);
+      assert.equal(trace.type,type);assert.equal(trace.source,'emergency-default');assert.equal(trace.status,'sent-not-acknowledged');
+      assert.equal(trace.accepted,undefined);assert.equal(trace.executed,undefined);assert.equal(trace.serverDefaulted,undefined);
+      assert(!JSON.stringify(trace).includes('NEVER-PERSIST'));assert.equal(trace.actions,undefined);
+    }finally{await f.close();}
+  }
+});
+
 test('turn and disconnect boundaries archive partial control diagnostics before any official result',async()=>{
   const f=await previewFixture();try{
     f.preview();f.action('sent');f.action('accepted');f.start();

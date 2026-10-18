@@ -6,6 +6,7 @@ import {ControllerLease} from './controller-lease.mjs';
 import {DeadlineSupervisor} from './deadline-supervisor.mjs';
 import {replacementOptions,legalReplacementPairs} from './choice-validation.mjs';
 import {compactTurnBoard} from './turn-board.mjs';
+import {selectEmergencyActions} from './emergency-choice.mjs';
 
 const {Teams,TeamValidator}=createRequire(import.meta.url)('pokemon-showdown');
 const RUNTIME_REVISION=createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
@@ -22,7 +23,7 @@ function publishedSheet(packed){
 }
 const EVENTS = ['request','battle-event','sheet','timer','result','ready','server-error','choice-status','action-status','forfeit-status','search-state','room-renamed','replay-url','replay-verified','replay-failed','disconnected'];
 
-/** One explicitly bounded local session. It never logs in or chooses strategy. */
+/** One explicitly bounded local session; emergency legal defaults are opt-in. */
 export class AgentSession extends EventEmitter {
   constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter,replayPolicy=false,replayPreservationVerifier,controllerRequired=true,controlTimers={},monotonicNow=()=>performance.now()} = {}) {
     super();
@@ -41,7 +42,7 @@ export class AgentSession extends EventEmitter {
     this.ownedRooms = new Set(); this.ownedParents = new Set(); this.roomParents = new Map(); this.awaitingSet = false;
     this.roomTeams=new Map();this.actionContexts=new Map();this.recorderFactory=recorderFactory;this.decisionNoteWriter=decisionNoteWriter;this.switchingTeam=false;
     this.controller=new ControllerLease({now,required:controllerRequired});this.controlTrace=[];this.controlSequence=0;this.monotonicNow=monotonicNow;this.controlStartedAt=monotonicNow();this.tracedRequests=new Set();this.choiceSources=new Map();this.uncertainChoices=new Set();
-    this.supervisor=new DeadlineSupervisor({now,...controlTimers,getActions:()=>this.actions({includePending:true}),validate:(action,choices)=>this.validateAction(action,choices),submit:(action,choices)=>this.submitChoice(action,choices,'fallback'),forfeit:(action,reason)=>this.containControlFailure(action,reason),onTrace:entry=>this.recordControlTrace({...entry,type:entry.type?.startsWith('watchdog-')?entry.type:`watchdog-${entry.type||'event'}`})});
+    this.supervisor=new DeadlineSupervisor({now,...controlTimers,getActions:()=>this.actions({includePending:true}),validate:(action,choices)=>this.validateAction(action,choices),submit:(action,choices,source)=>this.submitChoice(action,choices,source),selectDefault:action=>this.emergencyChoice(action),forfeit:(action,reason)=>this.containControlFailure(action,reason),onTrace:entry=>this.recordControlTrace({...entry,type:entry.type?.startsWith('watchdog-')?entry.type:`watchdog-${entry.type||'event'}`})});
     for (const event of EVENTS) {
       const listener = value => {
         if (event === 'disconnected') this.stopped = true;
@@ -85,7 +86,8 @@ export class AgentSession extends EventEmitter {
     }
     if(event==='action-status'){
       const action=state?.lastAction;
-      this.recordControlTrace({type:value.status==='sent'&&this.choiceSources.get(room)==='fallback'?'fallback-sent':value.status,room,rqid:action?.rqid,revision:action?.revision,source:this.choiceSources.get(room)||'operator',status:value.status,latencyMs:value.status==='sent'?Math.max(0,this.now()-(state.receivedAt||this.now())):undefined});
+      const source=this.choiceSources.get(room)||'operator';
+      this.recordControlTrace({type:value.status==='sent'&&['fallback','emergency-default'].includes(source)?`${source}-sent`:value.status,room,rqid:action?.rqid,revision:action?.revision,source,status:value.status,...(source==='emergency-default'?{controlFailure:true}:{}),latencyMs:value.status==='sent'?Math.max(0,this.now()-(state.receivedAt||this.now())):undefined});
     }
     if(event==='server-error')this.recordControlTrace({type:'server-error',room,rqid:state?.request?.rqid,revision:state?.revision,reasonCode:'inspect-fresh-request'});
     if(event==='battle-event'&&['start','turn','win','tie'].includes(value.type))this.recordControlTrace({type:'server-advance',room,rqid:state?.request?.rqid,revision:state?.revision,status:value.type});
@@ -95,6 +97,19 @@ export class AgentSession extends EventEmitter {
     const fresh=this.actions().find(current=>current.token===action.token);
     check(fresh,'Action token is stale or no longer actionable; inspect fresh state');
     return this.client.validateChoice(fresh.room,{rqid:fresh.rqid,revision:fresh.revision,actions:choices,deadlineAt:this.now()+1000}).actions;
+  }
+  emergencyChoice(action){
+    this.assertLive();
+    if(this.controller.required&&!this.controller.status().owner)return null;
+    const fresh=this.actions().find(current=>current.token===action.token);
+    if(!fresh)return null;
+    const room=this.client.rooms.get(fresh.room),request=room?.request;
+    const snapshot=this.client.battleSnapshot?.(fresh.room);
+    const foeSlots=(snapshot?.sides||[]).filter(side=>side.id!==request?.side?.id).flatMap(side=>(side.active||[]).flatMap(active=>{
+      const pokemon=side.pokemon.find(value=>value.id===active.pokemon);
+      return pokemon&&pokemon.fainted!==true&&['a','b'].includes(active.slot)?[active.slot==='a'?1:2]:[];
+    }));
+    return selectEmergencyActions(request,{foeSlots:[...new Set(foeSlots)]});
   }
   submitChoice(action,choices,source='operator',validForMs=10000){
     const fresh=this.actions().find(current=>current.token===action.token);
@@ -173,7 +188,7 @@ export class AgentSession extends EventEmitter {
     }
   }
   roomTeamId(room){return this.roomTeams.get(this.client.resolveRoom(room))||this.client.expectedTeamHash;}
-  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,compactTurnBoard:true,namedReplacements:true,controlTrace:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
+  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,emergencyDefaultChoice:true,compactTurnBoard:true,namedReplacements:true,controlTrace:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
   rememberAction(action){
     const state=this.client.rooms.get(action.room),turn=state?.battle?.turn;
     if(!this.actionContexts.has(action.token))this.actionContexts.set(action.token,{room:action.room,teamId:this.roomTeamId(action.room),rqid:action.rqid,turn:Number(turn)||0,sessionId:this.id,token:action.token,lastObservedStatus:state?.lastAction?.rqid===action.rqid?state.lastAction.status:'unsubmitted'});
@@ -481,7 +496,7 @@ export class AgentSession extends EventEmitter {
     if (op === 'stop') { this.supervisor.dispose();this.stopped=true;c.close();this.revision++;this.emit('change',{revision:this.revision,event:'stopped'});return {stopped:true}; }
     this.assertLive();
     if(op==='set-control-policy'){
-      this.assertIdleForTeamSwitch();const policy={enabled:command.enabled,forfeitIfStuck:command.forfeitIfStuck,planningMs:command.planningMs??20000,safetyMarginMs:command.safetyMarginMs??5000,unknownClockMs:command.unknownClockMs??20000};
+      this.assertIdleForTeamSwitch();const policy={enabled:command.enabled,forfeitIfStuck:command.forfeitIfStuck,emergencyDefaultChoice:command.emergencyDefaultChoice??false,planningMs:command.planningMs??20000,safetyMarginMs:command.safetyMarginMs??5000,unknownClockMs:command.unknownClockMs??20000};
       for(const key of ['planningMs','unknownClockMs'])check(Number.isInteger(policy[key])&&policy[key]>=100&&policy[key]<=30000,'Control planning budgets must be 100–30000 ms');
       check(Number.isInteger(policy.safetyMarginMs)&&policy.safetyMarginMs>=1000&&policy.safetyMarginMs<=15000,'Control safety margin must be 1000–15000 ms');
       this.supervisor.configure(policy);this.recordControlTrace({type:'control-policy-configured'});this.revision++;this.emit('change',{revision:this.revision,event:'control-policy'});return this.controlPolicySnapshot();

@@ -18,7 +18,7 @@ function controlSummary(status){
   const controller=status.controller,policy=status.controlPolicy;
   return {
     controller:controller?{required:boolean(controller.required),owner:typeof controller.owner==='string'?controller.owner:null,generation:Number.isInteger(controller.generation)?controller.generation:null,claimedAt:finite(controller.claimedAt)}:null,
-    controlPolicy:policy?{enabled:boolean(policy.enabled),forfeitIfStuck:boolean(policy.forfeitIfStuck),planningMs:finite(policy.planningMs),safetyMarginMs:finite(policy.safetyMarginMs),unknownClockMs:finite(policy.unknownClockMs),halted:boolean(policy.halted),haltReason:typeof policy.haltReason==='string'?policy.haltReason:null,disposed:boolean(policy.disposed)}:null,
+    controlPolicy:policy?{enabled:boolean(policy.enabled),forfeitIfStuck:boolean(policy.forfeitIfStuck),emergencyDefaultChoice:boolean(policy.emergencyDefaultChoice),planningMs:finite(policy.planningMs),safetyMarginMs:finite(policy.safetyMarginMs),unknownClockMs:finite(policy.unknownClockMs),halted:boolean(policy.halted),haltReason:typeof policy.haltReason==='string'?policy.haltReason:null,disposed:boolean(policy.disposed)}:null,
   };
 }
 const canonical=value=>String(value||'').replace(/-[a-z0-9]+pw$/u,'');

@@ -76,7 +76,7 @@ clears its fallback without closing or forfeiting the set.
 Deadline protection is off by default. While the server confirms idle, configure
 `battle_set_control_policy` with `confirmed:true`, a unique `commandId`, the lease,
 `enabled:true` and `forfeitIfStuck` matching the user's explicit permission.
-Defaults are `planningMs:20000`, `safetyMarginMs:5000`, and
+Defaults are `emergencyDefaultChoice:false`, `planningMs:20000`, `safetyMarginMs:5000`, and
 `unknownClockMs:20000`; the observed server clock can shorten the deadline.
 The unknown-clock cap is a conservative local limit, not an invented server clock.
 Enabling protection never starts matchmaking or extends the authorized allowance.
@@ -88,9 +88,21 @@ token:CURRENT_TOKEN,actions:COMPLETE_PAIR})` before optional research. The enabl
 watchdog can send that agent-selected pair when the operator stalls. Staging is
 not a send or acceptance; ordinary `battle_choose` remains the prompt preferred
 submission. A changed request, disconnect, release or takeover invalidates the
-fallback. The client invents neither strategy nor calculations.
+fallback. The watchdog performs no damage or Speed calculations.
 
-When a fresh unsubmitted request has no usable fallback at its planning cutoff,
+With the user's explicit authorization, set `emergencyDefaultChoice:true` in that
+idle policy call to permit a deterministic complete legal choice when the agent
+provides no usable pair by the planning cutoff. The staged agent pair always has
+priority. Emergency choices use the fresh request's legality for preview, moves
+or forced replacements, make no strategic judgment and never automatically Mega
+Evolve. They retain distinct `emergency-default` control evidence and mark the
+game operational even if it is won. This is a local emergency choice; do not call
+it a server default or an accepted/executed action without corresponding evidence.
+The option remains off unless enabled, and never retries a sent or uncertain
+choice, authenticates, queues or adds battle allowance.
+
+When a fresh unsubmitted request has no usable fallback at its planning cutoff
+and emergency default selection is disabled or cannot produce a legal choice,
 the client enters recovery attention and halts future searches. Current-set legal
 staging remains available; an overdue staged pair can send promptly. Automatic
 stuck-forfeit requires verified current server turn/bank emergency evidence and
@@ -437,7 +449,7 @@ Sending marks the action before socket I/O; an ambiguous send is never automatic
 
 BO3 readiness only comes from trusted server/system protocol output, not opponent chat. OTS is retained as packed server-provided sets. Replay operations are serialized. Successful verification archives the result and clears the pending slot for the next child replay. Failed or uncertain verification remains pending and is not silently retried.
 
-Logs contain metadata (event/action/room/time/hash), not raw socket traffic, assertions, passwords, or teams. Battle state is available separately to the controlling agent. No autonomous strategy is included.
+Logs contain metadata (event/action/room/time/hash), not raw socket traffic, assertions, passwords, or teams. Battle state is available separately to the controlling agent. Strategy remains with the agent; the optional emergency selector supplies only a deterministic legal choice.
 
 ## Official sources checked
 

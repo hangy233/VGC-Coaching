@@ -38,6 +38,9 @@ of skill files, review reports, and chat.
    startup. Retain the current valid lease between sets rather than claiming anew.
    The repaired client advertises `compactTurnBoard` and
    `deadlinePlanningRecovery`; verify the loaded flags before relying on them.
+   With existing user authorization for automatic defaults, a client advertising
+   `emergencyDefaultChoice` can enable that separate policy while idle. It defaults
+   off; enabling deadline protection or stuck-forfeit alone does not authorize it.
 5. Run `battle_preflight` and inspect its blockers and warnings: existing
    authentication, exact team, remaining authorization, actual idle state,
    loaded capabilities, prior review, skill adoption and report health. A source
@@ -139,7 +142,7 @@ attempt eligible; an unknown clock permits attention, not an invented expiry.
 The first real clock can replace a provisional unknown budget. An explicit fresh
 timer-off observation revokes its old deadline; generic missing clock data does
 not prove the timer was cancelled. A successful sent choice is not an unsubmitted
-request, even when acceptance remains unknown. The client invents no attack.
+request, even when acceptance remains unknown.
 Inspect its send uncertainty, official result and idle state. Reset a safety halt
 only through deliberate policy configuration while idle, after the control review.
 An uncertain socket write retains its reservation and receives bounded
@@ -156,6 +159,21 @@ a numerical survival or KO benchmark. Leave an unavailable benchmark unverified
 and never replace it with arithmetic.
 
 Aim to commit within the first 20 seconds of planning; stop optional research
+before the emergency policy is needed. With explicitly authorized
+`emergencyDefaultChoice:true`, a fresh unsubmitted request without a usable staged
+pair receives a deterministic complete legal choice at the planning cutoff.
+The selector uses request legality and move metadata, prefers ordinary attacks,
+handles preview and forced replacements, and never chooses Mega Evolution or
+calculates damage/Speed. It cannot predict Protect, switches, immunities or a
+winning route. Agent staging still takes priority. Defaults retain distinct
+`emergency-default` provenance, mark the game operational and halt future searches
+for review; current requests remain protected. A reserved or uncertain send is
+never replaced. Failure to produce a valid pair follows the existing recovery
+and verified-emergency containment path. Do not describe a default as a deliberate
+agent read, erase its exclusion, or treat this option as permission to abandon
+the live board. A source update requires a deliberate client restart to load it.
+
+Stop optional research
 by 25 seconds remaining on an observed turn clock, sooner when the total game
 bank is low. An observer's threshold alert means commit now, not begin another
 round of checks. These are operator buffers, not server deadlines or guarantees.

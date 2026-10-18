@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-17.21**. Read the bundled
+Cycle revision: **2026-10-17.22**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -284,8 +284,10 @@ or the simulator establish a guaranteed win against unknown opposing sets.
 Follow the bundled [BO3 cycle and checkpoint](references/headless-battle-cycle.md).
 Locate the active VGC project's `showdown/AGENT-WORKFLOW.md` for its client API;
 that project file is not relative to a globally installed skill. The agent supplies
-strategy; an explicitly enabled watchdog can submit the agent's staged legal pair,
-but generates no generic move choice. Review does not authorize
+strategy; an explicitly enabled watchdog prioritizes the agent's staged legal pair.
+The cycle documents the separately authorized `emergencyDefaultChoice` option for
+missing input; its deterministic legal choices are operational fallbacks, not
+agent predictions or calculated tactical judgments. Review does not authorize
 another set, a roster change, replay publication, or a new authentication attempt.
 Honor an existing user request to save replays and clean completed BO3 artifacts;
 do not ask again for that already authorized scope. Preserve room privacy and

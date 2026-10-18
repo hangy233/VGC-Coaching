@@ -80,8 +80,9 @@ test('preflight exposes incomplete authorized replay preservation even after ser
 });
 
 test('production safety capabilities require one owner and enabled non-halted deadline protection',async()=>{
-  const protectedSession={capabilities:{operations:['start','choose','ready','metrics-sync','control-claim','control-release','set-control-policy','stage-fallback','turn-status','control-trace'],features:{controllerLease:true,deadlineSupervisor:true,deadlinePlanningRecovery:true,compactTurnBoard:true}},controller:{required:true,owner:'batch-operator',generation:3,claimedAt:1000},controlPolicy:{enabled:true,forfeitIfStuck:false,planningMs:20000,safetyMarginMs:5000,unknownClockMs:20000,halted:false,haltReason:null,disposed:false}};
+  const protectedSession={capabilities:{operations:['start','choose','ready','metrics-sync','control-claim','control-release','set-control-policy','stage-fallback','turn-status','control-trace'],features:{controllerLease:true,deadlineSupervisor:true,deadlinePlanningRecovery:true,compactTurnBoard:true}},controller:{required:true,owner:'batch-operator',generation:3,claimedAt:1000},controlPolicy:{enabled:true,forfeitIfStuck:false,emergencyDefaultChoice:false,planningMs:20000,safetyMarginMs:5000,unknownClockMs:20000,halted:false,haltReason:null,disposed:false}};
   const ready=await battlePreflight(dependencies(protectedSession));assert.equal(ready.ready,true);assert.deepEqual(ready.session.controller,protectedSession.controller);assert.deepEqual(ready.session.controlPolicy,protectedSession.controlPolicy);
+  const emergency=await battlePreflight(dependencies({...protectedSession,controlPolicy:{...protectedSession.controlPolicy,emergencyDefaultChoice:true}}));assert.equal(emergency.ready,true);assert.equal(emergency.session.controlPolicy.emergencyDefaultChoice,true);
   for(const change of [
     {controller:null},
     {controller:{...protectedSession.controller,owner:null}},

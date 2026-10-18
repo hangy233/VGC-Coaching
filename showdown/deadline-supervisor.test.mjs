@@ -34,6 +34,53 @@ function fixture(options={}) {
 const pair=[{type:'move',slot:1},{type:'move',slot:1}];
 const enable={enabled:true,forfeitIfStuck:true};
 
+test('opt-in emergency default fills an unstaged request and preserves send uncertainty',()=>{
+  let selections=0;
+  const f=fixture({selectDefault:()=>{selections++;return pair;}});
+  f.supervisor.configure({...enable,emergencyDefaultChoice:true});f.advance(19999);
+  assert.equal(selections,0);f.advance(1);
+  assert.equal(selections,1);assert.equal(f.sent.length,1);
+  assert.equal(f.sent[0].source,'emergency-default');
+  assert.equal(f.supervisor.status().halted,true);
+  assert(f.traces.some(event=>event.state==='emergency-default-selected'&&event.controlFailure));
+  f.advance(120000);assert.equal(f.sent.length,1);assert.equal(f.forfeits.length,0);
+});
+
+test('emergency generation is disabled by default and never replaces a staged pair',()=>{
+  let selections=0;const f=fixture({selectDefault:()=>{selections++;return pair;}});
+  f.supervisor.configure(enable);f.advance(20000);assert.equal(selections,0);assert.equal(f.sent.length,0);
+  const g=fixture({selectDefault:()=>{selections++;return pair;}});
+  g.supervisor.configure({...enable,emergencyDefaultChoice:true});g.supervisor.stage('turn-1',pair);g.advance(20000);
+  assert.equal(selections,0);assert.equal(g.sent[0].source,'fallback');assert.equal(g.supervisor.status().halted,false);
+});
+
+test('invalid or unavailable emergency pair uses existing recovery without a retry loop',()=>{
+  for(const selected of [null,[{invalid:true},{invalid:true}],Promise.resolve(pair)]){
+    let selections=0;const f=fixture({selectDefault:()=>{selections++;return selected;}});
+    f.supervisor.configure({...enable,emergencyDefaultChoice:true});f.advance(20000);
+    assert.equal(selections,1);assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,0);
+    assert.equal(f.supervisor.status().pending[0].recovering,true);
+    f.advance(35000);assert.equal(selections,1);assert.equal(f.forfeits.length,1);
+  }
+});
+
+test('manual send or request advance during emergency generation wins the race',()=>{
+  const f=fixture({selectDefault:()=>{f.actions=[];return pair;}});
+  f.supervisor.configure({...enable,emergencyDefaultChoice:true});f.advance(20000);
+  assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,0);
+  const g=fixture({selectDefault:()=>{g.actions=g.actions.map(action=>({...action,actionable:false,submissionStatus:'sent'}));return pair;}});
+  g.supervisor.configure({...enable,emergencyDefaultChoice:true});g.advance(120000);
+  assert.equal(g.sent.length,0);assert.equal(g.forfeits.length,0);
+});
+
+test('an emergency throwing write reserves its send and never retries or forfeits',()=>{
+  const f=fixture({selectDefault:()=>pair,submit:()=>{throw new Error('uncertain');}});
+  f.supervisor.configure({...enable,emergencyDefaultChoice:true});f.advance(120000);
+  assert.equal(f.forfeits.length,0);
+  assert.equal(f.traces.filter(event=>event.state==='fallback-send-attempted').length,1);
+  assert(f.traces.some(event=>event.state==='fallback-send-uncertain'));
+});
+
 test('disabled by default and configuration does not send anything',()=>{
   const f=fixture();f.supervisor.refresh();f.advance(100000);
   assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,0);assert.equal(f.timers.size,0);
