@@ -42,12 +42,10 @@ forces their defense, or positions the next attacker; two actions that merely
 delay need a reason, such as expiring opposing control or unavoidable containment.
 
 Plan across the last useful control turn. Remove or weaken the obstacle while
-the advantage applies and arrange a surviving pair for expiration. A support
-Pokemon need not remain active after its job is delivered if switching it gives
-the closing pair a usable board. Conversely, do not sacrifice the only setter
-when the route still needs a second control window. Do not reverse Room or use a
-Speed drop merely because the move is available: name who benefits now and after
-expiration. A move chosen for chip can have an adverse Speed consequence.
+the advantage applies and arrange a surviving pair for expiration. Do not reverse
+Room or use a Speed drop merely because the move is available: name who benefits
+now and after expiration. A move chosen for chip can have an adverse Speed
+consequence.
 
 In a retained clean game, Psychic removed one foe while its partner Protected;
 later Hyper Voice removed the replacement through another Protect. Sylveon then
@@ -55,6 +53,25 @@ removed Salamence while Farigiraf switched Golisopod into the closing position
 before Room expired. That observed sequence illustrates conversion and useful
 partner progress. It does not prove the earlier Politoed trade was optimal,
 establish an unseen investment, or guarantee the same removals on another board.
+
+### Hand off from Room to a fast cleaner
+
+A mixed-speed four can spend Room on its slow attackers while reserving a fast
+cleaner for expiration. Name the slow attacker to preserve, the obstacle it must
+remove or chip, and the partner that closes beside the cleaner. On the last useful
+Room turn, compare continued pressure, protecting that attacker, a covered switch,
+or a spent support's trade that earns the cleaner's entry. Retain the setter,
+weather setter or other answer when the remaining route still needs it; otherwise
+its useful job may be creating that entry. A switch-in cannot attack that turn,
+and a post-KO entry still needs both opposing actions checked on the next board.
+
+Check the first turn after expiration, opposing Room reversal, priority and any
+needed weather. Do not reset Room after losing its slow attacker unless a remaining
+beneficiary can survive and convert the new window. A cleaner holding a Choice item
+needs a useful first attack into plausible switch recipients and a feasible reset
+if its lock becomes exploitable. Earlier entry can still be necessary to remove an
+obstacle, stop denial or avoid immediate loss; keeping the cleaner reserved is a
+plan with contingencies, not a rule that overrides the current board.
 
 ## Trade for the finish, not just for survival
 

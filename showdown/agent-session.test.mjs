@@ -163,6 +163,34 @@ test('disconnect wakes waits and blocks action reuse',async()=>{
   assert((await pending).stopped);assert.equal(f.session.snapshot().actions.length,0);
   assert.equal((await f.session.execute({id:'x',op:'choose',confirmed:true,token:action.token,actions:[]})).ok,false);f.session.dispose();
 });
+test('clock follows equal-timestamp timer receipt order through a trusted alias merge',async()=>{
+  const privateRoom=`${room}-fixturetimerpw`;
+  for(const latest of ['inactive','inactiveoff']){
+    const f=fixture({autoReady:false});
+    try{
+      await f.start();f.request();
+      const countdown='|inactive|Time left: 30 sec this turn | 300 sec total',off='|inactiveoff|Battle timer is now OFF.';
+      f.client.receive(`>${privateRoom}\n${latest==='inactive'?off:countdown}`);
+      f.client.receive(`>${room}\n${latest==='inactive'?countdown:off}`);
+      f.client.receive(`>${room}\n|noinit|rename|${privateRoom}|Private battle`);
+      const clock=f.session.snapshot().rooms.find(entry=>entry.id===privateRoom).clock;
+      assert.equal(clock.source,latest==='inactive'?'server-timer-observation':'server-timer-disabled');
+      assert.equal(clock.deadlineAt,latest==='inactive'?31000:null);
+      assert.equal(clock.bankDeadlineAt,latest==='inactive'?301000:null);
+    }finally{f.session.dispose();}
+  }
+});
+
+test('clock keeps timestamp fallback for timer observations without receipt metadata',()=>{
+  const f=fixture({autoReady:false});
+  try{
+    const state={receivedAt:1000,timers:[{at:1000,type:'inactiveoff',text:'Timer off'},{at:1001,type:'inactive',text:'Time left: 30 sec this turn'}]};
+    assert.equal(f.session.clock(state,'turn').source,'server-timer-observation');
+    state.timers[0].at=1001;
+    assert.equal(f.session.clock(state,'turn').source,'server-timer-disabled');
+  }finally{f.session.dispose();}
+});
+
 test('one authorized parent grants no control or readiness to unrelated battles',async()=>{
   const f=fixture();await f.start();f.request();
   const other='battle-gen9ou-99',another='game-bestof3-gen9championsvgc2026regmcbo3-99';
@@ -304,6 +332,94 @@ test('forfeit rejects unowned, child, ended, inactive, disconnected and untruste
   f.client.receive('|updatesearch|{"searching":[],"games":null}');assert.match((await attempt()).error,/not live/);
   f.client.ws.close();assert.match((await attempt()).error,/disconnected/);
   assert.equal(f.sent.filter(line=>line.includes('/forfeit')).length,0);f.session.dispose();
+});
+
+test('enable timer uses the current owned child while active or waiting and never emits battle choices',async()=>{
+  for(const waiting of [false,true]){
+    const f=fixture({autoReady:false});
+    try{
+      await f.start();f.request(waiting?{wait:true}:{});
+      const before=f.sent.length,command={id:'enable-owned-timer',op:'set-timer',room,confirmed:true};
+      const result=await f.session.execute(command);
+      assert.equal(result.ok,true,result.error);assert.equal(result.result.status,'sent-not-acknowledged');
+      assert.equal(result.result.serverObservation,null);
+      assert.deepEqual(f.sent.slice(before),[`${room}|/timer on`]);
+      assert.deepEqual(await f.session.execute(command),result);
+      assert.equal((await f.session.execute({...command,id:'different-timer-request'})).ok,false);
+      assert.match((await f.session.execute({...command,room:parent})).error,/different arguments/);
+      assert.equal(f.session.searchesSent,1);assert.equal(f.session.authorizedSets,1);
+      assert(f.session.capabilities().operations.includes('set-timer'));assert.equal(f.session.capabilities().features.ownedBattleTimer,true);
+      f.client.receive(`>${room}\n|inactive|Battle timer is ON.`);
+      for(const state of [f.session.snapshot().rooms.find(r=>r.id===room),f.session.turnSnapshot().boards.find(r=>r.room===room)]){
+        assert.equal(state.timer.request.status,'sent-not-acknowledged');
+        assert.equal(state.timer.serverObservation.type,'inactive');assert.equal(state.timer.serverObservation.afterRequest,true);
+      }
+    }finally{f.session.dispose();}
+  }
+});
+
+test('timer operation rejects unowned, unlinked, stale, ambiguous, ended, inactive and disconnected targets',async()=>{
+  const f=fixture({autoReady:false}),other='battle-gen9championsvgc2026regmcbo3-99';let id=0;
+  const attempt=(target=room,extra={})=>f.session.execute({id:'timer-guard-'+(++id),op:'set-timer',confirmed:true,room:target,...extra});
+  try{
+    assert.match((await attempt()).error,/not linked/);await f.start();f.request();
+    assert.match((await attempt(parent)).error,/child battle room/);
+    assert.match((await attempt(other)).error,/not linked/);assert(!f.client.rooms.has(other));
+    assert.match((await attempt(room,{confirmed:false})).error,/confirmation/);
+    assert.match((await attempt(room,{enabled:false})).error,/Only enabling/);
+    f.client.receive(`>${room}\n|c|Opponent|noinit|rename|${room}-fakepw|Fake`);
+    assert.match((await attempt(`${room}-fakepw`)).error,/not linked/);
+    f.client.state(parent).children=[];assert.match((await attempt()).error,/not linked/);f.client.state(parent).children=[room];
+    f.client.state(room).epoch=0;assert.match((await attempt()).error,/current live/);f.client.state(room).epoch=1;
+    f.request({side:{name:'AnotherPlayer'}});assert.match((await attempt()).error,/another player/);f.request();
+    f.client.receive(`>${parent}\n|uhtml|game2|<a href="/${other}">Game 2</a>`);
+    f.client.receive(`>${other}\n|request|${JSON.stringify({wait:true})}`);
+    assert.match((await attempt()).error,/unambiguous/);f.client.state(other).ended=true;
+    f.client.state(room).ended=true;assert.match((await attempt()).error,/current live/);f.client.state(room).ended=false;
+    f.client.state(parent).ended=true;assert.match((await attempt()).error,/not live/);f.client.state(parent).ended=false;
+    f.client.receive('|updatesearch|{"searching":[],"games":null}');assert.match((await attempt()).error,/not live/);
+    f.client.ws.close();assert.match((await attempt()).error,/disconnected/);
+    assert.equal(f.sent.filter(line=>line.includes('/timer')).length,0);
+  }finally{f.session.dispose();}
+});
+
+test('timer requires the current lease and preserves staged fallback, safety halt and search allowance',async()=>{
+  const f=fixture({autoReady:false,controlTimers:{setTimer:()=>1,clearTimer:()=>{}}});
+  try{
+    await f.start();f.request();
+    const claim=await f.session.execute({id:'claim-for-timer',op:'control-claim',confirmed:true,controllerId:'timer-fixture'});
+    const controllerLease=claim.result.controllerLease;
+    f.session.supervisor.configure({enabled:true});
+    f.session.supervisor.stage(f.session.actions()[0].token,[{type:'move',slot:1},{type:'move',slot:1}]);
+    f.session.supervisor.halt('fixture-safety-halt');
+    const before=f.session.supervisor.status(),sent=f.sent.length;
+    const command={id:'leased-timer',op:'set-timer',confirmed:true,room,controllerLease};
+    assert.match((await f.session.execute({...command,id:'missing-timer-lease',controllerLease:undefined})).error,/controller lease/);
+    assert.equal((await f.session.execute(command)).ok,true);
+    assert.deepEqual(f.session.supervisor.status(),before);assert.deepEqual(f.sent.slice(sent),[`${room}|/timer on`]);
+    assert.equal(f.session.searchesSent,1);assert.equal(f.session.authorizedSets,1);
+    await f.session.execute({id:'takeover-timer',op:'control-claim',confirmed:true,controllerId:'new-controller',takeover:true,expectedGeneration:1});
+    assert.match((await f.session.execute(command)).error,/controller lease/);
+  }finally{f.session.dispose();}
+});
+
+test('trusted timer aliases and uncertain sends stay reserved without suppressing owned choices',async()=>{
+  const f=fixture({autoReady:false}),privateChild=`${room}-fixturetimerpw`;
+  try{
+    await f.start();f.request();
+    f.client.receive(`>${room}\n|noinit|rename|${privateChild}|Private battle`);
+    const write=f.client.ws.send;f.client.ws.send=line=>{write(line);if(line.endsWith('|/timer on'))throw new Error('Synthetic uncertain timer write');};
+    const command={id:'uncertain-owned-timer',op:'set-timer',confirmed:true,room};
+    const result=await f.session.execute(command);assert.equal(result.ok,false);
+    assert.deepEqual(await f.session.execute(command),result);
+    assert.equal(f.session.snapshot().rooms.find(r=>r.id===privateChild).timer.request.status,'send-uncertain');
+    assert.equal(f.session.actions().length,1);
+    f.client.receive(`>${privateChild}\n|noinit|rename|${room}|Public battle`);
+    assert.match((await f.session.execute({...command,id:'timer-no-retry',room:privateChild})).error,/Duplicate or uncertain/);
+    assert.deepEqual(f.sent.filter(line=>line.includes('/timer')),[`${privateChild}|/timer on`]);
+    const forfeited=await f.session.execute({id:'forfeit-after-timer',op:'forfeit',confirmed:true,room:parent});assert.equal(forfeited.ok,true);
+    assert.match((await f.session.execute({...command,id:'timer-after-forfeit'})).error,/BO3 forfeit/);
+  }finally{f.session.dispose();}
 });
 test('forfeit follows only trusted owned parent aliases and stays reserved through rename or uncertain I/O',async()=>{
   const f=fixture({autoReady:false});await f.start();f.request();const privateParent=`${parent}-fixtureparentpw`;

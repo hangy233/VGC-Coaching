@@ -183,6 +183,8 @@ Login does not queue a battle. The controlling agent must claim exclusive contro
 
 The terminal streams readable events and prints watch URLs for the set and each game. Automatic readiness advances games within the current BO3; another set requires a separate search. Replay publication is opt-in through `battle_set_replay_policy` or `--save-replays`, within the user's sharing authorization and the room's existing privacy.
 
+Agents can explicitly enable the current owned game's timer with [`battle_set_timer`](showdown/README.md#enable-the-current-battle-timer). The tool preserves move choices and reports the send separately from subsequent server timer observations; check the loaded client's capabilities before using it.
+
 After **every BO3**, including the final one, the agent must:
 
 1. Verify the official parent result and all expected child games.

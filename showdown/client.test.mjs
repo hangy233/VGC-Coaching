@@ -180,6 +180,63 @@ test('team preview requires exactly four distinct slots',()=>{const {request,gra
 test('wait and expired grants block',()=>{const {request,grant,choose,tick}=setup();grant('choose');tick(40000);assert.throws(()=>choose({deadlineAt:50000}),/confirmation/);request({...fixture(),wait:true});assert.throws(()=>choose(),/actionable/);});
 test('BO3 readiness only from server prompt; child link and OTS retained',()=>{const {c,grant,sent}=setup();c.receive(`>${room}\n|c|opponent|/uhtml value="/msgroom bestof-1,/confirmready"`);grant('ready','bestof-1');assert.throws(()=>c.confirmReady('bestof-1'),/No fresh/);c.receive(`>${room}\n|c|~|/uhtml controls,<button value="/msgroom bestof-1,/confirmready">Ready</button>\n|showteam|p2|Pokemon|item|ability\n|uhtml|next|<a href="/battle-next-2">Game 2</a>`);c.confirmReady('bestof-1');assert.equal(sent[0],'bestof-1|/confirmready');assert.equal(c.state(room).sheets.p2,'Pokemon|item|ability');assert.deepEqual(c.state(room).children,['battle-next-2']);grant('ready','bestof-1');assert.throws(()=>c.confirmReady('bestof-1'),/Duplicate/);});
 test('timers captured as observations, not invented turn deadlines',()=>{const {c}=setup();c.receive(`>${room}\n|inactive|Alice has 30 seconds left.\n|inactiveoff|Timer off`);assert.equal(c.state(room).timers.length,2);assert.equal(c.state(room).timers[0].at,1000);});
+test('trusted alias merges preserve equal-timestamp timer observation order in both directions',()=>{
+  const privateRoom=`${room}-fixturetimerpw`;
+  for(const [source,target] of [[room,privateRoom],[privateRoom,room]])for(const latest of ['inactive','inactiveoff']){
+    const {c,grant}=setup(),older=latest==='inactive'?'inactiveoff':'inactive';
+    c.receive(`>${target}\n|${older}|Older timer observation`);
+    grant('set-timer');c.setTimer(room);
+    c.receive(`>${source}\n|${latest}|Latest timer observation`);
+    c.receive(`>${source}\n|noinit|rename|${target}|Renamed battle`);
+    const timers=c.state(target).timers;
+    assert.deepEqual(timers.map(entry=>entry.type),[older,latest]);
+    assert(timers[0].sequence<timers[1].sequence);assert.equal(timers[0].at,timers[1].at);
+    assert.deepEqual(c.timerStatus(target).serverObservation,{at:1000,type:latest,text:'Latest timer observation',afterRequest:true});
+    c.receive(`>${target}\n|noinit|rename|${source}|Restored battle`);
+    assert.deepEqual(c.timerStatus(source),c.timerStatus(target));
+    assert.equal(c.timerStatus(source).serverObservation.type,latest);
+  }
+});
+test('enable timer is a scoped one-shot request with separately observed server timer state',()=>{
+  const {c,grant,sent}=setup();
+  c.receive(`>${room}\n|inactiveoff|Timer off`);
+  assert.throws(()=>c.setTimer(room),/confirmation/);assert.equal(c.timerStatus(room).request,null);
+  grant('set-timer');const result=c.setTimer(room);
+  assert.equal(sent.at(-1),`${room}|/timer on`);assert.equal(result.status,'sent-not-acknowledged');
+  assert.deepEqual(result.serverObservation,{at:1000,type:'inactiveoff',text:'Timer off',afterRequest:false});
+  c.receive(`>${room}\n|inactive|Battle timer is ON.`);
+  assert.equal(c.timerStatus(room).request.status,'sent-not-acknowledged');
+  assert.deepEqual(c.timerStatus(room).serverObservation,{at:1000,type:'inactive',text:'Battle timer is ON.',afterRequest:true});
+  c.receive(`>${room}\n|inactiveoff|Timer off again`);
+  assert.equal(c.timerStatus(room).serverObservation.type,'inactiveoff');
+  grant('set-timer');assert.throws(()=>c.setTimer(room),/Duplicate or uncertain/);
+  assert.equal(sent.length,1);
+});
+test('timer sends cannot acquire arbitrary rooms, disable timers, or use stale child requests',()=>{
+  const {c,grant,sent}=setup(),unknown='battle-gen9championsvgc2026regmcbo3-999';
+  assert.throws(()=>c.setTimer(room,{enabled:false}),/Only enabling/);
+  assert.throws(()=>c.setTimer('lobby'),/M-C child/);
+  assert.throws(()=>c.setTimer('game-bestof3-gen9championsvgc2026regmcbo3-123'),/M-C child/);
+  assert.throws(()=>c.setTimer(unknown),/current live/);assert(!c.rooms.has(unknown));
+  c.state(room).epoch=0;assert.throws(()=>c.setTimer(room),/current live/);c.state(room).epoch=1;
+  c.state(room).ended=true;assert.throws(()=>c.setTimer(room),/current live/);c.state(room).ended=false;
+  c.state(room).request={wait:true};grant('set-timer');assert.equal(c.setTimer(room).status,'sent-not-acknowledged');
+  assert.deepEqual(sent,[`${room}|/timer on`]);
+});
+test('timer send reservation and observations survive trusted private aliases and uncertain writes',()=>{
+  const {c,grant,sent}=setup(),privateRoom=`${room}-fixturetimerpw`,write=c.ws.send;
+  c.ws.send=line=>{write(line);throw new Error('Synthetic uncertain socket write');};
+  grant('set-timer');assert.throws(()=>c.setTimer(room),/Synthetic uncertain/);
+  assert.equal(c.timerStatus(room).request.status,'send-uncertain');
+  c.receive(`>${room}\n|noinit|rename|${privateRoom}|Private battle`);
+  assert.throws(()=>c.setTimer(room),/renamed/);
+  c.authorize('set-timer',{room:privateRoom,confirmed:true});assert.throws(()=>c.setTimer(privateRoom),/Duplicate or uncertain/);
+  c.receive(`>${privateRoom}\n|inactive|Time left: 55 sec this turn | 300 sec total`);
+  assert.equal(c.timerStatus(room).serverObservation.afterRequest,true);
+  assert.equal(c.timerStatus(privateRoom).request.status,'send-uncertain');
+  c.receive(`>${privateRoom}\n|noinit|rename|${room}|Public battle`);
+  grant('set-timer');assert.throws(()=>c.setTimer(room),/Duplicate or uncertain/);assert.equal(sent.length,1);
+});
 test('replay requires finished battle, explicit grant, server URL and accessible matching log',async()=>{const {c,grant}=setup();grant('save-replay');assert.throws(()=>c.saveReplay(room),/not finished/);c.receive(`>${room}\n|win|Alice`);c.saveReplay(room);c.receive('|popup|<a href="https://evil.example/test">bad</a>');assert(!c.pendingReplay.url);const id=room.replace(/^battle-/,'');c.receive(`|popup||html|<a href="https://replay.pokemonshowdown.com/${id}">Replay</a>`);assert.equal(c.pendingReplay.verified,undefined);await assert.rejects(c.verifyReplay({fetchImpl:async()=>({ok:false})}),/accessible/);await assert.rejects(c.verifyReplay({fetchImpl:async()=>replayResponse({id:'wrong',log:'|win|Alice'})}),/identity/);const result=await c.verifyReplay({fetchImpl:async()=>replayResponse({id,log:'|win|Alice'})});assert(result.verified);});
 test('no broker or approval means no login; updateuser alone cannot authenticate',async()=>{const {c}=setup();c.challenge='1|challenge';await assert.rejects(c.authenticate('Test'),/authorization/);await assert.rejects(c.authenticate('Test',{approved:true}),/broker/);c.receive('|updateuser|Test|1|1');assert(!c.authenticated);});
 test('reconnect invalidates auth, grants and request freshness; never replays commands',async()=>{const {c,grant,choose,sent}=setup();grant('choose');choose();class FakeSocket extends EventTarget {constructor(){super();this.readyState=0;queueMicrotask(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));});}send(x){sent.push(x);}close(){this.readyState=3;this.dispatchEvent(new Event('close'));}}c.ws.readyState=3;c.WebSocketImpl=FakeSocket;await c.connect();assert.equal(sent.length,1);assert(!c.authenticated);grant('choose');assert.throws(()=>choose(),/fresh/);c.authenticated=true;c.receive(`>${room}\n|request|${JSON.stringify(fixture())}`);assert.throws(()=>choose(),/Duplicate/);});

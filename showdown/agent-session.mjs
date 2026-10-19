@@ -7,6 +7,7 @@ import {DeadlineSupervisor} from './deadline-supervisor.mjs';
 import {replacementOptions,legalReplacementPairs} from './choice-validation.mjs';
 import {compactTurnBoard} from './turn-board.mjs';
 import {selectEmergencyActions} from './emergency-choice.mjs';
+import {compareTimerObservations} from './client.mjs';
 
 const {Teams,TeamValidator}=createRequire(import.meta.url)('pokemon-showdown');
 const RUNTIME_REVISION=createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
@@ -139,7 +140,7 @@ export class AgentSession extends EventEmitter {
     const rooms=[...this.client.rooms.values()].filter(room=>this.ownedRooms.has(room.id)&&!room.ended&&!this.client.rooms.get(this.roomParents.get(room.id))?.ended);
     const actions=this.actions(),previewRooms=new Set(actions.filter(action=>action.kind==='preview').map(action=>action.room));
     const boards=rooms.filter(room=>room.id.startsWith('battle-')).map(room=>({room:room.id,parentId:this.roomParents.get(room.id),
-      requestAgeMs:Number.isFinite(room.receivedAt)?Math.max(0,this.now()-room.receivedAt):null,clock:this.clock(room,room.request?.teamPreview?'preview':'turn'),
+      requestAgeMs:Number.isFinite(room.receivedAt)?Math.max(0,this.now()-room.receivedAt):null,clock:this.clock(room,room.request?.teamPreview?'preview':'turn'),timer:this.client.timerStatus(room.id),
       ...compactTurnBoard(this.client.battleSnapshot?.(room.id),{request:room.request,events:room.battleLog}),
       ...(previewRooms.has(room.id)?{opponentSheets:Object.fromEntries(Object.entries(room.sheets||{}).filter(([side])=>side!==room.request.side?.id).map(([side,packed])=>[side,publishedSheet(packed)])),opponentSheetUncertainty:'Registered six and published sets only; selected four, stat investments and next actions are unknown.'}:{})}));
     return {sessionId:this.id,revision:this.revision,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),actions,
@@ -188,7 +189,7 @@ export class AgentSession extends EventEmitter {
     }
   }
   roomTeamId(room){return this.roomTeams.get(this.client.resolveRoom(room))||this.client.expectedTeamHash;}
-  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,emergencyDefaultChoice:true,compactTurnBoard:true,namedReplacements:true,controlTrace:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
+  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','set-timer','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,emergencyDefaultChoice:true,compactTurnBoard:true,namedReplacements:true,controlTrace:true,ownedBattleTimer:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
   rememberAction(action){
     const state=this.client.rooms.get(action.room),turn=state?.battle?.turn;
     if(!this.actionContexts.has(action.token))this.actionContexts.set(action.token,{room:action.room,teamId:this.roomTeamId(action.room),rqid:action.rqid,turn:Number(turn)||0,sessionId:this.id,token:action.token,lastObservedStatus:state?.lastAction?.rqid===action.rqid?state.lastAction.status:'unsubmitted'});
@@ -209,8 +210,8 @@ export class AgentSession extends EventEmitter {
     });
     // A timer-off observation cancels earlier countdown evidence.
     const timerOff = [...r.timers].reverse().find(entry => entry.type === 'inactiveoff');
-    if(timerOff && timerOff.at >= (r.receivedAt || 0) && (!observation || timerOff.at >= observation.at))return {source:'server-timer-disabled',observedAt:timerOff.at,deadlineAt:null,remainingMs:null,bankDeadlineAt:null,bankRemainingMs:null};
-    if (!observation || timerOff && timerOff.at >= observation.at) return {source:'unavailable',deadlineAt:null,remainingMs:null,bankDeadlineAt:null,bankRemainingMs:null};
+    if(timerOff && timerOff.at >= (r.receivedAt || 0) && (!observation || compareTimerObservations(timerOff,observation)>=0))return {source:'server-timer-disabled',observedAt:timerOff.at,deadlineAt:null,remainingMs:null,bankDeadlineAt:null,bankRemainingMs:null};
+    if (!observation || timerOff && compareTimerObservations(timerOff,observation)>=0) return {source:'unavailable',deadlineAt:null,remainingMs:null,bankDeadlineAt:null,bankRemainingMs:null};
     const match = observation.text.match(/^Time left: (\d+) sec this turn/) || observation.text.match(/ has (\d+) seconds /);
     const deadlineAt = observation.at + Number(match[1]) * 1000;
     const bank=observation.text.match(/\| (\d+) sec total(?: \||$)/),bankDeadlineAt=bank?observation.at+Number(bank[1])*1000:null;
@@ -272,7 +273,7 @@ export class AgentSession extends EventEmitter {
       rooms:[...this.client.rooms.values()].filter(r=>this.ownedRooms.has(r.id)).map(r=>({
         id:r.id,teamId:this.roomTeamId(r.id),ended:r.ended,result:r.result || null,children:r.children,sheets:r.sheets,
         state:this.client.battleSnapshot?.(r.id) || null,
-        choice:r.lastAction || null,clock:this.clock(r,'turn'),recentEvents:r.battleLog.slice(-12),
+        choice:r.lastAction || null,clock:this.clock(r,'turn'),timer:this.client.timerStatus(r.id),recentEvents:r.battleLog.slice(-12),
         forfeit:r.forfeitPending || null,
       })),
     };
@@ -506,6 +507,19 @@ export class AgentSession extends EventEmitter {
     if(op==='switch-team')return this.switchTeam(command);
     if(['start','authorize-sets','save-replays'].includes(op))check(!this.switchingTeam,'Finish the approved team switch before this operation');
     if(op==='save-replays')return this.preserveSetReplays(c.resolveRoom(room),{assertControl:()=>this.controller.assert(command.controllerLease)});
+    if(op==='set-timer'){
+      check(command.enabled===undefined||command.enabled===true,'Only enabling the battle timer is supported');
+      const child=c.resolveRoom(room),parent=this.roomParents.get(child),state=c.rooms.get(child),parentState=c.rooms.get(parent);
+      check(typeof child==='string' && /^battle-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(child),'Expected the current authorized M-C child battle room');
+      check(this.ownedRooms.has(child) && this.ownedParents.has(parent) && this.ownedRooms.has(parent) && this.roomParents.get(parent)===parent && parentState?.children.includes(child),'Child battle is not linked to an owned authorized BO3 parent');
+      check(!parentState.ended && Object.hasOwn(c.searchState?.games || {},parent),'BO3 parent is not live in the current server search state');
+      const liveChildren=parentState.children.filter(id=>this.ownedRooms.has(id) && this.roomParents.get(id)===parent && !c.rooms.get(id)?.ended && c.rooms.get(id)?.epoch===c.epoch && c.rooms.get(id)?.request);
+      check(liveChildren.length===1 && liveChildren[0]===child && state?.epoch===c.epoch && state.request && !state.ended,'No unambiguous current live owned child battle request');
+      check(!state.request.side?.name || normalized(state.request.side.name)===normalized(this.username),'Child battle request belongs to another player');
+      c.authorize('set-timer',{room:child,confirmed:true});
+      try{return c.setTimer(child,{enabled:true});}
+      finally{this.revision++;this.emit('change',{revision:this.revision,event:'timer-request'});}
+    }
     if(op==='forfeit'){
       const parent=c.resolveRoom(room);
       check(typeof parent==='string' && /^game-bestof3-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(parent), 'Expected the current authorized BO3 parent room');

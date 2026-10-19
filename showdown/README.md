@@ -158,6 +158,7 @@ The same MCP exposes the remaining private BO3 workflow:
 | `battle_calculation_evidence` | Retrieve the recorded inputs and outputs of an actual MCP calculation by exact team and receipt `id`. Performs no new calculation. |
 | `battle_switch_team` | Apply an explicitly approved full legal team while idle, prepare its report and preserve the signed-in account and remaining allowance. |
 | `battle_set_replay_policy` | Explicitly enable saved-replay capture for future owned sets, or disable it for future acquisitions; inspect preservation status before another search. |
+| `battle_set_timer` | Explicitly request the server timer on for the current owned live child; inspect separate server observations before claiming it is active. |
 
 Every BO3 still requires the private review and skill checkpoint before another
 authorized search, including wins, forfeits and the final set. Prefer these MCP
@@ -167,6 +168,49 @@ review saves validate their stated contracts; `battle_start` does not implement 
 runtime review guard, and no tool can establish tactical correctness from prose.
 Do not search, authenticate, change the roster, publish replays or commit merely
 to validate a skill or these APIs.
+
+### Enable the current battle timer
+
+When the user requests the timer, use the owned live child from fresh state:
+
+```text
+battle_set_timer({confirmed:true, controllerLease:LEASE, commandId:"timer-current-child", room:CHILD_ROOM, enabled:true})
+```
+
+`enabled` defaults to `true`; `false` is rejected because this operation only
+enables the timer. It accepts the current canonical child room or its trusted
+privacy alias and requires the exclusive controller lease. The client verifies
+the live parent, current connection and linked child before sending exactly
+`CHILD_ROOM|/timer on`. It does not choose moves, change deadline policy, search,
+extend the allowance or authenticate. Reuse the command ID after an uncertain
+reply. A per-child reservation prevents another send through a different ID or
+alias, including after an uncertain write.
+
+The result reports `sent-not-acknowledged`, not confirmed timer activation.
+Each child's status and compact board expose `timer.request` separately from
+`timer.serverObservation`, which records the latest `inactive` or `inactiveoff`
+server event. Its `afterRequest` flag establishes event order only; it does not
+prove that the event acknowledges this request. Observe the actual clock before
+using it for deadline decisions. Enabling the timer does not extend a turn or
+replace prompt legal choices.
+
+Check the loaded `set-timer` operation and `ownedBattleTimer` feature first.
+An older signed-in client does not gain this feature from a source build or MCP
+restart. Do not restart or authenticate merely to test timer support; keep the
+existing set and login until a separately authorized lifecycle transition.
+
+For the single reviewed legacy build, `enableLegacyBattleTimer(options)` in
+`showdown/legacy-timer.mjs` provides an explicit, bounded terminal remediation
+when the user has authorized both timer activation and saved login. It has no
+public CLI and is never an automatic MCP authentication fallback. The current
+operator's TTY helper passes its private lease in memory, verifies the unchanged
+owned submitted preview and the exact legacy refusal, then opens one same-account
+broker login while the primary stays connected. Before its sole timer-on send,
+it requires the server-restored preview choice and matching registered species,
+items, moves and abilities; investments remain bound to the primary approved
+team fingerprint. Unknown builds, uncertain probes or mismatches stop recovery;
+authentication and uncertain writes are not retried. Only the auxiliary socket
+closes. A timer event is observation evidence, not a final game or BO3 result.
 
 ### Authorized replay preservation policy
 

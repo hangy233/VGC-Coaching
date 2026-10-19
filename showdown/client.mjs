@@ -9,6 +9,13 @@ const check = (ok, msg) => { if (!ok) throw new Error(msg); };
 const roomID = id => typeof id === 'string' && /^[a-z0-9-]+$/.test(id);
 const userID = name => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 const digest = value => createHash('sha256').update(value).digest('hex');
+export function compareTimerObservations(a,b) {
+  if(Number.isSafeInteger(a.epoch) && Number.isSafeInteger(b.epoch)) {
+    if(a.epoch!==b.epoch)return a.epoch-b.epoch;
+    if(Number.isSafeInteger(a.sequence) && Number.isSafeInteger(b.sequence))return a.sequence-b.sequence;
+  }
+  return a.at-b.at;
+}
 const digestMove = value => typeof value==='string' ? value.toLowerCase().replace(/[^a-z0-9]/g,'') : null;
 const replayID = value => battleRoomIdentity(value)?.replace(/^battle-/, '');
 const MAX_REPLAY_BYTES = 8 * 1024 * 1024;
@@ -89,7 +96,9 @@ export class ShowdownClient extends EventEmitter {
       sheets:Object.assign({}, ...records.map(record => record.sheets)),
       children:[...new Set(records.flatMap(record => record.children))],
       battleLog:history.lines.slice(-2000),
-      timers:records.flatMap(record => record.timers).sort((a,b)=>a.at-b.at).slice(-20),
+      // Receipt sequence preserves observation order when alias events share a timestamp.
+      timers:records.flatMap(record => record.timers).sort(compareTimerObservations).slice(-20),
+      timerRequest:records.map(record=>record.timerRequest).filter(Boolean).sort((a,b)=>b.requestedAt-a.requestedAt)[0] || null,
       ended:records.some(record=>record.ended),
       previewObserved:records.some(record=>record.previewObserved),
       startedObserved:records.some(record=>record.startedObserved),
@@ -111,7 +120,7 @@ export class ShowdownClient extends EventEmitter {
       if(record.readyParent)record.readyParent=this.resolveRoom(record.readyParent);
     }
     for(const key of [...this.sent]) {
-      for(const prefix of ['choose:','ready:','replay:','forfeit:'])if(key.startsWith(`${prefix}${oldRoom}:`) || key===`${prefix}${oldRoom}`)this.sent.add(`${prefix}${room}${key.slice(prefix.length+oldRoom.length)}`);
+      for(const prefix of ['choose:','ready:','replay:','forfeit:','timer:'])if(key.startsWith(`${prefix}${oldRoom}:`) || key===`${prefix}${oldRoom}`)this.sent.add(`${prefix}${room}${key.slice(prefix.length+oldRoom.length)}`);
       // An explicit rename moves subscribed connections. A search-list handoff
       // can instead race an unconfirmed public join, so its private destination
       // needs one fresh observation join rather than an assumed subscription.
@@ -235,7 +244,7 @@ export class ShowdownClient extends EventEmitter {
       }
       if (type === 'showteam' && r) { r.sheets[parts[0]] = parts.slice(1).join('|'); this.emit('sheet',{room, side:parts[0], packed:r.sheets[parts[0]]}); }
       if (['inactive','inactiveoff'].includes(type) && r) {
-        r.timers.push({at:this.now(), type, text:value}); r.timers = r.timers.slice(-20);
+        r.timers.push({at:this.now(), type, text:value,epoch:this.epoch,sequence:this.observationSequence}); r.timers = r.timers.slice(-20);
         this.emit('timer',{room,type,text:value});
       }
       if (['win','tie'].includes(type) && r) { r.ended = true; r.request = null; r.result = {type, winner:value}; if(r.lastAction){r.lastAction.boundary='battle-ended';r.lastAction.endedAt=this.now();}this.emit('result',{room,...r.result}); }
@@ -334,6 +343,30 @@ export class ShowdownClient extends EventEmitter {
     try{this.send('forfeit',room,'/forfeit',`forfeit:${room}`);}
     finally{if(this.state(room).forfeitPending)this.emit('forfeit-status',{room,status:'sent-not-acknowledged'});}
     return {room,status:'sent-not-acknowledged'};
+  }
+  timerStatus(room) {
+    const r=this.rooms.get(this.resolveRoom(room));
+    const observation=r?.timers.findLast(entry=>entry.epoch===this.epoch);
+    const request=r?.timerRequest?.epoch===this.epoch?r.timerRequest:null;
+    return {request:request?{enabled:request.enabled,requestedAt:request.requestedAt,status:request.status}:null,
+      serverObservation:observation?{at:observation.at,type:observation.type,text:observation.text,afterRequest:!!request&&observation.sequence>request.observationSequence}:null};
+  }
+  setTimer(room,{enabled=true}={}) {
+    check(enabled===true,'Only enabling the battle timer is supported');
+    check(battleRoomIdentity(room)?.startsWith('battle-'),'M-C child battle required');
+    check(room===this.resolveRoom(room),'Room was renamed; inspect fresh state');
+    const r=this.rooms.get(room);
+    check(r?.epoch===this.epoch && r.request && !r.ended,'No current live child battle request');
+    check(!this.pendingForfeit(room),'BO3 forfeit was sent or is uncertain; await the official parent result');
+    const key=`timer:${room}:${this.epoch}:on`,previous=r.timerRequest;
+    check(!this.sent.has(key),'Duplicate or uncertain timer request blocked');
+    r.timerRequest={enabled:true,epoch:this.epoch,requestedAt:this.now(),observationSequence:this.observationSequence,status:'sent-not-acknowledged'};
+    try {this.send('set-timer',room,'/timer on',key);}
+    catch(error) {
+      if(this.sent.has(key))r.timerRequest.status='send-uncertain';else r.timerRequest=previous;
+      throw error;
+    }
+    return {room,enabled:true,status:'sent-not-acknowledged',serverObservation:this.timerStatus(room).serverObservation};
   }
   uploadTeam(packed) {
     check(typeof packed === 'string' && packed.length > 10 && !/[\r\n]/.test(packed), 'Invalid packed team');

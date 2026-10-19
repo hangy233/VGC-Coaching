@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-18.25**. Read the bundled
+Cycle revision: **2026-10-18.26**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -269,6 +269,17 @@ each important turn, record what was knowable before the action, the observed
 result, and a feasible alternative from that exact position. A Pokemon switching
 in cannot also use its move that turn. If changing an earlier turn enables a
 later action, label the entire sequence as a counterfactual branch.
+
+For an item or set comparison, also compare complete plausible plans from preview
+through the finish: selected four, opening, control window, answer preservation,
+entry and first attack. Do not freeze the failed sequence and transplant only the
+item onto its final board. Compare the complete sets, including changed moves,
+damage, choice locks and reset costs. Bench counts, useful Protect turns, attacks
+already delivered and exposure under Room describe the actual plan; alone they
+establish neither item's superiority. Separate operational failures and missed
+available lines from a structural gap, and distinguish a better opportunity from
+a demonstrated win. Use the [mixed-speed handoff](references/proactive-win-plans.md#hand-off-from-room-to-a-fast-cleaner)
+when assessing a slow front with a fast reserve.
 
 Do not infer poor decision-making solely from a loss, or sound decision-making
 solely from a favorable roll. Distinguish execution, team structure, information

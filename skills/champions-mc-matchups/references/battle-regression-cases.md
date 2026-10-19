@@ -14,7 +14,8 @@ not matching a prescribed move or a string in the skill.
 | Priority into a possible terrain switch | Grounded target at execution, revealed Psychic Surge, first-turn eligibility, useful alternative | Checking only current terrain or assuming every target is protected |
 | Trading the sole endgame answer | Map remaining threats, survival and speed; compare immediate-loss alternatives | A locally good trade leaves no credible route against the last threat |
 | Chip before a finishing attack | Current form/ability, actual move order, full-HP ability, recovery, Protect and misses | Summing isolated full-HP ranges as guaranteed combined damage |
-| Speed-control transition | Count remaining turns and model the first turn after expiry | Reversing Trick Room by habit or ignoring the transition |
+| Speed-control transition | Preserve the useful slow attacker, plan the fast reserve's entry and first turn after expiry, and check opposing reversal/priority | Resetting Room without a surviving beneficiary, exposing the cleaner by habit, or ignoring the transition |
+| Item or set comparison after a failed game | Compare complete plausible plans from preview, changed moves, entry/lock costs, operational failures and actual opportunities | Declaring superiority from bench/Protect/already-attacked/Room counts or requiring the alternative to repeat the failed sequence |
 | Secondary stat-drop trigger | Include possible Competitive/Defiant switch-in and branch on the drop | Treating a secondary effect as guaranteed or ignoring its ability trigger |
 | Special hit beside a later physical attack into Stamina | Include the Defense raise after the damaging special hit, then assess the physical partner's delivery; distinguish the defense each move uses | Claiming Moonblast or Earth Power does not trigger Stamina, or banning useful special pressure because it triggers a physical Defense raise |
 | Opponent adapts between games | Reassess four, leads, observed Protect and counter-adjustment | Repeating a winning lead automatically or treating one Protect as certainty |
@@ -75,11 +76,27 @@ not matching a prescribed move or a string in the skill.
   A source/installed hash match alone cannot establish later tactical application.
 - **Convert initiative:** Give a healthy Trick Room board with one opposing
   obstacle to the reserve attacker, then a board where Room is about to end and
-  the reserve is a fast cleaner. A passing operator names an attack or entry
-  that advances the finish and compares the resulting board after expiration;
-  it does not use the same control plan for both or invent a KO. Contrast a
-  defensive turn that lets the partner remove the obstacle with two passive
-  actions that only let a useful control window expire.
+  the fast reserve holds a Choice item. A passing operator preserves the
+  slow attacker when useful, names the obstacle and closing pair, and compares
+  a covered switch or spent-support trade with continued pressure through
+  expiration. It checks the cleaner's first attack, switch recipients, opposing
+  Room reversal and priority; no extra attack is credited on its entry turn.
+  Contrast a necessary second Room window with a surviving slow beneficiary and
+  a board where the cleaner must enter early to avoid immediate loss. The operator
+  can take either branch when justified, rather than always resetting Room or
+  always keeping the cleaner back. A defensive turn that earns partner removal
+  differs from two passive actions that only spend useful control.
+- **Compare complete item plans:** Supply a loss where a fast attacker entered
+  during its own Room, used Protect and later attacked before being KOed; another
+  game contains a generated choice, and another leaves it benched. Compare a
+  stronger unlocked set with a faster Choice set that also changes moves. A passing
+  review reconstructs an earlier slow-attacker/fast-reserve plan as well as the
+  actual sequence, checks reachable entry and lock resets, and separates piloting,
+  operations and structural limits. Contrast a board where the fast set cannot
+  cover recovery or a necessary target without the lost power/move: the reviewer
+  retains that cost and may favor the unlocked set there. Neither isolated counts
+  nor the proposed alternative proves overall superiority or a flipped result;
+  numerical feasibility still requires actual MCP evidence.
 - **Force a response:** Give a threatened foe likely to Protect beside a setup
   partner, then a sole remaining foe with Protect, and then an obstacle whose
   removal requires both attacks while its partner has little progress. A passing

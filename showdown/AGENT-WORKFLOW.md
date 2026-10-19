@@ -161,6 +161,51 @@ Use `battle_control_release` only when relinquishing responsibility; it clears
 the fallback and does not close or forfeit a set. It does not disable an already
 enabled stuck policy. A lease is not additional battle or publication permission.
 
+### User-requested timer activation
+
+When the user asks to enable the timer, first check the actually loaded
+`set-timer` operation and `ownedBattleTimer` feature. Use fresh state to identify
+the current live child of the owned BO3, then call:
+
+```text
+battle_set_timer({confirmed:true,controllerLease:LEASE,commandId:"timer-current-child",room:CURRENT_CHILD_ROOM,enabled:true})
+```
+
+This enable-only operation defaults `enabled` to `true` and rejects `false`.
+It resolves a trusted child privacy alias to the canonical child, verifies the
+current owned live set and connection, and sends only that child's `/timer on`.
+It does not authenticate, search, grant allowance, submit a move or change the
+deadline policy. Keep the stable command ID for an uncertain reply; the client
+also reserves one request per child across command IDs and aliases, including
+uncertain writes. Do not loop or resend merely because an observation is absent.
+
+A successful send returns `sent-not-acknowledged`. The child's `timer.request`
+and latest `timer.serverObservation` remain separate in full and compact state.
+An `inactive` or `inactiveoff` event is observed server evidence; `afterRequest`
+records only whether it arrived after our request, not causal acknowledgment.
+Use fresh clock evidence for deadlines and keep any current legal pair protected.
+The timer request does not extend the planning window or excuse a missing choice.
+
+Updating source or restarting MCP cannot add this operation to an older running
+terminal. Preserve the current login and live set; do not restart or authenticate
+merely to validate timer support. Adopt it at a separately authorized lifecycle
+transition.
+
+An explicitly authorized legacy remediation is available only for the reviewed
+older build through `enableLegacyBattleTimer(options)` in `legacy-timer.mjs`.
+There is no public CLI or automatic MCP login fallback. The current operator's
+TTY helper supplies its private lease in memory; timer and saved-login
+authorization are both required. It checks an unchanged owned submitted preview
+and exact legacy refusal before one same-account broker login, then verifies the
+server-restored preview choice and registered species/items/moves/abilities
+against the primary approved team fingerprint. Investments are not re-revealed
+by that auxiliary check. The primary remains responsible and connected; only the
+auxiliary socket closes. Unknown builds, uncertain probes or mismatches stop the
+operation, with no authentication or uncertain-write retry. Retain the actual
+timer observation separately from final game and parent results.
+
+### Deadline policy
+
 Protection starts **off**, independently of readiness and replay policies. Before
 an authorized search, configure it explicitly while the server confirms idle:
 

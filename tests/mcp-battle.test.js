@@ -10,8 +10,29 @@ import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {ShowdownClient} from '../showdown/client.mjs';
 import {AgentSession} from '../showdown/agent-session.mjs';
 import {serveLocalSession} from '../showdown/local-bridge.mjs';
+import {registerBattleTools} from '../showdown/mcp-tools.mjs';
 
 const decode = result => JSON.parse(result.content.find(item=>item.type==='text').text);
+test('MCP timer enable schema requires explicit owned-child controls and maps the stable command ID',async()=>{
+  const registered=new Map(),calls=[];
+  registerBattleTools({registerTool:(name,config,handler)=>registered.set(name,{config,handler})},{workspace:'fixture-workspace',call:async(path,command)=>{
+    calls.push({path,command});return {id:command.id,ok:true,result:{room:command.room,enabled:true,status:'sent-not-acknowledged',serverObservation:null}};
+  }});
+  const tool=registered.get('battle_set_timer');assert(tool);assert.equal(tool.config.annotations.readOnlyHint,false);
+  const room='battle-gen9championsvgc2026regmcbo3-123',controllerLease='a'.repeat(64);
+  const args={confirmed:true,commandId:'timer-child-123',controllerLease,room};
+  for(const invalid of [
+    {...args,confirmed:false},{...args,commandId:undefined},{...args,controllerLease:undefined},
+    {...args,controllerLease:'invalid'},{...args,room:undefined},{...args,room:'game-bestof3-gen9championsvgc2026regmcbo3-122'},
+    {...args,room:'battle-gen9championsvgc2026regmcbo3-0'},{...args,room:'battle-gen9championsvgc2026regmc-123'},{...args,enabled:false},{...args,enabled:'true'},
+    {...args,room:room+'|/forfeit'},{...args,command:'/timer off'},
+  ])assert.equal(tool.config.inputSchema.safeParse(invalid).success,false);
+  assert.equal(calls.length,0);
+  const parsed=tool.config.inputSchema.parse(args);assert.equal(parsed.enabled,true);
+  const result=decode(await tool.handler(parsed));assert.equal(result.result.status,'sent-not-acknowledged');
+  assert.deepEqual(calls,[{path:join('fixture-workspace','cache','showdown-session.json'),command:{id:args.commandId,op:'set-timer',confirmed:true,controllerLease,room,enabled:true}}]);
+  const alias=room+'-privatefixturepw';assert.equal(tool.config.inputSchema.parse({...args,room:alias}).room,alias);
+});
 test('MCP controls a persistent terminal-owned session with token freshness and set bounds',async()=>{
   const workspace=await mkdtemp(join(tmpdir(),'vgc-mcp-'));
   const packed='Species|item|ability|move',sent=[];
@@ -29,9 +50,9 @@ test('MCP controls a persistent terminal-owned session with token freshness and 
   try {
     await mcp.connect(new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('./fixtures/battle-mcp-server.mjs',import.meta.url)),workspace]}));
     const tools=(await mcp.listTools()).tools.map(tool=>tool.name);
-    for(const name of ['battle_status','battle_wait','battle_start','battle_authorize_sets','battle_choose','battle_ready','battle_cancel_search','battle_forfeit','battle_save_replays','battle_stop','battle_control_claim','battle_control_release','battle_set_control_policy','battle_stage_fallback','battle_turn_status','battle_control_trace'])assert(tools.includes(name));
+    for(const name of ['battle_status','battle_wait','battle_start','battle_authorize_sets','battle_choose','battle_ready','battle_cancel_search','battle_set_timer','battle_forfeit','battle_save_replays','battle_stop','battle_control_claim','battle_control_release','battle_set_control_policy','battle_stage_fallback','battle_turn_status','battle_control_trace'])assert(tools.includes(name));
     let controllerLease;
-    const mutations=new Set(['battle_start','battle_authorize_sets','battle_choose','battle_ready','battle_cancel_search','battle_forfeit','battle_save_replays','battle_stop','battle_control_release','battle_set_control_policy','battle_stage_fallback','battle_set_replay_policy','battle_switch_team']);
+    const mutations=new Set(['battle_start','battle_authorize_sets','battle_choose','battle_ready','battle_cancel_search','battle_set_timer','battle_forfeit','battle_save_replays','battle_stop','battle_control_release','battle_set_control_policy','battle_stage_fallback','battle_set_replay_policy','battle_switch_team']);
     const call=(name,args={})=>mcp.callTool({name,arguments:mutations.has(name)?{controllerLease,...args}:args});
     let status=decode(await call('battle_status')).result;assert.equal(status.searchesSent,0);assert.equal(sent.length,0);
     assert((await mcp.callTool({name:'battle_start',arguments:{confirmed:true,commandId:'no-lease'}})).isError);
@@ -70,6 +91,21 @@ test('MCP controls a persistent terminal-owned session with token freshness and 
     const turn=decode(await call('battle_turn_status'));assert(turn.ok);assert(!JSON.stringify(turn).includes(controllerLease));
     for(const actions of [[{type:'switch',slot:3,pokemonId:'pokemon-identity'},{type:'pass'}],[{type:'switch'},{type:'pass'}]])assert((await call('battle_choose',{confirmed:true,commandId:'invalid-switch-shape',token:action.token,actions})).isError);
     const fallback=decode(await call('battle_stage_fallback',{confirmed:true,commandId:'stage-before-optional-work',token:action.token,actions:[{type:'move',slot:1},{type:'move',slot:1}]}));assert(fallback.ok);assert.equal(sent.filter(line=>line.includes('/choose ')).length,0);
+    assert((await mcp.callTool({name:'battle_set_timer',arguments:{confirmed:true,commandId:'timer-no-lease',room}})).isError);
+    const timerRequest={confirmed:true,commandId:'timer-current-child',room};
+    const timer=decode(await call('battle_set_timer',timerRequest));assert(timer.ok);
+    assert.deepEqual(timer.result,{room,enabled:true,status:'sent-not-acknowledged',serverObservation:null});
+    assert.deepEqual(decode(await call('battle_set_timer',timerRequest)),timer);
+    assert.equal(decode(await call('battle_set_timer',{...timerRequest,commandId:'timer-same-child-new-id'})).ok,false);
+    assert.equal(sent.filter(line=>line.endsWith('|/timer on')).length,1);assert(sent.includes(`${room}|/timer on`));
+    let timerState=decode(await call('battle_status')).result.rooms.find(entry=>entry.id===room).timer;
+    assert.equal(timerState.request.status,'sent-not-acknowledged');assert.equal(timerState.serverObservation,null);
+    live.receive(`>${room}\n|inactive|Battle timer is ON: inactive players will automatically lose when time is up.`);
+    timerState=decode(await call('battle_status')).result.rooms.find(entry=>entry.id===room).timer;
+    assert.equal(timerState.request.status,'sent-not-acknowledged');assert.equal(timerState.serverObservation.type,'inactive');assert.equal(timerState.serverObservation.afterRequest,true);
+    live.receive(`>${room}\n|inactiveoff|Battle timer is now OFF.`);
+    timerState=decode(await call('battle_status')).result.rooms.find(entry=>entry.id===room).timer;
+    assert.equal(timerState.serverObservation.type,'inactiveoff');assert.equal(sent.filter(line=>line.endsWith('|/timer on')).length,1);
     const choice={confirmed:true,commandId:'choice',token:action.token,actions:[{type:'move',slot:1},{type:'move',slot:1}]};
     assert.equal(decode(await call('battle_choose',choice)).result.status,'sent-not-acknowledged');
     assert(decode(await call('battle_choose',choice)).ok);assert.equal(sent.filter(line=>line.includes('/choose ')).length,1);

@@ -55,6 +55,12 @@ Keep these stages separate:
 
 Implementation and fixtures: [client send reservation](../../showdown/client.mjs), [client tests](../../showdown/client.test.mjs), [control safety tests](../../showdown/control-safety.test.mjs).
 
+## An absent opponent needs a server timer
+
+A healthy connection and a submitted preview can wait indefinitely when the opponent leaves and the battle timer is off. Preserve the submitted choice while checking that state. The owned-child `battle_set_timer` operation enables the server timer without replacing a move or forfeiting the set. Its local send result remains separate from subsequent server timer activity and the official child and parent results. A game won through an opponent's inactivity supplies no tactical evidence for an unplayed game.
+
+Check the loaded capabilities: updating MCP or source files does not update the running battle client. The [timer documentation](../../showdown/README.md#enable-the-current-battle-timer) describes normal control and a narrow, explicitly authorized legacy recovery path. That path verifies the server-restored submitted preview before its sole timer request, keeps the primary connected and closes only its temporary connection. It is not an automatic authentication or reconnect fallback.
+
 ## Make control ownership and outcomes observable
 
 An exclusive controller lease prevents two helpers or agents from issuing conflicting mutations. A deliberate takeover checks the observed generation, revokes the old owner and invalidates its staged plan. Request tokens also bind the current session, connection, room, request and revision, so an old choice cannot become valid merely because another agent reads it.

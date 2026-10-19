@@ -147,6 +147,11 @@ contingency role and evidence across relevant matchups before removing them.
 Treat execution complexity as a roster cost: required setup, narrow entry windows,
 repeated precise reads, and competing preservation needs affect practical reliability.
 Separate a missed available line from a plan that repeatedly offers no robust line.
+For item or set comparisons, use the matchup skill's
+[complete-plan review](../champions-mc-matchups/SKILL.md#review-a-replay-without-hindsight):
+compare plausible selection and control-to-entry plans for each complete set,
+rather than treating the recorded sequence as fixed. A fast reserve can complement
+a slow mode; inspect its route through expiration before judging that combination.
 For comparison builds, record observed opportunities, selections, and successful
 executions separately; an offered action with a boosted foe is not automatically
 a safe Haze opportunity. Check what a reset removes from both sides before valuing it.
