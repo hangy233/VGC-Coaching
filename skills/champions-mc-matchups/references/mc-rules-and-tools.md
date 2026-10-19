@@ -128,6 +128,53 @@ label assumed opposing spreads. It compares within one priority bracket only
 and does not settle Quick Claw, Quash or other non-Speed ordering effects. If the
 MCP cannot model the relevant state, leave the comparison unverified.
 
+### Infer Speed from observed move order
+
+Use earlier turns to narrow opposing Speed hypotheses, rather than repeatedly
+assuming a generic spread. Keep a compact note for consequential comparisons:
+game/turn -> identified actors and moves -> observed order -> relevant conditions
+-> compatible relation or candidate spreads -> ambiguity -> next-plan consequence.
+The client preserves observations; it does not automatically infer investment.
+An agent note is an inference, not a revealed stat or calculator receipt.
+
+Compare only actions whose order is informative. Check move priority and ability
+changes to priority before Speed, then Trick Room, current forms, boosts, status,
+items, Tailwind, weather-dependent abilities and any changes before the actions
+resolved. Check forced-order effects such as Quash, After You or Quick Claw and
+called or reflected moves. A switch, Protect preceding an ordinary attack, an
+action never executed because of a knockout or denial, or an ambiguous identity
+does not by itself establish the user's relative Speed. Missing action evidence
+is not proof that the other actor was slower.
+
+For an otherwise ordinary same-priority comparison, earlier action outside Room
+supports being at least as fast under those conditions, with a tie still possible;
+inside Room interpret that relation in the reverse direction. Do not convert an
+effective-Speed relation directly into exact native points, a nature or an item.
+Use actual MCP `calculate_speed` with explicitly labeled candidate sets and the
+observed conditions for every numerical bound or investment comparison. Preserve
+unknown nature, item effectiveness and other unresolved inputs as alternatives;
+if the tool cannot model an ordering effect, leave that numerical inference
+unverified. Qualitative order evidence can still inform a play without a number.
+
+Intersect compatible evidence from later informative turns. Repeated ordering
+does not eliminate a possible tie or justify a fabricated confidence percentage.
+Opposite orders can be compatible with a tie; otherwise inspect changed
+conditions, missing reveals or a mistaken premise before discarding evidence.
+Keep each observation's original conditions. Re-evaluate the relation for the
+current board after control expires, weather changes, a switch resets boosts,
+an item is consumed or a form changes; do not carry an effective order across
+those transitions unchanged. Distinguish observed order, an inferred compatible
+range, and a hypothetical benchmark such as a maximum-investment opponent.
+
+Carry relevant notes into the next game of that same opponent's locked BO3 and
+into the operator handoff; reset per-game field state and keep identity or set
+uncertainty explicit. Do not pool another opponent's individual Speed constraints.
+Use the narrowed hypotheses to choose attack order, control, preservation or a
+cleaner's entry; retain a branch for unresolved ties. Update after consequential
+reveals using retained events, without adding routine full-history reads or
+delaying the current legal paired submission. Preserve the supporting turn and
+actual calculation references in the private decision/review evidence.
+
 Live control can use `battle_status`, `battle_wait`, `battle_start`,
 `battle_authorize_sets`, `battle_choose`, `battle_ready`, `battle_cancel_search`,
 `battle_forfeit` and `battle_stop` against

@@ -5,6 +5,10 @@ dist/
 # Cache
 cache/
 
+# Local marketplace listing and packaging files
+/docs/distribution/
+/skills/vgc-coaching/
+
 # Private local teams and generated battle data. Existing tracked examples stay versioned.
 /teams/
 /logs/

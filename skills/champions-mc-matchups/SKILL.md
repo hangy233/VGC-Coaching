@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-18.26**. Read the bundled
+Cycle revision: **2026-10-19.27**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -69,6 +69,12 @@ Mega use, reserves, and weather/terrain/speed-control turns from the supplied
 evidence. Do not infer an item solely from moving first, an ability solely from a
 Seed activating, or a chosen move that never appears because its user fainted.
 A single observed move order can be a speed tie. Missing details are not zeros.
+Maintain a compact opponent Speed evidence note across turns and games of the
+same BO3. Retain the observed actors, moves, order and conditions separately from
+the compatible Speed range or spread hypotheses; unknown investment does not
+erase a useful order constraint. Follow the
+[observed-order inference procedure](references/mc-rules-and-tools.md#infer-speed-from-observed-move-order)
+before reusing that constraint on a changed board or after a handoff.
 Open sheets reveal the registered six and their published moves/items/abilities;
 use nature and level only when supplied. They do not reveal the selected four,
 unrevealed reserves, investments, or the next action. An empty observed-reserves

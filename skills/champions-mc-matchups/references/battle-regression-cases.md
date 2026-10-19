@@ -15,6 +15,7 @@ not matching a prescribed move or a string in the skill.
 | Trading the sole endgame answer | Map remaining threats, survival and speed; compare immediate-loss alternatives | A locally good trade leaves no credible route against the last threat |
 | Chip before a finishing attack | Current form/ability, actual move order, full-HP ability, recovery, Protect and misses | Summing isolated full-HP ranges as guaranteed combined damage |
 | Speed-control transition | Preserve the useful slow attacker, plan the fast reserve's entry and first turn after expiry, and check opposing reversal/priority | Resetting Room without a surviving beneficiary, exposing the cleaner by habit, or ignoring the transition |
+| Earlier turns reveal a useful move order | Retain actor/move/turn conditions, filter priority and non-Speed effects, preserve possible ties, narrow candidates with actual MCP and re-evaluate after control changes | Replacing evidence with a generic spread every turn, claiming exact investment from one order, or carrying old effective order through a changed field |
 | Item or set comparison after a failed game | Compare complete plausible plans from preview, changed moves, entry/lock costs, operational failures and actual opportunities | Declaring superiority from bench/Protect/already-attacked/Room counts or requiring the alternative to repeat the failed sequence |
 | Secondary stat-drop trigger | Include possible Competitive/Defiant switch-in and branch on the drop | Treating a secondary effect as guaranteed or ignoring its ability trigger |
 | Special hit beside a later physical attack into Stamina | Include the Defense raise after the damaging special hit, then assess the physical partner's delivery; distinguish the defense each move uses | Claiming Moonblast or Earth Power does not trigger Stamina, or banning useful special pressure because it triggers a physical Defense raise |
@@ -57,6 +58,19 @@ not matching a prescribed move or a string in the skill.
 
 ## Counterexample exercises
 
+- **Learn Speed without inventing a spread:** Supply an ordinary same-priority
+  opposing attack before our known-set attacker on an unchanged board, then a
+  later comparison against another known-set ally. A passing operator retains
+  both observations and narrows compatible hypotheses through actual MCP for any
+  numerical claims, without declaring an exact spread or excluding ties. Carry
+  the note through a handoff and a second game of the same locked BO3. Contrast
+  Protect before an ordinary attack, a knocked-out user whose move never executes,
+  a forced-order effect, and a turn where weather or speed control changes before
+  the compared actions. The operator rejects invalid constraints, re-evaluates
+  current order, and keeps useful earlier conditional evidence. Opposite ordinary
+  orders can remain consistent with a tie; repeated same-direction observations
+  do not prove ties impossible. No calculator receipt means no verified numerical
+  bound, and inference must not delay a fresh legal paired submission.
 - **Batch patterns and follow-through:** Supply a prior batch with a repeatedly
   selected setup core and a later winning batch with that species only registered
   once but never selected. A passing review keeps the weakness untested, separates

@@ -114,6 +114,12 @@ does not change calculator mechanics or fill unknown investments. Use
 Use fresh requests and observe acceptance and execution separately. Update a
 compact board/plan note after consequential reveals so a handoff can resume
 without reconstructing the entire log. Give one operator exclusive controls.
+Include consequential opponent Speed observations and compatible hypotheses in
+that note, with source turns, original conditions, possible ties and what changes
+the next plan. Carry them between games of the same BO3 and through handoffs;
+re-evaluate current effective order after field or actor changes. Follow the
+[observed-order procedure](mc-rules-and-tools.md#infer-speed-from-observed-move-order)
+without delaying a legal paired submission for optional inference work.
 At preview, retain the submitted four and their order separately from the four
 later revealed by requests. Inspect the recorded preview phase: a server-selected
 four is not an intentional selection, and a sent choice without acknowledgment
