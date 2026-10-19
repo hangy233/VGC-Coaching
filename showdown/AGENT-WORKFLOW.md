@@ -138,6 +138,90 @@ The helper consumes the password directly; agent/MCP inputs, outputs and the
 local descriptor contain no saved Showdown secret. See the
 [saved-login setup](README.md#optional-windows-saved-login).
 
+### Reliable output from an SDK operator
+
+If a persistent SDK operator runs in a Windows PTY, long JSON output can be
+wrapped or repeated by the terminal transport. Do not wait for a long-line
+matcher or treat terminal echo as another MCP response. Keep the existing SDK
+connection and use [operator-response.mjs](operator-response.mjs) to publish its
+already-obtained result to a private ignored output file. This is an output-only
+utility: it has no MCP client, input-command reader, authentication, battle
+control or replay of requests. It does not replace actual MCP calls or revive
+the prohibited temporary command-file bridge.
+
+Give every dispatch a fresh response ID (1–60 letters, numbers, dots, colons,
+underscores or hyphens). Use one in-flight dispatch per output path; concurrent
+dispatches need distinct paths. The directory must already exist. In the
+operator, retain the raw result and any controller lease/read receipt in memory,
+retain full observations separately in the existing private evidence flow, and
+publish only the compact result needed by the caller:
+
+```js
+import {publishResponse} from './showdown/operator-response.mjs';
+
+// presentedResult is a compact view of the actual, already-obtained MCP result.
+await publishResponse(responseFile, responseId, presentedResult, {
+  redactValues: [controllerLease, readReceipt].filter(value => typeof value === 'string'),
+});
+process.stdout.write(`READY ${responseId}\n`);
+```
+
+The writer strips known credential fields recursively, including JSON in MCP
+text blocks, and atomically replaces the output file before the optional short
+marker. Pass any secrets that can occur in free text through `redactValues`;
+unlabelled secrets cannot be identified by a key filter. Do not persist request
+arguments or credential input. The resulting envelope has
+`format:"vgc-operator-response-v1"`, the exact `id`, and sanitized `payload`.
+
+Read that file with a fresh one-shot process through plain pipes:
+
+```text
+node showdown/operator-response.mjs --wait cache/PRIVATE_RUN/response.json --id UNIQUE_RESPONSE_ID --timeout-ms 22000
+```
+
+For `exec_command`, use `tty:false` and `yield_time_ms:30000`. The process emits
+one compact JSON line and exits as soon as the matching envelope is available;
+it does not stay alive for the requested budget after success. An existing
+matching result is checked immediately. Stale IDs, missing files, partial JSON
+and incompatible envelopes remain pending. The CLI only reads; it creates no
+files and cannot send any command. Import `readResponse({file,id})` for a single
+read, or `awaitResponse({file,id,timeoutMs,intervalMs})` for the same bounded wait
+inside another process.
+
+A board's capture timestamp does not establish when the agent received it.
+Measure elapsed time from actual MCP dispatch until delivery of the matching
+output, including tool transport delays. The library's `elapsedMs` measures only
+its file wait. In the observed Windows tool transport, a persistent PTY can hold
+output until its fixed yield budget, and an empty `write_stdin` poll waits at
+least five seconds. Those delays can consume the live turn's clock. A fresh
+plain-pipe reader returns on process exit, avoiding that persistent-output wait;
+the actual MCP call and agent-visible delivery still need end-to-end validation.
+
+Exit 0 means a matching output was retrieved, not that a battle action was
+accepted or executed; inspect its actual MCP payload. Exit 2 returns
+`{id,pending:true,reason:"response-file-timeout",resend:false}`. Drain the same
+ID again to retrieve the original result. A pending result never authorizes a
+new command ID, resend, search, restart or authentication. Exit 1 is a usage or
+read error. Waits are limited to 22 seconds and must also fit the current
+observed deadline; this limit grants no additional planning time. Protect a
+live request with the complete legal pair before optional output/report work.
+
+On receiving a fresh board, select and stage a plausible complete legal pair
+before extended tactical comparison, calculations or reporting. Use the observed
+token and current legal actions, including the intended Mega decision. A quick
+`battle_stage_fallback` call can protect the turn while the agent compares an
+improvement; a timely ordinary `battle_choose` can then submit it. Staging alone
+is neither a send nor acceptance. If the staged pair has already been attempted,
+preserve its reservation rather than sending another choice. A repaired output
+path does not prevent a default when deliberation consumes the entire budget
+before the first pair is staged. Audit request-to-stage and request-to-send
+timing separately from response-file publication and tool-return timing.
+
+Validate an operator's output path with fixtures and already-authorized
+read-only MCP calls while idle, before another separately authorized search.
+Do not queue a battle to test the transport. This utility can be adopted by the
+operator without restarting the signed-in battle client or changing its lease.
+
 ## Exclusive control and deadline protection
 
 Production sessions require one controller lease for all socket-mutating tools:
