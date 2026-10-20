@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {mkdir, mkdtemp, readFile, readdir, rm, writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import fileSystem, {mkdir, mkdtemp, readFile, readdir, rm, writeFile} from 'node:fs/promises';
 import {basename, dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {awaitResponse, publishResponse, readResponse, sanitizeResponse} from './operator-response.mjs';
@@ -16,6 +17,7 @@ test.after(async () => {
   await rm(directory, {recursive: true, force: true});
 });
 const file = name => join(directory, name);
+const retainedFile = (target, id) => join(`${target}.responses`, `${createHash('sha256').update(id).digest('hex')}.json`);
 const run = args => new Promise((done, reject) => {
   const child = spawn(process.execPath, [cli, ...args], {stdio: ['ignore', 'pipe', 'pipe']});
   let stdout = '', stderr = '';
@@ -36,7 +38,8 @@ test('publishes an id-bound envelope atomically and preserves the raw in-memory 
   assert.deepEqual(await readResponse({file: target, id: 'request:1'}), published);
   assert.equal(payload.data.controllerLease, 'private-lease');
   assert.equal(payload.data.readReceipt, 'private-receipt');
-  assert.deepEqual((await readdir(directory)).filter(name => name.startsWith('published.json.')), []);
+  assert.deepEqual((await readdir(`${target}.responses`)).filter(name => name.endsWith('.tmp')), []);
+  assert.equal((await readFile(retainedFile(target, 'request:1'), 'utf8')).includes('private-lease'), false);
 });
 
 test('stale response IDs stay pending until the matching already-dispatched result arrives', async () => {
@@ -128,16 +131,105 @@ test('invalid IDs, budgets and non-JSON payloads fail before touching a response
   await assert.rejects(readFile(target), {code: 'ENOENT'});
 });
 
-test('a failed atomic replacement retains the previous result and cleans the exact temporary file', async () => {
+test('a failed latest replacement preserves both the previous latest and the exact completed ID', async () => {
   const target = file('unchanged.json');
   await publishResponse(target, 'previous', {value: 'kept'});
   const blockedTarget = file('existing-directory');
   await mkdir(blockedTarget);
   await writeFile(join(blockedTarget, 'sentinel.txt'), 'keep');
-  await assert.rejects(publishResponse(blockedTarget, 'next', {value: 'never published'}));
+  const result = await publishResponse(blockedTarget, 'next', {value: 'retained by ID'});
+  assert.equal(result.publication.idRetained, true);
+  assert.equal(result.publication.latestUpdated, false);
+  assert.deepEqual((await readResponse({file: blockedTarget, id: 'next'})).payload, {value: 'retained by ID'});
   assert.equal(await readFile(join(blockedTarget, 'sentinel.txt'), 'utf8'), 'keep');
   assert.equal((await readResponse({file: target, id: 'previous'})).payload.value, 'kept');
   assert.deepEqual((await readdir(directory)).filter(name => name.includes('.tmp')), []);
+});
+
+test('transient Windows latest replacement errors retry the same sanitized result', async t => {
+  const target = file('rename-retry.json');
+  await publishResponse(target, 'before', {value: 'before'});
+  const originalRename = fileSystem.rename;
+  let attempts = 0;
+  t.mock.method(fileSystem, 'rename', async (source, destination) => {
+    if (destination === target && ++attempts <= 2) throw Object.assign(new Error('fixture sharing violation'), {code: 'EPERM'});
+    return originalRename(source, destination);
+  });
+  const result = await publishResponse(target, 'after:retry', {controllerLease: 'fixture-secret', echo: 'fixture-secret', accepted: true});
+  assert.equal(attempts, 3);
+  assert.equal(result.publication, undefined);
+  assert.deepEqual(JSON.parse(await readFile(target, 'utf8')).payload, {echo: '[redacted]', accepted: true});
+  assert.deepEqual((await readResponse({file: target, id: 'before'})).payload, {value: 'before'});
+});
+
+test('persistent latest EPERM resolves with a warning and the exact ID remains immediately readable', async t => {
+  const target = file('rename-persistent.json');
+  await publishResponse(target, 'old', {value: 'old'});
+  const originalRename = fileSystem.rename;
+  let attempts = 0;
+  t.mock.method(fileSystem, 'rename', async (source, destination) => {
+    if (destination === target) { attempts++; throw Object.assign(new Error('fixture lock'), {code: 'EPERM'}); }
+    return originalRename(source, destination);
+  });
+  const began = performance.now();
+  const result = await publishResponse(target, 'new', {accepted: true, password: 'fixture-private', echo: 'fixture-private'});
+  assert.equal(attempts, 6);
+  assert(performance.now() - began < 2000);
+  assert.deepEqual(result.publication, {idRetained: true, latestUpdated: false, warning: 'latest-response-not-updated', code: 'EPERM'});
+  assert.equal(JSON.parse(await readFile(target, 'utf8')).id, 'old');
+  assert.deepEqual((await readResponse({file: target, id: 'new'})).payload, {accepted: true, echo: '[redacted]'});
+  const cliResult = await run(['--wait', target, '--id', 'new', '--timeout-ms', '0']);
+  assert.equal(cliResult.code, 0);
+  assert.equal(JSON.parse(cliResult.stdout).id, 'new');
+  assert.deepEqual((await readdir(`${target}.responses`)).filter(name => name.endsWith('.tmp')), []);
+});
+
+test('failure to retain the exact ID fails closed before changing latest', async t => {
+  const target = file('retain-failure.json');
+  await publishResponse(target, 'old', {value: 'old'});
+  const originalRename = fileSystem.rename;
+  t.mock.method(fileSystem, 'rename', async (source, destination) => {
+    if (destination === retainedFile(target, 'new')) throw Object.assign(new Error('fixture denied'), {code: 'EACCES'});
+    return originalRename(source, destination);
+  });
+  await assert.rejects(publishResponse(target, 'new', {accepted: true}), {code: 'EACCES'});
+  assert.equal(JSON.parse(await readFile(target, 'utf8')).id, 'old');
+  assert.equal(await readResponse({file: target, id: 'new'}), null);
+  assert.deepEqual((await readdir(`${target}.responses`)).filter(name => name.endsWith('.tmp')), []);
+});
+
+test('ID retention is immutable, bounded, and leaves unrelated files alone', async () => {
+  const target = file('retention-bound.json');
+  await publishResponse(target, 'first', {value: 0});
+  await publishResponse(target, 'first', {value: 0});
+  await assert.rejects(publishResponse(target, 'first', {value: 'different'}), /different or invalid retained result/);
+  await writeFile(join(`${target}.responses`, 'unrelated.txt'), 'keep');
+  for (let index = 1; index <= 20; index++) await publishResponse(target, `result-${index}`, {value: index});
+  assert.equal((await readdir(`${target}.responses`)).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).length, 16);
+  assert.equal(await readFile(join(`${target}.responses`, 'unrelated.txt'), 'utf8'), 'keep');
+  assert.equal(await readResponse({file: target, id: 'first'}), null);
+  assert.equal((await readResponse({file: target, id: 'result-20'})).payload.value, 20);
+});
+
+test('reader falls back to legacy latest for partial or incompatible exact ID copies', async () => {
+  const target = file('reader-fallback.json');
+  await publishResponse(target, 'matching', {turn: 7});
+  for (const text of ['{"format":', '{"format":"wrong","id":"matching","payload":{}}', '{"format":"vgc-operator-response-v1","id":"different","payload":{}}']) {
+    await writeFile(retainedFile(target, 'matching'), text);
+    assert.deepEqual((await readResponse({file: target, id: 'matching'})).payload, {turn: 7});
+  }
+});
+
+test('retention refuses an observed symlinked response area without writing through it', async t => {
+  const target = file('symlink-area.json');
+  const area = `${target}.responses`;
+  await mkdir(area);
+  await writeFile(join(area, 'sentinel.txt'), 'keep');
+  const originalLstat = fileSystem.lstat;
+  t.mock.method(fileSystem, 'lstat', async path => path === area ? {isDirectory: () => true, isSymbolicLink: () => true} : originalLstat(path));
+  await assert.rejects(publishResponse(target, 'unsafe', {accepted: true}), /real directory/);
+  await assert.rejects(readResponse({file: target, id: 'unsafe'}), /real directory/);
+  assert.deepEqual(await readdir(area), ['sentinel.txt']);
 });
 
 test('one-shot CLI emits one complete compact result and exits without waiting out its 22-second budget', async () => {

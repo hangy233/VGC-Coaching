@@ -1,11 +1,14 @@
-import {randomUUID} from 'node:crypto';
-import {readFile, rename, unlink, writeFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
+import {createHash} from 'node:crypto';
+import fileSystem, {lstat, mkdir, open, readFile, readdir, unlink} from 'node:fs/promises';
+import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {performance} from 'node:perf_hooks';
 
 const FORMAT = 'vgc-operator-response-v1';
 const MAX_WAIT_MS = 22000;
+const MAX_RETAINED_RESPONSES = 16;
+const RENAME_RETRY_MS = [10, 20, 40, 80, 160];
+const transientFileErrors = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const sensitiveKey = /^(?:password|passwd|passphrase|controllerlease|lease|readreceipt|assertion|challstr|credential|credentials|secret|clientsecret|accesstoken|refreshtoken|authorization|cookie|setcookie|capability)$/;
 
 function validId(id) {
@@ -19,6 +22,71 @@ function outputPath(file) {
   if (file instanceof URL) return fileURLToPath(file);
   if (typeof file !== 'string' || !file.length) throw new TypeError('A response file path is required');
   return resolve(file);
+}
+
+function retainedPath(target, id) {
+  return join(`${target}.responses`, `${createHash('sha256').update(id).digest('hex')}.json`);
+}
+
+async function renameWithRetry(source, target) {
+  for (let attempt = 0; ; attempt++) {
+    try { await fileSystem.rename(source, target); return; }
+    catch (error) {
+      if (!transientFileErrors.has(error.code) || attempt === RENAME_RETRY_MS.length) throw error;
+      await new Promise(done => setTimeout(done, RENAME_RETRY_MS[attempt]));
+    }
+  }
+}
+
+async function atomicWrite(target, text, temporary) {
+  let handle, created = false;
+  try {
+    handle = await open(temporary, 'wx', 0o600);
+    created = true;
+    await handle.writeFile(text, 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await renameWithRetry(temporary, target);
+  } finally {
+    if (handle) await handle.close();
+    if (created) await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  }
+}
+
+async function prepareRetention(target, id, text) {
+  const area = `${target}.responses`;
+  await mkdir(area).catch(error => { if (error.code !== 'EEXIST') throw error; });
+  const areaInfo = await fileSystem.lstat(area);
+  if (!areaInfo.isDirectory() || areaInfo.isSymbolicLink()) throw new Error('Response retention area must be a real directory');
+  const exact = retainedPath(target, id);
+  try {
+    const info = await lstat(exact);
+    if (!info.isFile() || info.isSymbolicLink() || await readFile(exact, 'utf8') !== text) {
+      throw new Error('Response ID already has a different or invalid retained result');
+    }
+    return {area, exact, existing: true};
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const retained = [];
+  for (const entry of await readdir(area, {withFileTypes: true})) {
+    if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name)) continue;
+    const path = join(area, entry.name);
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink()) continue;
+    let value;
+    try { value = JSON.parse(await readFile(path, 'utf8')); } catch { continue; }
+    if (value?.format !== FORMAT || typeof value.id !== 'string' || !/^[a-zA-Z0-9_.:-]{1,60}$/.test(value.id) ||
+        !Object.hasOwn(value, 'payload') || retainedPath(target, value.id) !== path) continue;
+    retained.push({path, modified: info.mtimeMs});
+  }
+  retained.sort((a, b) => a.modified - b.modified || a.path.localeCompare(b.path));
+  while (retained.length >= MAX_RETAINED_RESPONSES) {
+    const {path} = retained.shift();
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Retained response changed during pruning');
+    await unlink(path);
+  }
+  return {area, exact, existing: false};
 }
 
 /** Strip credential fields, including JSON encoded inside MCP text blocks.
@@ -96,18 +164,20 @@ export function sanitizeResponse(payload, {redactValues = []} = {}) {
 
 /** Publish only an already-obtained result. This module never sends MCP calls.
  * The caller can print a short marker after this resolves; readers use the file.
- * Use one in-flight result per path and a fresh ID for every dispatch.
+ * Use one in-flight result per path and a fresh ID for every dispatch. Keep at
+ * most 16 immutable ID copies; latest replacement can fail without losing the ID.
  */
 export async function publishResponse(file, id, payload, options = {}) {
   validId(id);
   const target = outputPath(file);
   const value = {format: FORMAT, id, payload: sanitizeResponse(payload, options)};
-  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  const text = JSON.stringify(value);
+  const retention = await prepareRetention(target, id, text);
+  if (!retention.existing) await atomicWrite(retention.exact, text, join(retention.area, 'pending-response.tmp'));
   try {
-    await writeFile(temporary, JSON.stringify(value), {encoding: 'utf8', mode: 0o600, flag: 'wx'});
-    await rename(temporary, target);
-  } finally {
-    await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    await atomicWrite(target, text, join(retention.area, 'latest-response.tmp'));
+  } catch (error) {
+    return {...value, publication: {idRetained: true, latestUpdated: false, warning: 'latest-response-not-updated', code: typeof error.code === 'string' ? error.code : 'PUBLISH_ERROR'}};
   }
   return value;
 }
@@ -117,14 +187,28 @@ export async function publishResponse(file, id, payload, options = {}) {
  */
 export async function readResponse({file, id, redactValues = []}) {
   validId(id);
-  let value;
-  try { value = JSON.parse(await readFile(outputPath(file), 'utf8')); }
-  catch (error) {
-    if (error.code === 'ENOENT' || error instanceof SyntaxError) return null;
-    throw error;
+  const target = outputPath(file);
+  const area = `${target}.responses`;
+  let retained = false;
+  try {
+    const info = await fileSystem.lstat(area);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Response retention area must be a real directory');
+    retained = true;
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  for (const path of retained ? [retainedPath(target, id), target] : [target]) {
+    let value;
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error('Response output must be a regular file');
+      value = JSON.parse(await readFile(path, 'utf8'));
+    } catch (error) {
+      if (error.code === 'ENOENT' || error instanceof SyntaxError || transientFileErrors.has(error.code)) continue;
+      throw error;
+    }
+    if (value?.format !== FORMAT || value.id !== id || !Object.hasOwn(value, 'payload')) continue;
+    return {format: FORMAT, id, payload: sanitizeResponse(value.payload, {redactValues})};
   }
-  if (value?.format !== FORMAT || value.id !== id || !Object.hasOwn(value, 'payload')) return null;
-  return {format: FORMAT, id, payload: sanitizeResponse(value.payload, {redactValues})};
+  return null;
 }
 
 export async function awaitResponse({file, id, timeoutMs = MAX_WAIT_MS, intervalMs = 50, redactValues = []}) {

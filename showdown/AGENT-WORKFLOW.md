@@ -167,8 +167,14 @@ process.stdout.write(`READY ${responseId}\n`);
 ```
 
 The writer strips known credential fields recursively, including JSON in MCP
-text blocks, and atomically replaces the output file before the optional short
-marker. Pass any secrets that can occur in free text through `redactValues`;
+text blocks, and first saves a flushed, immutable copy for the exact ID in the
+output file's `.responses` sibling directory. It retains the 16 most recent
+verified envelopes, then attempts to replace the latest output file, retrying
+transient Windows rename errors for up to 310 ms. A persistent latest-file error
+returns `publication:{idRetained:true,latestUpdated:false,...}`; the optional
+short marker remains valid because the exact result is readable by ID. Failure
+to save that exact copy still throws. Use the reader below rather than assuming
+the latest file contains the requested ID. Pass free-text secrets through `redactValues`;
 unlabelled secrets cannot be identified by a key filter. Do not persist request
 arguments or credential input. The resulting envelope has
 `format:"vgc-operator-response-v1"`, the exact `id`, and sanitized `payload`.
@@ -183,7 +189,9 @@ For `exec_command`, use `tty:false` and `yield_time_ms:30000`. The process emits
 one compact JSON line and exits as soon as the matching envelope is available;
 it does not stay alive for the requested budget after success. An existing
 matching result is checked immediately. Stale IDs, missing files, partial JSON
-and incompatible envelopes remain pending. The CLI only reads; it creates no
+and incompatible envelopes remain pending. Readers check the exact retained ID
+first, with the latest file as a compatibility fallback. Retention is bounded;
+preserve required review evidence separately before its ID is evicted. The CLI only reads; it creates no
 files and cannot send any command. Import `readResponse({file,id})` for a single
 read, or `awaitResponse({file,id,timeoutMs,intervalMs})` for the same bounded wait
 inside another process.
@@ -196,6 +204,8 @@ output until its fixed yield budget, and an empty `write_stdin` poll waits at
 least five seconds. Those delays can consume the live turn's clock. A fresh
 plain-pipe reader returns on process exit, avoiding that persistent-output wait;
 the actual MCP call and agent-visible delivery still need end-to-end validation.
+A bounded polling loop does not bound each awaited SDK call; the reader's
+22-second budget is not an end-to-end tool deadline.
 
 Exit 0 means a matching output was retrieved, not that a battle action was
 accepted or executed; inspect its actual MCP payload. Exit 2 returns
