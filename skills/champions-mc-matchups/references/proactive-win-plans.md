@@ -59,6 +59,10 @@ it; this is not an additional live research or reporting step:
   compare the surviving-foe branch before treating drain healing, support or a
   field change as protection. A useful trade that removes the obstacle and leaves
   a finish remains available; an unverified removal is a gamble, not safe delivery.
+  If partner disruption is the delivery condition, resolve its eligibility after
+  plausible switch, field or recipient changes before crediting the protected
+  attack. A target still eligible for that disruption is a different branch;
+  do not turn a field-dependent failure into a blanket ban on the support move.
   When a conditional attack is paired with support or Protect, check its actual
   eligibility against the leading defense/withdrawal branch and what the other
   foe gains. Retain a necessary finishing gamble with its failure branch; do not

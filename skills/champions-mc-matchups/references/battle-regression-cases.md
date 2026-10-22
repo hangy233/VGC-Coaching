@@ -402,6 +402,13 @@ not matching a prescribed move or a string in the skill.
   Contrast an already evolved reserve, using its actual evolved typing rather
   than imposing a blanket base-form assumption. Contrast a required trade that buys a
   verified winning entry for its partner; permit it without inventing survival.
+- **Partner denial must still deliver protection:** Give an attack relying on
+  Fake Out to stop its threat, with a plausible opposing switch establishing
+  Psychic Terrain before Fake Out resolves. Check the actual target's grounded
+  eligibility before crediting the attack's delivery; compare the uncovered hit.
+  Contrast an airborne target that remains vulnerable to Fake Out under that
+  terrain, or an actually delivered disruption that earns a useful attack.
+  This is a tactical check, not proof that first-choice timing is repaired.
 - **Sent-only return before the next request:** Finish a successful pair, return
   its reserved board at the old 20-second boundary, and deliver the next request
   four seconds later. With the opted-in 55-second post-send window, return that

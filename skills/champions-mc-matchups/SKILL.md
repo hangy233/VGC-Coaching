@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-22.41**. Read the bundled
+Cycle revision: **2026-10-22.42**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -227,7 +227,10 @@ protect the next game's selection.
   removed before it retaliates, name that gating removal and the branch where it
   survives before crediting support, drain healing or a field change as protection.
   An unverified removal can remain a necessary gamble; it is not a checked safe
-  route. Include speed-control
+  route. If delivery relies on the partner denying an attack, resolve that denial
+  after plausible switches, field changes and target eligibility first; compare
+  the uncovered attack branch before counting our attack as delivered.
+  Include speed-control
   expiration and the next board, not just this turn's damage total.
   Before setting or reversing speed control, name its beneficiaries among the
   actual active Pokemon and reserves, and the route through expiration. If a
