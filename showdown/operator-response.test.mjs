@@ -231,7 +231,7 @@ test('invalid IDs, budgets and non-JSON payloads fail before touching a response
     await assert.rejects(publishResponse(target, id, {ready: true}), /response ID/);
     await assert.rejects(awaitResponse({file: target, id, timeoutMs: 0}), /response ID/);
   }
-  for (const timeoutMs of [-1, 22001, Infinity, 1.1]) await assert.rejects(awaitResponse({file: target, id: 'valid', timeoutMs}), /timeoutMs/);
+  for (const timeoutMs of [-1, 60001, Infinity, 1.1]) await assert.rejects(awaitResponse({file: target, id: 'valid', timeoutMs}), /timeoutMs/);
   for (const intervalMs of [0, 1001, NaN]) await assert.rejects(awaitResponse({file: target, id: 'valid', timeoutMs: 0, intervalMs}), /intervalMs/);
   const cycle = {}; cycle.self = cycle;
   for (const payload of [cycle, {number: Infinity}, {value: BigInt(1)}, () => {}, new Date()]) {
@@ -345,11 +345,13 @@ test('one-shot CLI emits one complete compact result and exits without waiting o
   const target = file('cli-ready.json');
   const data = 'fixture-data-'.repeat(12000);
   await publishResponse(target, 'cli-ready', {data, accepted: true});
-  const result = await run(['--wait', target, '--id', 'cli-ready', '--timeout-ms', '22000']);
-  assert.equal(result.code, 0);
-  assert.equal(result.stderr, '');
-  assert.equal(result.stdout.split('\n').length, 2);
-  assert.deepEqual(JSON.parse(result.stdout).payload, {data, accepted: true});
+  for(const timeout of ['22000','60000']){
+    const result = await run(['--wait', target, '--id', 'cli-ready', '--timeout-ms', timeout]);
+    assert.equal(result.code, 0);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout.split('\n').length, 2);
+    assert.deepEqual(JSON.parse(result.stdout).payload, {data, accepted: true});
+  }
 });
 
 test('CLI timeout reads only, sends nothing, and a later invocation drains the same ID', async () => {

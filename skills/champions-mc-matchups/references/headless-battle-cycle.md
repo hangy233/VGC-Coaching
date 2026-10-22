@@ -64,6 +64,9 @@ of skill files, review reports, and chat.
    it discloses tied/unknown chronology and does not infer an account match or
    coverage of battles missing from local storage. An explicit older parent
    cannot replace the newest known review checks.
+6. Prepare and verify the operator's decision reader through a read-only status
+   before searching. If a custom presentation helper is unready, use the maintained
+   reader; do not build one while preview or the first turn is actionable.
 
 ## Play and adapt within the BO3
 
@@ -176,6 +179,11 @@ for another board, then `commit-next` for the stored pair or `play-next` for an
 authored replacement. If the complete pair is already final, use `play-next`
 directly to stage and send in one dispatch; separate staging is for a real
 remaining comparison, not an extra model/tool pause before every submission.
+Before a separate stage, name the unresolved material check that could change
+the pair and leave time to commit it. Near the early-commit target, prefer the
+final useful pair to a new comparison cycle. When the SDK guard refuses optional
+research for lack of buffer, immediately commit the stored current pair or
+preserve an already reserved send; do not begin another round of reasoning.
 It re-reads the current request before optional research,
 returns an unprotected fresh board instead of doing the research, and reserves
 long reports/reviews for idle between-set periods. Optional live RPCs remain
@@ -191,6 +199,20 @@ pause before its first authored pair remains an operational risk despite these
 guards and must not be described as fixed from passing offline tests.
 This also applies to the first actionable request immediately after preview and
 after a forced replacement; optional reporting cannot occupy that transition.
+If a successful send returns only its reserved old board, dispatch the next
+read-only wait promptly before optional work. A fresh request can arrive just
+after that snapshot. On a freshly loaded SDK supporting `postSendWaitMs`, use
+`55000` on `play-next`/`commit-next` with a response reader capped at `60000`.
+This opt-in keeps read-only observation inside the same command after a local
+send or a preserved existing reservation, without establishing acceptance. It
+returns immediately for a fresh request or terminal/error outcome, and
+retains one absolute 55-second whole-operation cap. Staging, choosing and uncertain
+write/rejection recovery keep their original short budgets; the default remains
+20 seconds. Immediate unchanged replies stop rather than hot-polling. A timeout
+still requires draining the same result, never replaying the mutation. Verify the
+new helper at the next normal authorized startup; no extra battle, client restart
+or authentication is needed to test it. This removes a sent-only reentry gap,
+not model delay after a fresh request has already been delivered.
 Use `battle_turn_status` for the compact current board, legal request, choice,
 controller and safety state. Its preview includes the published opposing sheet;
 later turns omit repeated sheets and history. Treat the current request's four
@@ -226,8 +248,15 @@ if a new actionable request arrives. A legal qualitative choice need not claim
 a numerical survival or KO benchmark. Leave an unavailable benchmark unverified
 and never replace it with arithmetic.
 
-Aim to commit within the first 20 seconds of planning; stop optional research
-before the emergency policy is needed. With explicitly authorized
+Budget the first pair from request arrival and the earliest loaded cutoff,
+including observation, model and tool time. Aim to commit within 20 seconds only
+when that leaves a real buffer; a 20-second unknown-clock cap cannot support
+20 seconds of model deliberation. With that short cap, first protection at
+8–10 seconds of request age is a conservative operator target, earlier if the
+delivered request is already old. It is neither a server deadline nor a guarantee.
+Choose a useful qualitative pair without claiming an unverified numerical
+benchmark; a late first stage leaves no reliable room for an essential check.
+Stop optional research before the emergency policy is needed. With explicitly authorized
 `emergencyDefaultChoice:true`, a fresh unsubmitted request without a usable staged
 pair receives a deterministic complete legal choice at the planning cutoff.
 The selector uses request legality and move metadata, prefers ordinary attacks,
@@ -281,6 +310,16 @@ compact carried plans. Do not preload every older parent's full transcript and
 review when the current cards cover the decision; retrieve older detail when it
 can change a plan, and keep deep cross-set work between BO3s. A fresh operator
 with an already crowded preparation context still risks live restoration.
+Where the environment permits a fresh operator without inherited chat history,
+use that focused context rather than carrying the entire preparation conversation.
+Still load the required guidance and compact evidence; this does not waive reading.
+A fresh context is not a guarantee that a long BO3 will fit. Arrange a prepared
+receiver before it crowds, using a conservative request/output budget suited to
+the actual operator. Transfer within a set when necessary, preferably between
+children or after a complete choice is sent. Keep the receiver's guidance, own
+working connection and compact current history ready; do not wait for automatic
+restoration to begin preparation. A local budget is a mitigation, not a universal
+model capacity or proof that context delay is repaired.
 Do not reconstruct long history before staging the fresh pair. A focused context
 still needs the required guidance, locked team and verified working controls.
 After restoration, first refresh the compact current request through the
@@ -306,6 +345,17 @@ During an urgent turn, the current owner should submit and verify a legal pair
 before arranging an optional handoff. A receiver cannot act with the revoked
 lease; if recovery cannot finish, use an already authorized whole-set forfeit or
 inspect the enabled policy's bounded recovery. Do not create competing ownership.
+A sent preview or forced replacement can immediately produce another unsubmitted
+turn. Recheck that transition before declaring the handoff protected: the current
+owner must protect the fresh pair rather than stop for a handoff explanation.
+An already prepared receiver may instead observe and author that exact fresh pair
+before the explicit transfer. In the maintained serial JSON-lines SDK, queue the
+generation-checked claim and that final `play-next` in one input to avoid another
+model pause after takeover clears staging. If the current choice is already sent
+or uncertain, preserve its reservation and queue claim plus a fresh `turn` read;
+do not send it again. A rejected claim, stale request or uncertain result requires
+fresh reconciliation, not an automatic retry. Keep the original owner responsible
+until the coordinated transfer is observed; a readiness message alone is insufficient.
 
 Between games, handle readiness and preview deadlines promptly. Record observed
 response -> our adjustment -> their plausible counter-adjustment. Save deep log

@@ -343,6 +343,41 @@ test('publication failure is labelled outcome-unknown rather than an unsent inpu
   assert.equal(closed, 1);
 });
 
+test('queued takeover and authored pair run sequentially with the new lease and preserve failed or reserved sends', async () => {
+  for (const mode of ['ordinary', 'claim-rejected', 'already-reserved']) {
+    const calls=[],published=[];
+    let reads=0,closed=0;
+    const client={async callTool(request){
+      calls.push(request);
+      if(request.name==='battle_status') return reply(idle());
+      if(request.name==='battle_turn_status') return reply(++reads===1?compact():compact(NEXT_TOKEN,11));
+      if(request.name==='battle_control_claim') return mode==='claim-rejected'
+        ? raw({ok:false,error:'Controller generation changed'})
+        : reply({controllerLease:LEASE,generation:2});
+      if(request.name==='battle_stage_fallback') return reply({pending:[{token:TOKEN,hasFallback:true,fallbackSource:'fallback',attempted:mode==='already-reserved'}]});
+      return reply({sent:true});
+    },async close(){closed++;}};
+    const lines=[
+      {id:'arm',op:'arm',confirmed:true,expectedSessionId:SESSION,expectedTeamId:TEAM,expectedAccount:'fixture-owner'},
+      {id:'observe',op:'turn'},
+      {id:'takeover',op:'call',name:'battle_control_claim',args:{confirmed:true,commandId:'queued-takeover',controllerId:'receiver',takeover:true,expectedGeneration:1}},
+      {id:'pair',op:'play-next',room:ROOM,rqid:9,token:TOKEN,actions:pair},
+      {id:'close',op:'close'},
+    ];
+    await runOperator({client,input:Readable.from([lines.map(line=>JSON.stringify(line)).join('\n')+'\n']),
+      output:new Writable({write(_chunk,_encoding,done){done();}}),responseFile:'cache/queued-fixture.json',
+      publish:async(_file,id,payload)=>published.push({id,payload})});
+    assert.equal(closed,1);
+    const control=calls.filter(call=>['battle_stage_fallback','battle_choose'].includes(call.name));
+    if(mode==='claim-rejected') assert.equal(control.length,0);
+    else {
+      assert.deepEqual(control.map(call=>call.name),mode==='ordinary'?['battle_stage_fallback','battle_choose']:['battle_stage_fallback']);
+      for(const call of control){assert.equal(call.arguments.controllerLease,LEASE);assert.equal(call.arguments.token,TOKEN);assert.deepEqual(call.arguments.actions,pair);}
+    }
+    assert.equal(JSON.stringify(published).includes(LEASE),false);
+  }
+});
+
 test('response IDs are unique and a closed operator cannot dispatch again', async () => {
   const {operator, calls} = fixture(standardHandler);
   await operator.dispatch({id: 'one', op: 'turn'});

@@ -42,7 +42,7 @@ function budget(value) {
   return value;
 }
 
-export async function waitForNext({call,observe=async()=>{},origin,parentId,priorParentIds=[],initial,deadlineAt,now=Date.now,budgetMs=20000,autoReady}) {
+export async function waitForNext({call,observe=async()=>{},origin,parentId,priorParentIds=[],initial,deadlineAt,now=Date.now,budgetMs=20000,autoReady,continueOnIdle=false}) {
   const began=now(), deadline=deadlineAt ?? began+budget(budgetMs);
   let value=initial,state,convertedFull=false;
   for (;;) {
@@ -68,11 +68,16 @@ export async function waitForNext({call,observe=async()=>{},origin,parentId,prio
     const revision=state?.revision ?? 0,transportMs=remaining(deadline,now);
     // Leave room for snapshot serialization and IPC inside the ORIGINAL budget.
     // An unchanged server wait must return before the SDK/outer abort deadline.
+    const waitedAt=now();
     try {value=await boundedCall(call,'battle_wait',{afterRevision:revision,timeoutMs:Math.max(0,transportMs-100),format:'compact'},transportMs);}
     catch {return {reason:'read-unavailable',elapsedMs:now()-began,state:state ?? null,retry:false};}
     const next=stateOf(value);
     if (!isReplyError(value) && next?.revision === revision && !freshAction(next,origin,autoReady) && !terminal(next,{parentId,priorParentIds})) {
-      await observe(value); return {reason:'bounded-wait-ended',elapsedMs:now()-began,state:value};
+      await observe(value);
+      // Continue a genuine idle long poll, never hot-poll an immediate unchanged
+      // reply. The optional post-send window keeps one absolute deadline.
+      if (continueOnIdle && now()<deadline && now()-waitedAt>=Math.min(100,transportMs)) continue;
+      return {reason:'bounded-wait-ended',elapsedMs:now()-began,state:value};
     }
   }
 }
@@ -123,6 +128,7 @@ export async function stageNext({q,call,observe=async()=>{},now=Date.now,budgetM
 export async function playNext({q,call,observe=async()=>{},now=Date.now,budgetMs=20000,mutationTimeoutMs=5000,autoReady,observed}) {
   const began=now(),deadlineAt=began+budget(budgetMs),timing={inputReceivedAt:began,modelDeliveredAt:null};
   if (!Number.isInteger(mutationTimeoutMs) || mutationTimeoutMs < 1 || mutationTimeoutMs > 30000) throw new TypeError('Mutation timeout must be 1-30000 ms');
+  if (q.postSendWaitMs!==undefined && (!Number.isInteger(q.postSendWaitMs)||q.postSendWaitMs<budgetMs||q.postSendWaitMs>55000)) throw new TypeError('postSendWaitMs must be between the original command budget and 55000 ms');
   if (typeof q.id !== 'string' || !/^[A-Za-z0-9_-]{1,70}$/.test(q.id) || typeof q.room !== 'string' || !Number.isInteger(q.rqid) || !Array.isArray(q.actions) || !q.actions.length) throw new TypeError('Authored actions require a command ID, exact observed room/rqid and a complete pair');
   const action=(stateOf(observed)?.actions || []).find(a => a.room === q.room && a.rqid === q.rqid && actionable(a) && (!q.kind || a.kind === q.kind));
   if (!action || q.token && q.token !== action.token) return {...await recovery({localNotSent:true,call,observe,now,deadlineAt}),timing};
@@ -145,7 +151,11 @@ export async function playNext({q,call,observe=async()=>{},now=Date.now,budgetMs
     timing.chooseSettledAt=now();
     if (isReplyError(sent)) return {...await recovery({reply:sent,call,observe,now,deadlineAt}),timing};
   }
-  const next=await waitForNext({call,observe,origin:action,parentId:action.parentId || (action.room.startsWith('game-bestof3-') ? action.room : undefined),deadlineAt,now,autoReady});
+  // Only this read-only phase after a send or preserved reservation may use the
+  // opt-in larger total window. Staging,
+  // choosing, rejection and uncertain-write recovery keep the original budget.
+  const nextDeadlineAt=q.postSendWaitMs===undefined?deadlineAt:began+q.postSendWaitMs;
+  const next=await waitForNext({call,observe,origin:action,parentId:action.parentId || (action.room.startsWith('game-bestof3-') ? action.room : undefined),deadlineAt:nextDeadlineAt,now,autoReady,continueOnIdle:q.postSendWaitMs!==undefined});
   return {sent,ordinarySendSkipped,next,timing};
 }
 

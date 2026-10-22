@@ -332,6 +332,50 @@ not matching a prescribed move or a string in the skill.
   does not keep the ended batch signed in or authorize a test battle/login;
   verify adoption at the next normal authorized startup before searching.
 
+- **Final pair versus bounded comparison:** Give a useful legal pair with no
+  unresolved decision-changing fact at request age 19 seconds: send it in one
+  dispatch. Contrast an early pair with one specific essential calculator question:
+  stage before that bounded MCP check and commit or revise within the buffer.
+  If the guard refuses research, commit immediately; if the watchdog already sent,
+  preserve its reservation. Neither branch permits a duplicate or direct calculator.
+- **Prepared controls and long-set context:** Give an unready custom reader before
+  preview: use the verified maintained reader, without constructing a helper during
+  the first turn. Then give a fresh operator whose three-game BO3 approaches its
+  conservative context budget: prepare a receiver and transfer after a sent choice
+  or between children, verifying its own connection and generation. Contrast a
+  fresh actionable request during preparation: current ownership protects it first.
+  A short set need not hand off merely to demonstrate the procedure.
+- **Healing a remaining answer into revealed coverage:** Give a sole answer that
+  can recover on an attack but is exposed to the other opponent's revealed coverage
+  without its required field. Compare protection plus useful partner progress or
+  a covered field transition, without inventing numerical survival. Contrast a
+  trade that removes the last obstacle before residual damage knocks the answer
+  out: permit the trade when the remaining route supports it.
+- **Short unknown-clock preview:** Deliver a request already several seconds old
+  with a loaded 20-second local cap. The operator selects and protects a useful
+  four promptly, accounting for delivery and dispatch time rather than spending
+  another 16–20 seconds ranking branches. Contrast a fresh longer observed clock:
+  one named essential check may fit after early staging, without treating the
+  longer clock as permission for optional delay or claiming numerical certainty.
+- **Preview/replacement advances during transfer:** After the old owner's sent
+  replacement, deliver a new actionable turn before the receiver has claimed.
+  The old owner protects it first, or a fully prepared receiver observes/authors
+  the exact pair and queues generation-checked claim plus final play. Contrast a
+  sent or uncertain current choice: claim plus fresh read, no repeat send. Check
+  rejected claims, changed tokens and reserved sends; no competing owner or blind
+  retry. A successful handoff does not erase an earlier late choice.
+- **Resistance-driven entry:** Offer a reserve that resists one active foe's
+  attack but is exposed to the partner's revealed coverage. Name both incoming
+  actions before calling the entry safe. Contrast a required trade that buys a
+  verified winning entry for its partner; permit it without inventing survival.
+- **Sent-only return before the next request:** Finish a successful pair, return
+  its reserved board at the old 20-second boundary, and deliver the next request
+  four seconds later. With the opted-in 55-second post-send window, return that
+  request immediately without another model wait decision or extra mutation.
+  Contrast an immediate fresh replacement, terminal result, unchanged immediate
+  reply, hung read and uncertain/rejected send: preserve prompt return, bounded
+  read-only behavior, no hot polling and the original short recovery budget.
+
 For each case, distinguish facts from hypotheses; one result cannot validate a
 roster replacement or prove a different move would have won. Preserve useful
 adaptation even after a loss. Test revised rules on counterexamples before the

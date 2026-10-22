@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-21.35**. Read the bundled
+Cycle revision: **2026-10-22.37**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -163,12 +163,21 @@ permits, `battle_note_decision` retains this reasoning against the observed acti
 token without submitting a move. Use optional calculator `evidenceContext` to
 link actual MCP results; never invent a receipt or turn a prediction into a fact.
 
+**Live control comes first:** resolve known legality and recipients, identify a
+useful complete pair, then stage/send before extended branch ranking. A sent-only
+board is a cue to keep the read-only next-request wait active, not to analyze the
+old position or pause before the next read. Follow the cycle's bounded post-send
+wait; it protects observation continuity, not a pause after a fresh board arrives.
+
 - **Switch-aware legality:** Evaluate the field when moves resolve, including
   plausible opposing switch-ins. Recheck priority, target eligibility, terrain,
   weather, and immunity changes; give a usable alternative if a switch disables
   the intended move. A selectable move is not necessarily an effective action.
-  For our switch-ins, check both opponents' plausible attacks and their combined
-  pressure; immunity to one move does not make the destination safe from its partner.
+  Before switching for a resistance or field ability, name both opponents' plausible
+  incoming attacks and whether the entrant must survive them to deliver the plan.
+  Include pending attacks after a forced entry; immunity to one move does not make
+  the destination safe from its partner. A necessary or purposeful trade remains
+  available, but do not describe an unchecked combined-pressure entry as safe.
   If an opponent can pivot before our attack, evaluate the replacement occupying
   the targeted slot, not only the Pokemon present when the move was selected.
   Check move denial as well as survival: an earlier Throat Chop can disable a
@@ -184,6 +193,11 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
 - **Preserve the answer:** Map each remaining opposing win condition to a primary
   answer, a practical backup, and required HP or field conditions. Before trading
   one away, check whether the remaining team still has a feasible endgame.
+  Before choosing recovery or chip with that answer, check both opponents' revealed
+  coverage at resolution: healing to full does not establish survival of the
+  incoming turn. Compare Protect plus partner progress or a covered field change.
+  A purposeful trade can be correct after removing its remaining obstacle or
+  when a checked backup can finish; preservation is not an absolute prohibition.
 - **Expect contested weather:** When our weather gives us an advantage, treat an
   available opposing overwrite that restores their advantage as a leading
   high-likelihood response. Evaluate that branch before relying on the current
@@ -225,10 +239,17 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
   `battle_stage_fallback` when comparison remains and
   the loaded client supports the enabled deadline policy. Hold the exclusive
   controller lease; a handoff requires an explicit generation-checked takeover.
+  Name the specific material question before using a separate staging step;
+  vague further comparison does not justify delaying a final pair.
   With the maintained SDK operator, use `stage-next` before extended comparison,
   then `commit-next` for that stored pair or `play-next` for an authored revision.
   When the complete pair is already final, use `play-next` directly: it stages
   and sends in one dispatch. Avoid an unnecessary separate staging/commit gap.
+  If the research guard requests commitment, commit the stored current pair
+  immediately, preserving any existing send reservation.
+  Budget from request arrival and the loaded cutoff, including read and tool time:
+  a 20-second unknown-clock cap cannot support 20 seconds of model deliberation.
+  Use the cycle's clock-aware first-pair target and prepared handoff procedure.
   Its current-request research guard and decision reader support this sequence;
   they cannot supply a tactical choice during a model pause before first staging.
   Follow the cycle's early-commit procedure and inspect `battle_turn_status`;

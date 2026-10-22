@@ -6,7 +6,8 @@ import {performance} from 'node:perf_hooks';
 import {projectDecisionView} from './operator-view.mjs';
 
 const FORMAT = 'vgc-operator-response-v1';
-const MAX_WAIT_MS = 22000;
+const MAX_WAIT_MS = 60000;
+const DEFAULT_WAIT_MS = 22000;
 const MAX_RETAINED_RESPONSES = 16;
 const RENAME_RETRY_MS = [10, 20, 40, 80, 160];
 const transientFileErrors = new Set(['EPERM', 'EACCES', 'EBUSY']);
@@ -288,7 +289,7 @@ export async function readResponse({file, id, redactValues = [], view = 'full'})
   return null;
 }
 
-export async function awaitResponse({file, id, timeoutMs = MAX_WAIT_MS, intervalMs = 50, redactValues = [], view = 'full'}) {
+export async function awaitResponse({file, id, timeoutMs = DEFAULT_WAIT_MS, intervalMs = 50, redactValues = [], view = 'full'}) {
   validId(id);
   if (!['full', 'decision'].includes(view)) throw new TypeError('view must be full or decision');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_WAIT_MS) {
@@ -311,9 +312,9 @@ export async function awaitResponse({file, id, timeoutMs = MAX_WAIT_MS, interval
 }
 
 async function main(args) {
-  const usage = 'Usage: node showdown/operator-response.mjs --wait FILE --id ID [--timeout-ms 0..22000] [--view full|decision]';
+  const usage = 'Usage: node showdown/operator-response.mjs --wait FILE --id ID [--timeout-ms 0..60000] [--view full|decision]';
   if (args.length < 4 || args.length > 8 || args.length % 2 || args[0] !== '--wait' || args[2] !== '--id') throw new TypeError(usage);
-  let timeoutMs = MAX_WAIT_MS, view = 'full';
+  let timeoutMs = DEFAULT_WAIT_MS, view = 'full';
   const seen = new Set();
   for (let index = 4; index < args.length; index += 2) {
     const flag = args[index], value = args[index + 1];

@@ -150,6 +150,63 @@ test('unchanged wait revision exits rather than hot-polling',async()=>{
   assert.equal(calls,1);assert.equal(result.reason,'bounded-wait-ended');
 });
 
+test('opt-in post-send wait catches a request after the old boundary without another model read or mutation',async()=>{
+  for(const extended of [false,true]){
+    let time=1000,waits=0;const calls=[];
+    const result=await playNext({q:{...choice,...(extended?{postSendWaitMs:55000}:{})},observed:board(action()),now:()=>time,call:async(name,args,options)=>{
+      calls.push({name,timeout:options.timeoutMs});
+      if(name==='battle_stage_fallback'||name==='battle_choose'){time++;return {pending:[]};}
+      if(name==='battle_turn_status')return board(null);
+      if(++waits===1){time+=19900;return board(null);}
+      time+=4000;return replacement;
+    }});
+    assert.equal(result.next.reason,extended?'fresh-action':'bounded-wait-ended');
+    assert.equal(waits,extended?2:1);
+    assert.deepEqual(calls.filter(x=>/stage|choose/.test(x.name)).map(x=>x.name),['battle_stage_fallback','battle_choose']);
+    assert(calls.slice(0,2).every(x=>x.timeout<=5000));
+    assert(calls.slice(2).every(x=>x.timeout<=20000));
+  }
+});
+
+test('post-send option returns fresh requests and terminal results immediately, with an absolute cap and no idle spin',async()=>{
+  for(const mode of ['fresh','terminal','idle','immediate-unchanged','reserved']){
+    let time=1000,waits=0;const calls=[];
+    const result=await playNext({q:{...choice,postSendWaitMs:55000},observed:board(action()),now:()=>time,call:async(name,args,options)=>{
+      calls.push(name);
+      if(name==='battle_stage_fallback'||name==='battle_choose'){time++;return {pending:mode==='reserved'?[{token:choice.token,attempted:true}]:[]};}
+      if(name==='battle_turn_status'){
+        if(mode==='fresh'||mode==='reserved')return replacement;
+        if(mode==='terminal')return board(null,{rooms:[{id:parent,ended:true,result:{type:'win'}}],search:{searching:[],games:null}});
+        return board(null);
+      }
+      waits++;
+      if(mode==='idle')time+=options.timeoutMs;
+      return board(null);
+    }});
+    assert(time-1000<=55000);
+    if(mode==='fresh'||mode==='reserved'){assert.equal(result.next.reason,'fresh-action');assert.equal(waits,0);}
+    if(mode==='terminal'){assert.equal(result.next.reason,'official-parent-ended-and-idle');assert.equal(waits,0);}
+    if(mode==='idle'){assert.equal(result.next.reason,'bounded-wait-ended');assert.equal(time-1000,55000);assert.equal(waits,3);}
+    if(mode==='immediate-unchanged'){assert.equal(waits,1);assert.equal(result.next.reason,'bounded-wait-ended');}
+    assert.equal(calls.filter(x=>x==='battle_choose').length,mode==='reserved'?0:1);
+  }
+});
+
+test('post-send window cannot extend uncertain or rejected mutations and rejects invalid values before I/O',async()=>{
+  for(const mode of ['uncertain','rejected']){
+    let time=1000;const calls=[];
+    const result=await playNext({q:{...choice,postSendWaitMs:55000},observed:board(action()),now:()=>time,budgetMs:100,call:async name=>{
+      calls.push(name);
+      if(name==='battle_stage_fallback')return {pending:[]};
+      if(name==='battle_choose'){time+=100;if(mode==='uncertain')throw Error('uncertain');return {ok:false,error:'rejected'};}
+      throw Error('No extended read permitted');
+    }});
+    assert.deepEqual(calls,['battle_stage_fallback','battle_choose']);
+    assert.equal(result.recovery.retry,false);
+  }
+  for(const postSendWaitMs of [0,19999,55001,Infinity,1.5])await assert.rejects(playNext({q:{...choice,postSendWaitMs},observed:board(action()),call:async()=>{throw Error('No I/O');}}),/postSendWaitMs/);
+});
+
 test('a legacy full snapshot gets only one compact conversion attempt',async()=>{
   const {boards,...full}=replacement;const calls=[];
   const result=await waitForNext({initial:full,call:async name=>{calls.push(name);return full;}});

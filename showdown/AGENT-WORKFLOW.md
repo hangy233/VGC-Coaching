@@ -217,6 +217,31 @@ confirmed stage, numerical comparison uses actual MCP calculators; `commit-next`
 submits the stored authored pair, or `play-next` supplies a changed complete pair.
 Neither operation rebinds a stale request or resends a reserved choice. An
 uncertain stage requires reconciliation before another staging or send attempt.
+Use `play-next` directly for a final pair. Separate staging needs a named material
+check and enough commit buffer; once the research guard asks for commitment,
+commit the stored current pair immediately rather than introducing another pause.
+Verify presentation helpers before searching and prepare a working receiver
+before context becomes crowded, including within a long BO3. Follow the skill's
+generation-checked handoff and preserve any already reserved send.
+The JSON-lines runner processes commands sequentially. A prepared receiver with
+its own fresh board and an already authored final pair can queue the explicit
+generation-checked claim and exact `play-next` in one input after the current
+owner coordinates the transfer. Otherwise queue claim plus `turn`, preserving a
+sent/uncertain choice. Normal lease, exact-request and reservation checks still
+apply; a failed claim or stale response never authorizes an automatic retry.
+Check the request produced immediately after a sent preview/replacement: it may
+need protection before handoff discussion. Count read/model/tool time from request
+arrival; the 20-second unknown cap requires an earlier first-pair target.
+For a freshly loaded helper, `postSendWaitMs:55000` on `play-next` or `commit-next`
+keeps only the read phase after a send or preserved reservation active across idle long polls,
+within one 55-second total command window. Use the maintained response reader with
+`--timeout-ms 60000` and drain its actual session if yielded. Defaults remain
+20 seconds for the helper and 22 seconds for the reader. Stage/choose/recovery
+budgets are unchanged; fresh requests, terminal results and errors return promptly.
+A reserved-only return still needs an immediate read-only wait, not optional
+analysis of the old board. No automatic move, resend, search or authentication is
+introduced. Verify this SDK change at the next normal startup; it does not update
+an already running helper or fix thinking latency after a fresh board arrives.
 
 For the control owner, the operator re-reads the current request before optional
 research, notes or schemas. It returns an unprotected board instead of doing that
