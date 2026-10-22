@@ -241,7 +241,15 @@ keeps only the read phase after a send or preserved reservation active across id
 within one 55-second total command window. Use the maintained response reader with
 `--timeout-ms 60000` and drain its actual session if yielded. Defaults remain
 20 seconds for the helper and 22 seconds for the reader. Stage/choose/recovery
-budgets are unchanged; fresh requests, terminal results and errors return promptly.
+budgets are unchanged; fresh requests and official parent results return promptly.
+A known `not-sent` recovery from an ended child, with no actions and the same
+still-live BO3 parent, also observes the transition within the original recovery
+budget (20 seconds by default). It retains the original error/recovery alongside any new exact
+preview; it does not resend, rebind or choose that preview. Uncertain, reserved,
+live-child and other errors retain their existing recovery behavior. If this
+transition returns without a fresh action, begin the next read-only wait promptly
+before optional work. Protect an already-old preview immediately from the known
+sheet, and then protect the first turn separately.
 A reserved-only return still needs an immediate read-only wait, not optional
 analysis of the old board. No automatic move, resend, search or authentication is
 introduced. Verify this SDK change at the next normal startup; it does not update

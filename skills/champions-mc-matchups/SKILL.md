@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-22.38**. Read the bundled
+Cycle revision: **2026-10-22.39**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -170,6 +170,10 @@ old position or pause before the next read. Drain each dispatched result before
 acknowledgments or handoff messages; a fresh turn inside it still needs its own
 paired choice. Follow the cycle's bounded post-send
 wait; it protects observation continuity, not a pause after a fresh board arrives.
+A known unsent choice from an ended child can precede the next preview while its
+BO3 parent remains live. Follow the cycle's bounded transition observation, then
+protect the returned preview immediately; the earlier terminal result does not
+protect the next game's selection.
 
 - **Switch-aware legality:** Evaluate the field when moves resolve, including
   plausible opposing switch-ins. Recheck priority, target eligibility, terrain,

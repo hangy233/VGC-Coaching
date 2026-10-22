@@ -57,6 +57,47 @@ function standardHandler(name) {
   return reply({done: true});
 }
 
+test('known terminal-child recovery caches the newly observed preview for the next authored choice', async () => {
+  const parentId='game-bestof3-gen9championsvgc2026regmcbo3-123';
+  const nextRoom='battle-gen9championsvgc2026regmcbo3-124';
+  const gap={...compact(),autoReady:true,actions:[],boards:[],rooms:[
+    {id:parentId,parentId,ended:false},
+    {id:ROOM,parentId,ended:true,result:{type:'win',winner:'fixture-opponent'}},
+  ]};
+  const preview={...compact(NEXT_TOKEN,2),revision:20,actions:[
+    {...action(NEXT_TOKEN,2),room:nextRoom,parentId,kind:'preview'},
+  ]};
+  const turn={...compact('e'.repeat(64),4),revision:21,actions:[
+    {...action('e'.repeat(64),4),room:nextRoom,parentId},
+  ]};
+  let previewSent=false;
+  const {operator,calls}=fixture((name,args)=>{
+    if(name==='battle_status')return reply(idle());
+    if(name==='battle_control_claim')return reply({controllerLease:LEASE,controller:{generation:1}});
+    if(name==='battle_turn_status')return reply(previewSent?turn:compact());
+    if(name==='battle_stage_fallback' && args.token===TOKEN)return raw({ok:false,error:'terminal stale request',
+      recovery:{outcome:'not-sent',retry:false,rebind:false,requiresNewDecision:true,state:gap}});
+    if(name==='battle_wait')return reply(preview);
+    if(name==='battle_stage_fallback')return reply({pending:[]});
+    if(name==='battle_choose') {previewSent=true;return reply({status:'sent-not-acknowledged'});}
+    throw Error('Unexpected fixture call');
+  });
+  await arm(operator);await claim(operator);await operator.dispatch({id:'before-terminal',op:'turn'});
+  const recovered=await operator.dispatch({id:'stale-child',op:'play-next',room:ROOM,rqid:9,token:TOKEN,
+    actions:pair,postSendWaitMs:55000});
+  assert.equal(recovered.result.recovery.outcome,'not-sent');
+  assert.equal(recovered.result.next.reason,'fresh-action');
+  assert.equal(recovered.result.next.afterKnownNotSentChildTransition,true);
+  assert.equal(calls.filter(c=>c.request?.name==='battle_turn_status').length,1);
+  const chosen=await operator.dispatch({id:'authored-preview',op:'play-next',room:nextRoom,rqid:2,token:NEXT_TOKEN,
+    kind:'preview',actions:[{type:'team',order:[4,2,1,3]}],postSendWaitMs:55000});
+  assert.equal(chosen.result.next.reason,'fresh-action');
+  const sent=calls.filter(c=>c.request?.name==='battle_choose');
+  assert.equal(sent.length,1);
+  assert.equal(sent[0].request.arguments.token,NEXT_TOKEN);
+  assert.deepEqual(sent[0].request.arguments.actions,[{type:'team',order:[4,2,1,3]}]);
+});
+
 test('creation and unarmed commands remain read-only without a startup claim or search', async () => {
   const {operator, calls} = fixture(standardHandler, {maxSearches: 4});
   assert.equal(calls.length, 0);

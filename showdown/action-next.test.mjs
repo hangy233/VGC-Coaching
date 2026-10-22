@@ -8,6 +8,82 @@ const board=(a,extra={})=>({connected:true,authenticated:true,revision:a?.rqid??
 const choice={id:'authored-9',room,rqid:9,token:'token-9',actions:[{type:'move',slot:4},{type:'move',slot:3,target:2}]};
 const replacement=board({...action(11,'switch'),legalActions:{forceSwitch:[true,false],replacementPairs:[[{type:'switch',pokemonId:'stable-reserve'},{type:'pass'}]]}});
 
+const betweenChildren=()=>board(null,{boards:[],autoReady:true,rooms:[
+  {id:parent,parentId:parent,ended:false,result:null},
+  {id:room,parentId:parent,ended:true,result:{type:'win',winner:'opponent'}},
+]});
+
+test('known unsent terminal-child race observes the next preview without a model reentry or another mutation',async()=>{
+  let time=1000;
+  const calls=[],observed=[],gap=betweenChildren();
+  const preview=board({...action(2,'preview'),room:'battle-gen9championsvgc2026regmcbo3-102',token:'next-preview'},
+    {revision:gap.revision+1});
+  const result=await playNext({q:{...choice,postSendWaitMs:55000},observed:board(action()),now:()=>time,
+    observe:value=>observed.push(value),call:async(name,args,options)=>{
+      calls.push({name,args,timeoutMs:options.timeoutMs});
+      if(name==='battle_stage_fallback')return {ok:false,error:'stale after terminal',recovery:{outcome:'not-sent',retry:false,rebind:false,requiresNewDecision:true,state:gap}};
+      assert.equal(name,'battle_wait');time+=594;return preview;
+    }});
+  assert.deepEqual(calls.map(c=>c.name),['battle_stage_fallback','battle_wait']);
+  assert.equal(result.recovery.outcome,'not-sent');
+  assert.equal(result.recovery.retry,false);assert.equal(result.recovery.rebind,false);
+  assert.equal(result.recovery.state,gap);assert.match(result.error,/stale/);
+  assert.equal(result.next.reason,'fresh-action');
+  assert.equal(result.next.state.actions[0].token,'next-preview');
+  assert.equal(result.next.afterKnownNotSentChildTransition,true);
+  assert(observed.includes(preview));
+  assert(calls[1].timeoutMs<=20000);
+});
+
+test('terminal-child observation keeps the original rejection deadline rather than the longer post-send budget',async()=>{
+  let time=1000;
+  const calls=[],gap=betweenChildren();
+  const result=await playNext({q:{...choice,postSendWaitMs:55000},observed:board(action()),now:()=>time,
+    call:async(name,args,options)=>{
+      calls.push({name,args,timeoutMs:options.timeoutMs});
+      if(name==='battle_stage_fallback') {time+=4000;return {ok:false,recovery:{outcome:'not-sent',state:gap}};}
+      time+=options.timeoutMs;return gap;
+    }});
+  assert.equal(result.next.reason,'bounded-wait-ended');
+  assert.equal(time,21000);
+  assert.equal(calls[1].timeoutMs,16000);
+  assert.deepEqual(calls.map(c=>c.name),['battle_stage_fallback','battle_wait']);
+});
+
+test('known terminal-child observation returns an official parent ending and idle without choosing again',async()=>{
+  const calls=[],gap=betweenChildren();
+  const ended={...gap,revision:11,search:{searching:[],games:null},rooms:gap.rooms.map(r=>r.id===parent?{...r,ended:true,result:{type:'win',winner:'opponent'}}:r)};
+  const result=await playNext({q:{...choice,postSendWaitMs:55000},observed:board(action()),call:async name=>{
+    calls.push(name);return name==='battle_stage_fallback'?{ok:false,recovery:{outcome:'not-sent',state:gap}}:ended;
+  }});
+  assert.deepEqual(calls,['battle_stage_fallback','battle_wait']);
+  assert.equal(result.next.reason,'official-parent-ended-and-idle');
+  assert.equal(result.recovery.outcome,'not-sent');
+});
+
+test('terminal-transition continuation does not broaden uncertain, reserved, live, unmatched, ready or unopted recovery',async()=>{
+  const cases=[
+    {name:'no opt in',q:choice,state:betweenChildren(),outcome:'not-sent'},
+    {name:'reserved',state:betweenChildren(),outcome:'submission-reserved'},
+    {name:'unclassified',state:betweenChildren(),outcome:'rejection-unclassified'},
+    {name:'uncertain',state:betweenChildren(),outcome:'mutation-uncertain'},
+    {name:'live child',state:{...betweenChildren(),rooms:betweenChildren().rooms.map(r=>({...r,ended:false}))},outcome:'not-sent'},
+    {name:'unknown child',state:{...betweenChildren(),rooms:[{id:parent,ended:false}]},outcome:'not-sent'},
+    {name:'ended parent',state:{...betweenChildren(),rooms:betweenChildren().rooms.map(r=>({...r,ended:true}))},outcome:'not-sent'},
+    {name:'ready decision',state:{...betweenChildren(),actions:[action(12,'ready')]},outcome:'not-sent'},
+    {name:'disconnected',state:{...betweenChildren(),connected:false},outcome:'not-sent'},
+  ];
+  for(const example of cases) {
+    const calls=[];
+    const result=await playNext({q:example.q??{...choice,postSendWaitMs:55000},observed:board(action()),call:async name=>{
+      calls.push(name);return {ok:false,recovery:{outcome:example.outcome,state:example.state}};
+    }});
+    assert.deepEqual(calls,['battle_stage_fallback'],example.name);
+    assert.equal(result.recovery.outcome,example.outcome,example.name);
+    assert.equal(result.next.afterKnownNotSentChildTransition,undefined,example.name);
+  }
+});
+
 test('exact missed-turn to forced-replacement recovery needs no extra tool round trip or stale resend',async()=>{
   const calls=[],observed=[];
   const result=await playNext({q:choice,observed:board(action()),observe:value=>observed.push(value),call:async(name,args)=>{

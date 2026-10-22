@@ -102,6 +102,22 @@ async function recovery({reply,uncertain,localNotSent=false,call,observe,now,dea
   };
 }
 
+// A stale choice can race a child's terminal event just before auto-ready
+// delivers the next preview. Keep observation inside the original recovery
+// budget in this exact known-not-sent case; never replay or rebind the choice.
+async function observeChildTransition({recovered,q,call,observe,now,deadlineAt}) {
+  const state=stateOf(recovered.recovery?.state);
+  if (q.postSendWaitMs===undefined || recovered.recovery?.outcome!=='not-sent' ||
+      state?.connected!==true || state.authenticated!==true || state.stopped ||
+      !Array.isArray(state.actions) || state.actions.length || now()>=deadlineAt) return recovered;
+  const child=(state.rooms || []).find(room => room.id===q.room && room.id?.startsWith('battle-'));
+  const parent=child && (state.rooms || []).find(room => room.id===child.parentId);
+  if (child?.ended!==true || parent?.ended!==false || !parent.id?.startsWith('game-bestof3-')) return recovered;
+  const next=await waitForNext({call,observe,origin:q,parentId:parent.id,initial:state,
+    deadlineAt,now,autoReady:state.autoReady,continueOnIdle:true});
+  return {...recovered,next:{...next,afterKnownNotSentChildTransition:true}};
+}
+
 /** Protect one exact agent-authored request without spending the remainder of
  * its planning window waiting for the next board. No ordinary move is sent.
  */
@@ -130,8 +146,11 @@ export async function playNext({q,call,observe=async()=>{},now=Date.now,budgetMs
   if (!Number.isInteger(mutationTimeoutMs) || mutationTimeoutMs < 1 || mutationTimeoutMs > 30000) throw new TypeError('Mutation timeout must be 1-30000 ms');
   if (q.postSendWaitMs!==undefined && (!Number.isInteger(q.postSendWaitMs)||q.postSendWaitMs<budgetMs||q.postSendWaitMs>55000)) throw new TypeError('postSendWaitMs must be between the original command budget and 55000 ms');
   if (typeof q.id !== 'string' || !/^[A-Za-z0-9_-]{1,70}$/.test(q.id) || typeof q.room !== 'string' || !Number.isInteger(q.rqid) || !Array.isArray(q.actions) || !q.actions.length) throw new TypeError('Authored actions require a command ID, exact observed room/rqid and a complete pair');
+  const recover=async args => observeChildTransition({
+    recovered:await recovery({...args,call,observe,now,deadlineAt}),q,call,observe,now,deadlineAt,
+  });
   const action=(stateOf(observed)?.actions || []).find(a => a.room === q.room && a.rqid === q.rqid && actionable(a) && (!q.kind || a.kind === q.kind));
-  if (!action || q.token && q.token !== action.token) return {...await recovery({localNotSent:true,call,observe,now,deadlineAt}),timing};
+  if (!action || q.token && q.token !== action.token) return {...await recover({localNotSent:true}),timing};
   const args={confirmed:true,commandId:q.id,token:action.token,actions:structuredClone(q.actions)};
   let staged;
   if (now() >= deadlineAt) return {...await recovery({reply:{error:'Transport budget ended before staging'},localNotSent:true,call,observe,now,deadlineAt}),timing};
@@ -139,7 +158,7 @@ export async function playNext({q,call,observe=async()=>{},now=Date.now,budgetMs
   try {staged=await boundedCall(call,'battle_stage_fallback',{...args,commandId:q.id+'-stage'},remaining(deadlineAt,now,mutationTimeoutMs));}
   catch {return {...await recovery({uncertain:true,call,observe,now,deadlineAt}),timing:{...timing,stageWaitEndedAt:now()}};}
   timing.stageSettledAt=now();
-  if (isReplyError(staged)) return {...await recovery({reply:staged,call,observe,now,deadlineAt}),timing};
+  if (isReplyError(staged)) return {...await recover({reply:staged}),timing};
   const pending=stateOf(staged)?.pending?.find(item => item.token === action.token);
   let sent,ordinarySendSkipped;
   if (pending?.attempted) ordinarySendSkipped='staged request already attempted; preserve reservation';
@@ -149,7 +168,7 @@ export async function playNext({q,call,observe=async()=>{},now=Date.now,budgetMs
     try {sent=await boundedCall(call,'battle_choose',{...args,validForMs:10000},remaining(deadlineAt,now,mutationTimeoutMs));}
     catch {return {...await recovery({uncertain:true,call,observe,now,deadlineAt}),timing:{...timing,chooseWaitEndedAt:now()}};}
     timing.chooseSettledAt=now();
-    if (isReplyError(sent)) return {...await recovery({reply:sent,call,observe,now,deadlineAt}),timing};
+    if (isReplyError(sent)) return {...await recover({reply:sent}),timing};
   }
   // Only this read-only phase after a send or preserved reservation may use the
   // opt-in larger total window. Staging,

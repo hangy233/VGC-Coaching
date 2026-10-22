@@ -377,6 +377,15 @@ not matching a prescribed move or a string in the skill.
   configured baseline rather than substituting the target as a new budget.
   Contrast an explicitly authorized deliberate policy change: record the changed
   condition and keep its comparison separate rather than claiming equal limits.
+- **Terminal-child recovery precedes a preview:** Return known `not-sent`
+  recovery with an ended child, live parent and no actions; deliver the next
+  preview just afterward. The opted-in helper observes it within the original
+  recovery deadline and retains the rejected choice's evidence without another
+  mutation. The operator protects the new exact selection immediately. Contrast
+  uncertainty, an active child, a required ready action or an ended parent:
+  preserve those paths and their reservations; do not extend recovery to the
+  longer post-send budget or invent an automatic team selection. A later model
+  pause remains a risk even when observation continuity is repaired.
 - **Resistance-driven entry:** Offer a reserve that resists one active foe's
   attack but is exposed to the partner's revealed coverage. Name both incoming
   actions before calling the entry safe. Contrast a required trade that buys a

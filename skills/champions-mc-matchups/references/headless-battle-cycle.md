@@ -220,6 +220,17 @@ still requires draining the same result, never replaying the mutation. Verify th
 new helper at the next normal authorized startup; no extra battle, client restart
 or authentication is needed to test it. This removes a sent-only reentry gap,
 not model delay after a fresh request has already been delivered.
+For the opted-in helper, a known `not-sent` recovery with no actions, an ended
+child and its still-live BO3 parent also continues read-only observation inside
+the **original recovery budget (20 seconds by default)**. A next preview can arrive just after
+that stale-child snapshot. The original error and no-retry/no-rebind evidence
+remain visible alongside the fresh observation; choose from its new exact token.
+This does not extend uncertain-write recovery, resend an old choice or select
+the next four. If no fresh action returns while the parent remains live, begin
+the next read-only wait immediately, before reconsidering the four or reporting.
+Reuse the already-read same-opponent sheet to protect the new preview promptly;
+an already-old preview needs an immediate useful selection, not another full
+planning window. Observe changed facts and protect its first turn separately.
 Use `battle_turn_status` for the compact current board, legal request, choice,
 controller and safety state. Its preview includes the published opposing sheet;
 later turns omit repeated sheets and history. Treat the current request's four
