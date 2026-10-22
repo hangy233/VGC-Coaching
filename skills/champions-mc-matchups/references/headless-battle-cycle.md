@@ -37,7 +37,10 @@ of skill files, review reports, and chat.
    including start, ready, choose, forfeit, replay policy/saving and stop. While
    server-confirmed idle, explicitly configure `battle_set_control_policy` before
    preflight and play. It defaults off; `forfeitIfStuck: true` requires the user's
-   existing permission to forfeit a stuck set. Policy, credentials and a lease
+   existing permission to forfeit a stuck set. A first-pair timing target is not
+   a request to change the configured cutoff. For a control comparison, verify
+   actual configured budgets against its retained baseline and disclose changes.
+   Policy, credentials and a lease
    grant no new battles, replay publication or roster changes. Source edits do
    not update an existing process; adopt these capabilities at the next authorized
    startup. Retain the current valid lease between sets rather than claiming anew.
@@ -197,6 +200,10 @@ or a server countdown. Wait for or drain the one-shot reader's actual process
 session; a pending read never warrants replaying the original command. A model
 pause before its first authored pair remains an operational risk despite these
 guards and must not be described as fixed from passing offline tests.
+After dispatching a choice or forced replacement, drain that exact result before
+sending ownership acknowledgments, status messages or copying receipts. It can
+already contain a fresh unsubmitted turn. Protect that turn before communicating;
+the previous successful send does not protect a different request.
 This also applies to the first actionable request immediately after preview and
 after a forced replacement; optional reporting cannot occupy that transition.
 If a successful send returns only its reserved old board, dispatch the next
@@ -347,9 +354,12 @@ lease; if recovery cannot finish, use an already authorized whole-set forfeit or
 inspect the enabled policy's bounded recovery. Do not create competing ownership.
 A sent preview or forced replacement can immediately produce another unsubmitted
 turn. Recheck that transition before declaring the handoff protected: the current
-owner must protect the fresh pair rather than stop for a handoff explanation.
-An already prepared receiver may instead observe and author that exact fresh pair
-before the explicit transfer. In the maintained serial JSON-lines SDK, queue the
+owner must send a useful final pair rather than stop to suggest actions or explain
+the handoff. Only use the receiver-first branch when the receiver has already
+confirmed its own fresh observation and final authored pair for that exact request;
+being generally ready or needing another board read is insufficient. Otherwise
+the current owner sends first and the receiver preserves that reservation.
+In the maintained serial JSON-lines SDK, queue the
 generation-checked claim and that final `play-next` in one input to avoid another
 model pause after takeover clears staging. If the current choice is already sent
 or uncertain, preserve its reservation and queue claim plus a fresh `turn` read;

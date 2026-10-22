@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-22.37**. Read the bundled
+Cycle revision: **2026-10-22.38**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -166,7 +166,9 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
 **Live control comes first:** resolve known legality and recipients, identify a
 useful complete pair, then stage/send before extended branch ranking. A sent-only
 board is a cue to keep the read-only next-request wait active, not to analyze the
-old position or pause before the next read. Follow the cycle's bounded post-send
+old position or pause before the next read. Drain each dispatched result before
+acknowledgments or handoff messages; a fresh turn inside it still needs its own
+paired choice. Follow the cycle's bounded post-send
 wait; it protects observation continuity, not a pause after a fresh board arrives.
 
 - **Switch-aware legality:** Evaluate the field when moves resolve, including

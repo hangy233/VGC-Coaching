@@ -1,5 +1,7 @@
 // Reader-only rendering of a retained, sanitized operator response. This module
 // never calls MCP, selects actions, changes a deadline, or rewrites the receipt.
+import {isDeepStrictEqual} from 'node:util';
+
 const timestamp = value => Number.isSafeInteger(value) && value >= 0 && value <= 8640000000000000;
 const reserved = value => ['sent', 'uncertain', 'accepted', 'execution-observed'].includes(value);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -39,11 +41,11 @@ function eventView(events) {
     ...(omitted ? {decisionViewNote: 'Earlier plain HP updates omitted from this rendering only; current HP, consequential events and the full retained response remain available.'} : {})};
 }
 
-function stateView(state, checkedAt) {
+function stateView(state, checkedAt, {preserveSheets = false} = {}) {
   const previewRooms = new Set(state.actions.filter(action => action.kind === 'preview').map(action => action.room));
   const boards = state.boards.map(board => {
     const projected = {...board, ...(Object.hasOwn(board, 'recentEvents') ? {recentEvents: eventView(board.recentEvents)} : {})};
-    if (!previewRooms.has(board.room) && Object.hasOwn(projected, 'opponentSheets')) {
+    if (!preserveSheets && !previewRooms.has(board.room) && Object.hasOwn(projected, 'opponentSheets')) {
       delete projected.opponentSheets;
       projected.opponentSheetsOmitted = 'Repeated registered sheet omitted outside preview; preserved in the full retained response.';
     }
@@ -60,17 +62,40 @@ function stateView(state, checkedAt) {
 export function projectDecisionView(envelope, {now = Date.now()} = {}) {
   if (!timestamp(now)) throw new TypeError('Decision-view time must be epoch milliseconds');
   let states = 0;
-  function visit(value) {
-    if (Array.isArray(value)) return value.map(visit);
-    if (!object(value)) return value;
+  const observations = [], statePaths = new Map();
+  const childPath = (path, key) => /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
+  function collect(value, path = '$') {
+    if (Array.isArray(value)) { value.forEach((child, index) => collect(child, `${path}[${index}]`)); return; }
+    if (!object(value)) return;
     if (typeof value.sessionId === 'string' && Array.isArray(value.actions) && Array.isArray(value.boards)) {
       states++;
-      return stateView(value, now);
+      // Compare complete raw observations before any presentation omissions.
+      // Matching revision/request IDs alone cannot establish identical clocks,
+      // safety, reveals or uncertainty. Keep every genuinely different state.
+      const duplicate = observations.find(observation => isDeepStrictEqual(observation.value, value));
+      statePaths.set(path, duplicate?.path ?? path);
+      if (!duplicate) observations.push({value, path});
+      return;
     }
-    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, visit(child)]));
+    for (const [key, child] of Object.entries(value)) collect(child, childPath(path, key));
+  }
+  collect(envelope);
+  function visit(value, path = '$') {
+    if (Array.isArray(value)) return value.map((child, index) => visit(child, `${path}[${index}]`));
+    if (!object(value)) return value;
+    if (statePaths.has(path)) {
+      const originalPath = statePaths.get(path);
+      if (originalPath !== path) return {decisionViewStateRef: originalPath, exactObservationDuplicate: true};
+      // Different observations can contain a changed sheet. Keep their sheets
+      // visible instead of assuming they repeat a single registered sheet.
+      return stateView(value, now, {preserveSheets: observations.length > 1});
+    }
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key,
+      visit(child, childPath(path, key))]));
   }
   const projected = visit(envelope);
   return states && object(projected) ? {...projected, decisionView: {kind: 'retained-response-decision-view', readerCheckedAt: now,
-    fullResponseRetained: true, compactStates: states,
-    limitation: 'Rendering only. Legal actions, safety/clock fields and uncertainty are preserved; no action is selected or sent.'}} : projected;
+    fullResponseRetained: true, compactStates: states, uniqueCompactStates: observations.length,
+    compactStateReferences: states - observations.length,
+    limitation: 'Rendering only. Exact duplicate observations use decisionViewStateRef JSON paths to the complete first rendering. Legal actions, safety/clock fields and uncertainty are preserved; no action is selected or sent.'}} : projected;
 }

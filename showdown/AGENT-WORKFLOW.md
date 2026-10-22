@@ -229,6 +229,10 @@ generation-checked claim and exact `play-next` in one input after the current
 owner coordinates the transfer. Otherwise queue claim plus `turn`, preserving a
 sent/uncertain choice. Normal lease, exact-request and reservation checks still
 apply; a failed claim or stale response never authorizes an automatic retry.
+For an unsubmitted turn, a generally ready receiver still needing its own read or
+analysis is insufficient: the current owner sends its final pair first. Drain each
+choice/replacement result before acknowledgments or status messages; protect any
+fresh turn in that result before communicating.
 Check the request produced immediately after a sent preview/replacement: it may
 need protection before handoff discussion. Count read/model/tool time from request
 arrival; the 20-second unknown cap requires an earlier first-pair target.
@@ -352,7 +356,9 @@ Use `--view decision` for live reads (or `view:'decision'` in the reader API).
 It retains complete preview sheets, current legal actions and stable identities,
 field and safety state, move-order/denial events, and error recovery. It omits
 repeated sheets outside preview and redundant older plain HP lines from the
-rendering only; the original full response remains retained by ID. Reader-age
+rendering only; the original full response remains retained by ID. Exact duplicate
+observations are rendered once with a JSON-path reference at later occurrences;
+different requests, boards, clocks, safety state or sheets remain separate. Reader-age
 attention at ten seconds, or the final five seconds of a local cutoff, means
 stage or submit promptly. It is neither a model-delivery timestamp nor evidence
 that a server deadline expired. If the shell yields early, retain and drain its
@@ -380,8 +386,9 @@ accepted or executed; inspect its actual MCP payload. Exit 2 returns
 `{id,pending:true,reason:"response-file-timeout",resend:false}`. Drain the same
 ID again to retrieve the original result. A pending result never authorizes a
 new command ID, resend, search, restart or authentication. Exit 1 is a usage or
-read error. Waits are limited to 22 seconds and must also fit the current
-observed deadline; this limit grants no additional planning time. Protect a
+read error. The reader defaults to 22 seconds; the explicit 60-second reader cap
+supports the bounded 55-second post-send observation described above. Neither
+budget grants additional planning time. Protect a
 live request with the complete legal pair before optional output/report work.
 
 On receiving a fresh board, select and stage a plausible complete legal pair

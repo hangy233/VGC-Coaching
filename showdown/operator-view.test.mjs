@@ -106,8 +106,87 @@ test('nested first-turn and rejected-action recovery states stay visible with er
   assert.equal(view.payload.result.recovery.retry, false);
   assert.equal(view.payload.result.recovery.rebind, false);
   assert.equal(view.payload.result.recovery.state.timing.requests[0].reader.commitNow, true);
-  assert.deepEqual(view.payload.result.next.state.result.actions[0].legalActions, s.actions[0].legalActions);
+  assert.deepEqual(view.payload.result.recovery.state.actions[0].legalActions, s.actions[0].legalActions);
+  assert.deepEqual(view.payload.result.next.state.result, {
+    decisionViewStateRef: '$.payload.result.recovery.state', exactObservationDuplicate: true});
   assert.equal(view.decisionView.compactStates, 2);
+  assert.equal(view.decisionView.uniqueCompactStates, 1);
+  assert.equal(view.decisionView.compactStateReferences, 1);
+});
+
+const rejectedReceipt = (first, next = structuredClone(first)) => ({
+  format: 'vgc-operator-response-v1', id: 'recovery-fixture',
+  payload: {result: {error: 'Authored request no longer matches the delivered request',
+    recovery: {outcome: 'not-sent', retry: false, rebind: false, requiresNewDecision: true, state: first},
+    next: {reason: 'action-rejected', state: next, observedAt: 2200},
+    timing: {inputReceivedAt: 2000, modelDeliveredAt: null, stageDispatchedAt: 2000, stageSettledAt: 2200}},
+  elapsedMs: 200, searchesAttempted: 1, maxSearches: 6},
+  timing: {inputReceivedAt: 1990, mcpDispatchedAt: 2000, mcpSettledAt: 2200, boardCapturedAt: 2100, preparedAt: 2201},
+});
+
+test('actual rejected-response shape renders a complete observation once and retains every receipt and recovery field', () => {
+  const s = state({connected: true, authenticated: true, stopped: false,
+    timerPolicy: {unknownClockMs: 20000}, autoReady: true, savingReplays: false,
+    awaitingSet: false, searchPending: false, switchingTeam: false});
+  s.boards[0].uncertainty = ['Opponent investments unknown'];
+  s.boards[0].warnings = ['Current request may have advanced'];
+  s.boards[0].recentEvents.lines = ['|move|p1a: Foe|Psychic Noise|p2a: Ally', '|-start|p2a: Ally|move: Heal Block'];
+  const source = rejectedReceipt(s), original = structuredClone(source);
+  const view = projectDecisionView(source, {now: 17000});
+  assert.deepEqual(source, original);
+  assert.deepEqual(view.payload.result.next, {reason: 'action-rejected',
+    state: {decisionViewStateRef: '$.payload.result.recovery.state', exactObservationDuplicate: true}, observedAt: 2200});
+  const first = view.payload.result.recovery.state;
+  for (const field of ['actions', 'controller', 'controlPolicy', 'timerPolicy', 'choices']) assert.deepEqual(first[field], s[field]);
+  for (const field of ['sides', 'timer', 'clock', 'uncertainty', 'warnings', 'recentEvents']) assert.deepEqual(first.boards[0][field], s.boards[0][field]);
+  assert.deepEqual(view.payload.result.timing, source.payload.result.timing);
+  assert.deepEqual(view.timing, source.timing);
+  assert.deepEqual({...view.payload.result.recovery, state: null}, {...source.payload.result.recovery, state: null});
+  assert.equal(view.payload.result.error, source.payload.result.error);
+  assert.equal(view.payload.searchesAttempted, 1);
+  assert.equal(view.payload.maxSearches, 6);
+  assert.equal(JSON.stringify(view).split(TOKEN).length < JSON.stringify(source).split(TOKEN).length, true);
+});
+
+test('same request or revision never collapses differing clocks, safety, uncertainty, sheets or revealed boards', () => {
+  const changes = {
+    revision: s => s.revision++,
+    observation: s => s.observedAt++,
+    token: s => { s.actions[0].token = 'b'.repeat(64); },
+    request: s => s.actions[0].rqid++,
+    legal: s => { s.actions[0].legalActions.active[0].moves[0].disabled = true; },
+    hp: s => s.boards[0].sides[0].pokemon[0].hp.current--,
+    reveal: s => { s.boards[0].sides[0].pokemon[0].moves.push('wideguard'); },
+    clock: s => { s.actions[0].clock = {source: 'server', remainingMs: 7000, deadlineAt: 24000}; },
+    safety: s => { s.controlPolicy.halted = true; },
+    reservation: s => { s.actions[0].submissionStatus = 'uncertain'; s.actions[0].actionable = false; },
+    cutoff: s => s.timing.requests[0].cutoffAt++,
+    uncertainty: s => { s.boards[0].uncertainty = ['Ability unconfirmed']; },
+    sheet: s => { s.boards[0].opponentSheets.p1[0].moves.push('Throat Chop'); },
+  };
+  for (const [label, change] of Object.entries(changes)) {
+    const first = state(); first.boards[0].opponentSheets = {p1: [{species: 'Fixture', moves: ['Protect']}]};
+    const next = structuredClone(first); change(next);
+    const source = rejectedReceipt(first, next), original = structuredClone(source);
+    const view = projectDecisionView(source, {now: 17000});
+    assert.deepEqual(source, original, label);
+    assert.equal(view.decisionView.uniqueCompactStates, 2, label);
+    assert.equal(view.decisionView.compactStateReferences, 0, label);
+    for (const [rendered, raw] of [[view.payload.result.recovery.state, first], [view.payload.result.next.state, next]]) {
+      for (const field of ['sessionId', 'revision', 'observedAt', 'actions', 'controller', 'controlPolicy', 'boards', 'choices']) {
+        assert.deepEqual(rendered[field], raw[field], `${label}: ${field}`);
+      }
+      assert.equal(rendered.decisionViewStateRef, undefined, label);
+    }
+  }
+});
+
+test('duplicate references use unambiguous array and quoted-key JSON paths and point to the first complete rendering', () => {
+  const source = {'nested.key': [state(), {later: state()}]};
+  const view = projectDecisionView(source, {now: 17000});
+  assert.equal(view['nested.key'][0].actions[0].token, TOKEN);
+  assert.deepEqual(view['nested.key'][1].later, {
+    decisionViewStateRef: '$["nested.key"][0]', exactObservationDuplicate: true});
 });
 
 test('pending and unrelated outputs retain their existing shape', () => {

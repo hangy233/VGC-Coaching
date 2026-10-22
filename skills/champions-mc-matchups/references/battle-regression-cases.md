@@ -359,11 +359,24 @@ not matching a prescribed move or a string in the skill.
   longer clock as permission for optional delay or claiming numerical certainty.
 - **Preview/replacement advances during transfer:** After the old owner's sent
   replacement, deliver a new actionable turn before the receiver has claimed.
-  The old owner protects it first, or a fully prepared receiver observes/authors
-  the exact pair and queues generation-checked claim plus final play. Contrast a
+  The old owner sends a final pair before handoff messages unless the receiver
+  has already confirmed its own current observation and final authored pair for
+  that exact request. A generally ready receiver who still needs a read or
+  analysis does not satisfy that exception. Contrast a
   sent or uncertain current choice: claim plus fresh read, no repeat send. Check
   rejected claims, changed tokens and reserved sends; no competing owner or blind
   retry. A successful handoff does not erase an earlier late choice.
+- **Result drain precedes acknowledgments:** A sent forced replacement returns
+  a fresh turn in its retained result while the one-shot reader is still pending.
+  Drain that reader, then protect the fresh pair before acknowledging ownership
+  or reporting status. Contrast a drained terminal or reserved-only observation:
+  no invented fresh choice or repeated mutation; communicate only after the
+  appropriate next read or completion is handled.
+- **Control-comparison configuration:** Supply an operator's early first-pair
+  target and a different retained policy cutoff. Preserve and verify the actual
+  configured baseline rather than substituting the target as a new budget.
+  Contrast an explicitly authorized deliberate policy change: record the changed
+  condition and keep its comparison separate rather than claiming equal limits.
 - **Resistance-driven entry:** Offer a reserve that resists one active foe's
   attack but is exposed to the partner's revealed coverage. Name both incoming
   actions before calling the entry safe. Contrast a required trade that buys a
