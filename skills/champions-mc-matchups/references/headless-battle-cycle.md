@@ -495,6 +495,12 @@ games, then derives official results, report filters, retained evidence and skil
 hashes. Unknown child coverage or a missing expected game blocks completion;
 the rows already present cannot prove that no game is missing. It verifies
 content delivery, not the quality of agent judgment.
+Keep the submitted checkpoint concise: supply every required structured field
+and child evidence reference, with short validation summaries pointing to the
+full private owned audits. Do not paste entire traces or cross-set reports into
+one terminal input. If an oversized input is rejected before dispatch, reduce
+duplication while retaining evidence and native validation; do not invent a fixed
+size limit, bypass approval with a command-file bridge, or mark an unsent save complete.
 Updates require `expectedRevision` and retain history. Use `battle_review_get`
 and `battle_review_status` to verify completion; changed games, evidence,
 annotations or adopted guidance can invalidate it. Missing replay coverage stays

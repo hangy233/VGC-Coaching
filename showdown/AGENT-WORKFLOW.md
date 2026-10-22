@@ -813,6 +813,10 @@ notes. Supply `teamId`, canonical `parentId`, the current matchup `readReceipt`,
 and `validation`. The save derives official outcomes, exact children and evidence
 revision from stored data; `expectedChildIds` can assert the expected coverage.
 Use `calculationIds` for retained actual MCP receipts supporting numerical review.
+Keep terminal review input compact: retain required structured child evidence and
+short validation summaries, referencing full private owned audits instead of
+pasting them. An oversized pre-dispatch rejection is no native save; remove
+duplication, preserve native checks, and verify the actual completed save.
 Decision entries separate known facts, opposing reads, selected/accepted/executed
 actions and partner progress, plus an alternative or explicit limitation.
 A reusable lesson needs evidence and a counterexample/applicability limit; an
