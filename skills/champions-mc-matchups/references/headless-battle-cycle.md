@@ -183,7 +183,15 @@ authored replacement. If the complete pair is already final, use `play-next`
 directly to stage and send in one dispatch; separate staging is for a real
 remaining comparison, not an extra model/tool pause before every submission.
 Before a separate stage, name the unresolved material check that could change
-the pair and leave time to commit it. Near the early-commit target, prefer the
+the pair, prepare a complete pair for each decision-changing result, and leave
+time to commit it. Stage a pair whose execution remains useful if research or
+delivery is interrupted; do not rely on a later revision to rescue an unchecked
+survival assumption. If those result branches are not already clear within the
+first-pair target, send the useful final pair and defer the check rather than
+delaying protection to prepare them. After the result, immediately commit the stored pair or
+send its prepared revision. Do not reopen branch ranking or add another check.
+Refresh a changed request or preserve a reserved/uncertain send instead of
+applying those branches blindly. Near the early-commit target, prefer the
 final useful pair to a new comparison cycle. When the SDK guard refuses optional
 research for lack of buffer, immediately commit the stored current pair or
 preserve an already reserved send; do not begin another round of reasoning.

@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-22.39**. Read the bundled
+Cycle revision: **2026-10-22.40**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -181,6 +181,8 @@ protect the next game's selection.
   the intended move. A selectable move is not necessarily an effective action.
   Before switching for a resistance or field ability, name both opponents' plausible
   incoming attacks and whether the entrant must survive them to deliver the plan.
+  Use the entrant's current form on entry: a held Mega Stone does not grant the
+  Mega form's typing before that evolution has occurred.
   Include pending attacks after a forced entry; immunity to one move does not make
   the destination safe from its partner. A necessary or purposeful trade remains
   available, but do not describe an unchecked combined-pressure entry as safe.
@@ -221,7 +223,11 @@ protect the next game's selection.
   the switch-in, or limited partner progress; state its payoff and main failure.
 - **Order the damage:** State the required attack order and chip threshold when
   they matter. Check Protect, misses, redirection, and the first attacker fainting;
-  do not count a second hit without a route to deliver it. Include speed-control
+  do not count a second hit without a route to deliver it. If the plan needs a foe
+  removed before it retaliates, name that gating removal and the branch where it
+  survives before crediting support, drain healing or a field change as protection.
+  An unverified removal can remain a necessary gamble; it is not a checked safe
+  route. Include speed-control
   expiration and the next board, not just this turn's damage total.
   Before setting or reversing speed control, name its beneficiaries among the
   actual active Pokemon and reserves, and the route through expiration. If a
@@ -246,7 +252,13 @@ protect the next game's selection.
   the loaded client supports the enabled deadline policy. Hold the exclusive
   controller lease; a handoff requires an explicit generation-checked takeover.
   Name the specific material question before using a separate staging step;
-  vague further comparison does not justify delaying a final pair.
+  prepare the complete pair for each decision-changing result before that check.
+  If preparing those branches would delay first protection, send the useful final
+  pair and defer the check.
+  After its result, immediately commit or send the prepared revision, without
+  restarting branch ranking. Vague further comparison does not justify delaying
+  a final pair. If already late, send the useful final pair rather than start a
+  new comparison; never use an unavailable benchmark as permission for arithmetic.
   With the maintained SDK operator, use `stage-next` before extended comparison,
   then `commit-next` for that stored pair or `play-next` for an authored revision.
   When the complete pair is already final, use `play-next` directly: it stages

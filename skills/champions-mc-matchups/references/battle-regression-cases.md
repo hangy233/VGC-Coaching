@@ -335,7 +335,14 @@ not matching a prescribed move or a string in the skill.
 - **Final pair versus bounded comparison:** Give a useful legal pair with no
   unresolved decision-changing fact at request age 19 seconds: send it in one
   dispatch. Contrast an early pair with one specific essential calculator question:
-  stage before that bounded MCP check and commit or revise within the buffer.
+  prepare both complete result-dependent pairs, stage a useful interrupted-research
+  pair, then run that bounded MCP check and immediately commit or send its prepared
+  revision. A fast calculator reply does not justify a fresh comparison cycle.
+  If preparing those branches would delay first protection, send the useful final
+  pair and defer the check instead.
+  Contrast a changed token or existing reservation: refresh or preserve it rather
+  than apply the prewritten pair blindly. An already-late pair does not begin
+  optional research merely because its transport call is expected to be fast.
   If the guard refuses research, commit immediately; if the watchdog already sent,
   preserve its reservation. Neither branch permits a duplicate or direct calculator.
 - **Prepared controls and long-set context:** Give an unready custom reader before
@@ -347,7 +354,9 @@ not matching a prescribed move or a string in the skill.
   A short set need not hand off merely to demonstrate the procedure.
 - **Healing a remaining answer into revealed coverage:** Give a sole answer that
   can recover on an attack but is exposed to the other opponent's revealed coverage
-  without its required field. Compare protection plus useful partner progress or
+  without its required field. If survival relies on removing that foe first,
+  identify the gating removal and its surviving-foe branch; do not credit healing
+  or support alone as protection. Compare protection plus useful partner progress or
   a covered field transition, without inventing numerical survival. Contrast a
   trade that removes the last obstacle before residual damage knocks the answer
   out: permit the trade when the remaining route supports it.
@@ -388,7 +397,10 @@ not matching a prescribed move or a string in the skill.
   pause remains a risk even when observation continuity is repaired.
 - **Resistance-driven entry:** Offer a reserve that resists one active foe's
   attack but is exposed to the partner's revealed coverage. Name both incoming
-  actions before calling the entry safe. Contrast a required trade that buys a
+  actions before calling the entry safe. Add an unevolved stone holder whose
+  Mega typing would resist the hit: use its current base form on entry instead.
+  Contrast an already evolved reserve, using its actual evolved typing rather
+  than imposing a blanket base-form assumption. Contrast a required trade that buys a
   verified winning entry for its partner; permit it without inventing survival.
 - **Sent-only return before the next request:** Finish a successful pair, return
   its reserved board at the old 20-second boundary, and deliver the next request

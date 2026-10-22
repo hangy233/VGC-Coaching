@@ -45,6 +45,8 @@ it; this is not an additional live research or reporting step:
 - **Entry:** Before proposing our switch, establish the current trap holder,
   form/ability, reserve and escape eligibility. Then check both opponents'
   plausible actions and their combined pressure into the incoming Pokemon.
+  Use its current form on entry; a stone holder that has not evolved enters in
+  its base form. An already evolved reserve keeps its actual form.
   An uncertain request flag does not establish that the switch can execute.
   Covering one hit does not establish a usable entry. An absent trapper or an
   actually legal escape changes that branch; do not impose a blanket pivot ban.
@@ -53,6 +55,10 @@ it; this is not an additional live research or reporting step:
   the surviving pair and next useful attack. A switching reserve cannot attack
   on its entry turn, and an applied support effect does not deliver its partner's
   attack if that partner faints first.
+  If removal must precede retaliation, make that removal the gating assumption:
+  compare the surviving-foe branch before treating drain healing, support or a
+  field change as protection. A useful trade that removes the obstacle and leaves
+  a finish remains available; an unverified removal is a gamble, not safe delivery.
   When a conditional attack is paired with support or Protect, check its actual
   eligibility against the leading defense/withdrawal branch and what the other
   foe gains. Retain a necessary finishing gamble with its failure branch; do not

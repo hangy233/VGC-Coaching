@@ -233,6 +233,13 @@ For an unsubmitted turn, a generally ready receiver still needing its own read o
 analysis is insufficient: the current owner sends its final pair first. Drain each
 choice/replacement result before acknowledgments or status messages; protect any
 fresh turn in that result before communicating.
+Before a separate stage and material calculator check, prepare both complete
+result-dependent pairs. Stage a useful pair that can execute if research is
+interrupted. If preparing branches would delay first protection, send the useful
+final pair and defer research. After the result immediately commit it or send the prepared revision.
+Do not restart comparison after a fast tool response. If already late, send the
+useful final pair without optional research. Changed tokens and reserved/uncertain
+sends still require fresh reconciliation rather than a blind prepared revision.
 Check the request produced immediately after a sent preview/replacement: it may
 need protection before handoff discussion. Count read/model/tool time from request
 arrival; the 20-second unknown cap requires an earlier first-pair target.
