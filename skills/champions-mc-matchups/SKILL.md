@@ -10,7 +10,7 @@ opposing team. Distinguish playing the team better from changing its composition
 
 ## Required cycle for live BO3 play
 
-Cycle revision: **2026-10-19.27**. Read the bundled
+Cycle revision: **2026-10-21.35**. Read the bundled
 [BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
 including when resuming another agent's session. Before each new search, verify
 the active installed skill matches this repository's complete skill folder and
@@ -40,6 +40,24 @@ Find recurring obstacles and successful forcing sequences across its sets and
 comparable history; develop concrete answers and carry them into the next
 authorized batch. Check actual application when opportunities recur, rather
 than treating written guidance or a winning score as proof of improvement.
+Store roster-specific matchup plans in that team's reports or checkpoints, not
+in this shared skill. Between batches, update shared guidance with supported
+transferable lessons. Repeated failure to apply an existing rule requires
+improving its trigger, ordering or compact decision check; "already covered"
+alone is insufficient. Amend the existing rule rather than adding a duplicate.
+Validate the changed behavior and a counterexample, sync the complete folder,
+and read the updated guidance before the next authorized batch. Record the
+source changes and adoption in the final checkpoint. If no supported improvement
+is available, retain a specific evidence-based no-change reason; per-set
+no-change reviews alone do not complete this batch checkpoint.
+
+After every batch, also complete the
+[control repair checkpoint](references/headless-battle-cycle.md#repair-every-batch-control-failure).
+Investigate every observed control failure, repair its controllable causes and
+validate the correction or mitigation before the next batch. Record unresolved
+blockers and actual adoption; a skill edit or eventual win alone proves no runtime
+repair. Keep normal batch-end shutdown and verify loaded changes at the next
+normal authorized startup, without extra battles or authentication for testing.
 
 Keep the client open between BO3s within an authorized batch. At the batch's
 stopping condition, complete preservation, the final review and bounded retention,
@@ -95,6 +113,12 @@ preservation, Protect and switching should earn an attacking window or retain a
 needed answer. A play can be safe this turn yet concede the game over the next
 two. These priorities do not replace paired-response checks or MCP verification,
 and do not justify doubling every target or taking unsupported risks.
+
+Against screens supporting setup or draining recovery, read
+[break screens and recovery-backed setup](references/proactive-win-plans.md#break-screens-and-recovery-backed-setup).
+Choose whether removing the setter or the attacker opens the finish; turn healing
+denial into useful attacks or positioning, and stall only when their progress is
+contained. Reassess that objective when the board changes.
 
 Identify the opponent's likely attacking combinations, speed control, support
 that enables them, and alternate plans. Treat these as hypotheses unless revealed.
@@ -194,10 +218,19 @@ link actual MCP results; never invent a receipt or turn a prediction into a fact
 - **Adapt from evidence:** Between games, record observed response -> our
   adjustment -> their plausible counter-adjustment. Carry this into the current
   branch; one Protect or lead choice does not establish a fixed opponent habit.
-- **Keep a legal fallback:** From the fresh request, identify a complete legal
-  pair and stage it with `battle_stage_fallback` before optional research when
+- **Keep a legal fallback:** Before ranking a fresh request's alternatives,
+  identify a useful complete legal pair, resolving known recipient, eligibility
+  and entry constraints that could invalidate it. Protect that pair before
+  extended within-model comparison as well as optional tools. Stage it with
+  `battle_stage_fallback` when comparison remains and
   the loaded client supports the enabled deadline policy. Hold the exclusive
   controller lease; a handoff requires an explicit generation-checked takeover.
+  With the maintained SDK operator, use `stage-next` before extended comparison,
+  then `commit-next` for that stored pair or `play-next` for an authored revision.
+  When the complete pair is already final, use `play-next` directly: it stages
+  and sends in one dispatch. Avoid an unnecessary separate staging/commit gap.
+  Its current-request research guard and decision reader support this sequence;
+  they cannot supply a tactical choice during a model pause before first staging.
   Follow the cycle's early-commit procedure and inspect `battle_turn_status`;
   immediately after preview, extract the current board and legal request in
   compact form and stage/send the pair before optional watch-URL messages,

@@ -124,6 +124,21 @@ the next normal client start. `awaitingSet`, `searchPending`, `savingReplays` an
 `switchingTeam` remain explicit pending work even if the server briefly reports
 no active games. Never restart or authenticate solely to test a new operation.
 
+`battle_status.transport` and `battle_turn_status.transport` expose incoming
+frame counts/timestamps and outgoing **attempt** counts/timestamps/action names.
+An open socket or a recent outgoing attempt does not prove server acceptance.
+Post-login global errors and popups appear as bounded, sanitized
+`battle_status.notices`; sensitive text is suppressed. Inspect these notices
+when a search has no confirmed queue or battle, rather than repeatedly retrying.
+
+The client recognizes only exact global maintenance refusals against a pending
+search, with known server-idle state and no active game/request. It records a
+context-bound `search-rejected` notice and clears that pending reservation once.
+The server supplies no per-attempt ID. Unknown messages retain their reservation;
+neither this transition nor a maintenance popup grants a retry, refunds an
+attempt, changes the authorized limit, or establishes a BO3 result. Wait for
+server availability and reconcile remaining user authorization before resuming.
+
 `--manual-ready` disables the default prompt-driven readiness inside this BO3.
 The bridge never queues a later set automatically. It uses a Windows named pipe
 or Unix domain socket. The ignored `cache/showdown-session.json` contains only a
@@ -137,6 +152,118 @@ terminal, fails without retry/fallback, and does not grant any battle allowance.
 The helper consumes the password directly; agent/MCP inputs, outputs and the
 local descriptor contain no saved Showdown secret. See the
 [saved-login setup](README.md#optional-windows-saved-login).
+
+### Maintained SDK operator and immediate recovery
+
+Use [operator-client.mjs](operator-client.mjs) for a persistent JSON-lines MCP
+connection instead of copying a helper into `cache/`. It uses this checkout's
+`dist/index.js`; build the server before starting it. Create a private ignored
+output directory, then run:
+
+```text
+node showdown/operator-client.mjs --response cache/PRIVATE_RUN/response.json --max-searches 0
+```
+
+It starts read-only, attaches only to an already running battle session, and
+does not log in, claim control or search automatically. Use `status` and `schema`
+to inspect it. To control an already authorized session, send one JSON object
+per line in this order, replacing the identity fields with the approved values:
+
+```json
+{"id":"arm1","op":"arm","confirmed":true,"expectedSessionId":"EXISTING_SESSION_ID","expectedTeamId":"APPROVED_64_HEX_TEAM_HASH","expectedAccount":"ACCOUNT"}
+{"id":"claim1","op":"call","name":"battle_control_claim","args":{"confirmed":true,"commandId":"claim1","controllerId":"batch-operator"}}
+{"id":"board1","op":"turn"}
+```
+
+An occupied controller requires the deliberate takeover procedure below; the
+operator never takes over automatically. After reading a board, use its exact
+room, rqid, token and complete legal actions in `play-next`. For example, **only
+if both active slots currently have Protect in move slot 4**, an authored pair
+would be:
+
+```json
+{"id":"pair1","op":"play-next","room":"EXACT_OBSERVED_ROOM","rqid":9,"token":"EXACT_OBSERVED_64_HEX_TOKEN","actions":[{"type":"move","slot":4},{"type":"move","slot":4}]}
+```
+
+This is a transport example, not a default battle strategy. Choose the pair
+from the actual board and legal actions, including Mega and targets. The helper
+stages it immediately against that cached request, sends the ordinary choice,
+then waits for a compact new board within one absolute transport budget (at most
+20 seconds). The server's read-only wait leaves 100 milliseconds inside that
+same budget for the response to return; it does not extend the SDK or absolute
+deadline. Socket-control calls retain a five-second default. Post-set replay,
+metrics, review and retention calls have a separate 30-second SDK budget. A
+timeout of those writes explicitly requires reconciliation and never retries
+the mutation automatically. Longer post-set budgets do not extend live control
+or the server's turn clock. The helper does not
+spend another full budget at each step, infer acceptance from a returned send,
+or resend after an unknown outcome. After a confirmed successful stage, a later
+timeout leaves that pair available to the watchdog while its request and control
+ownership remain valid. A timeout of the stage call itself leaves staging unknown
+and retains the command reservation. `wait` is read-only; `close` closes the MCP
+connection, not the battle client. Only an explicit `battle_stop` closes the
+battle client.
+
+When a turn needs further comparison, protect the first plausible complete pair
+with `stage-next`, which returns after staging without an ordinary move send:
+
+```json
+{"id":"plan1","op":"stage-next","room":"EXACT_OBSERVED_ROOM","rqid":9,"token":"EXACT_OBSERVED_64_HEX_TOKEN","actions":[{"type":"move","slot":4},{"type":"move","slot":4}]}
+{"id":"commit1","op":"commit-next","room":"EXACT_OBSERVED_ROOM","rqid":9,"token":"EXACT_OBSERVED_64_HEX_TOKEN"}
+```
+
+Those example slots still require the actual legal Protect pair. After a
+confirmed stage, numerical comparison uses actual MCP calculators; `commit-next`
+submits the stored authored pair, or `play-next` supplies a changed complete pair.
+Neither operation rebinds a stale request or resends a reserved choice. An
+uncertain stage requires reconciliation before another staging or send attempt.
+
+For the control owner, the operator re-reads the current request before optional
+research, notes or schemas. It returns an unprotected board instead of doing that
+work until the exact request has an agent fallback or a reserved submission.
+Reports, full skill reads and reviews stay between sets, including while a live
+fallback exists. Live optional reads are capped at five seconds, tightened by
+the remaining local cutoff buffer; near that cutoff the operator requests a
+commit instead. Read-only auditors can work independently. These guards cannot
+supply a tactical pair while the model is suspended before its first call;
+authorized emergency defaults still retain operational-failure provenance.
+
+On a rejected stage or choice, current clients include `recovery.state` in the
+same MCP response. Read it immediately: it may already contain a forced
+replacement. Author a **new** choice for that request; never apply the rejected
+pair to the new token. A legacy error without recovery data gets at most one
+compact read within the original budget. A bare legacy error cannot establish
+that a write was not sent. Missing acknowledgments, transport errors and timeouts
+retain uncertainty and prohibit an automatic retry. New clients advertise
+`compactTurnWait`, `actionFailureRecovery` and `requestTiming` in
+`battle_capabilities`; source edits take effect on the next normal client start.
+
+The response preserves request age, missing-first-choice status, observed clocks
+and local planning/cutoff times. These are separate from model delivery and from
+the server's actual countdown. Stage a complete pair before optional research;
+the transport cannot protect a turn while the agent has supplied no actions.
+Use actual MCP damage and Speed tools for numerical comparisons. Do not let a
+long comparison postpone a forced replacement or the first staged pair.
+
+Searches require an explicit `start-next` with `confirmed:true`, an existing
+controller lease, a fresh matching idle session, and a positive `--max-searches`
+limit. That limit must stay within the user's remaining authorization. It defaults
+to zero and counts an attempted search even if its reply is lost. Normal skill,
+review and preflight requirements still apply before every new search. The CLI
+cannot extend the session's allowance or change its team. Generic calls are
+restricted to maintained analysis, review and control tools; actions and searches
+use their dedicated operations. Leases and skill receipts remain in memory and
+are stripped from output.
+
+Run these offline recovery and SDK checks as one command:
+
+```text
+node --test showdown/action-next.test.mjs showdown/action-recovery.test.mjs showdown/operator-client.test.mjs showdown/operator-sdk.test.mjs
+```
+
+Those fixtures use no battle connection or credentials. Scripted playback
+verifies transport behavior, not tactical quality or the time a model will spend
+deliberating during a live turn.
 
 ### Reliable output from an SDK operator
 
@@ -182,7 +309,7 @@ arguments or credential input. The resulting envelope has
 Read that file with a fresh one-shot process through plain pipes:
 
 ```text
-node showdown/operator-response.mjs --wait cache/PRIVATE_RUN/response.json --id UNIQUE_RESPONSE_ID --timeout-ms 22000
+node showdown/operator-response.mjs --wait cache/PRIVATE_RUN/response.json --id UNIQUE_RESPONSE_ID --timeout-ms 22000 --view decision
 ```
 
 For `exec_command`, use `tty:false` and `yield_time_ms:30000`. The process emits
@@ -196,10 +323,26 @@ files and cannot send any command. Import `readResponse({file,id})` for a single
 read, or `awaitResponse({file,id,timeoutMs,intervalMs})` for the same bounded wait
 inside another process.
 
+Use `--view decision` for live reads (or `view:'decision'` in the reader API).
+It retains complete preview sheets, current legal actions and stable identities,
+field and safety state, move-order/denial events, and error recovery. It omits
+repeated sheets outside preview and redundant older plain HP lines from the
+rendering only; the original full response remains retained by ID. Reader-age
+attention at ten seconds, or the final five seconds of a local cutoff, means
+stage or submit promptly. It is neither a model-delivery timestamp nor evidence
+that a server deadline expired. If the shell yields early, retain and drain its
+actual process session; do not project away the session ID or repeat a mutation.
+
 A board's capture timestamp does not establish when the agent received it.
 Measure elapsed time from actual MCP dispatch until delivery of the matching
 output, including tool transport delays. The library's `elapsedMs` measures only
-its file wait. In the observed Windows tool transport, a persistent PTY can hold
+its file wait. Optional envelope timing records numeric `inputReceivedAt`,
+`mcpDispatchedAt`, `mcpSettledAt`, `boardCapturedAt` and `preparedAt`. `preparedAt`
+precedes the disk writes. Publisher return values separately expose
+`idAvailableAt` and `publicationReturnedAt`; readers add `readerMatchedAt` and
+file/preparation ages. Re-reading the same retained ID preserves its original
+receipt. None of these timestamps proves the model has received or acted on a
+board. In the observed Windows tool transport, a persistent PTY can hold
 output until its fixed yield budget, and an empty `write_stdin` poll waits at
 least five seconds. Those delays can consume the live turn's clock. A fresh
 plain-pipe reader returns on process exit, avoiding that persistent-output wait;
@@ -256,6 +399,24 @@ the fallback and does not close or forfeit a set. It does not disable an already
 enabled stuck policy. A lease is not additional battle or publication permission.
 
 ### User-requested timer activation
+
+For a batch with existing timer authorization, prefer the loaded client's
+`ownedBattleTimerPolicy` feature. Enable `battle_set_timer_policy` while idle with
+the current lease, `confirmed:true`, a unique command ID and `enabled:true`, or
+use the explicit `--battle-timer` flag on the next normally authorized client
+startup. Both default off. The policy sends each owned preview, move or forced
+replacement first, then requests that child's timer synchronously before another
+network request can overtake it. Already authorized watchdog sends use the same
+hook; it grants no new move or default authorization. Existing, uncertain and
+server-active timer requests are not repeated across turns, room aliases or
+controller handoffs. A newer unprotected request takes priority if a reentrant
+send callback advanced state; inspect `timerPolicy.lastDeferred`. Timer failure
+does not change a successful choice into a failed move. Disabling the policy
+stops future automatic requests and does not switch an active timer off.
+
+Inspect `timerPolicy` and each child's actual timer request/server observation.
+A timer request alone supplies no numerical countdown. Older loaded clients
+retain the manual once-per-child procedure below until their next normal start.
 
 When the user asks to enable the timer, first check the actually loaded
 `set-timer` operation and `ownedBattleTimer` feature. Use fresh state to identify
@@ -640,6 +801,11 @@ Cleanup is limited to eligible `.jsonl`, `.log` and temporary files under
 decision journal and open-sheet evidence must be covered by the retained canonical
 archive, not merely refer to the same room. Registered
 shared sources remain protected; cleaning them needs a separate all-set audit.
+Keep additional compact team review JSON directly in that canonical parent
+folder, with truthful top-level `teamId` and `parentId`. Whole-team deletion
+recognizes those direct files; it does not traverse nested artifact folders or
+arbitrary cache directories. Finalization's `sourceFiles` and `cleanupFiles` do
+not register ownership for otherwise unmanaged artifacts.
 For new closed per-set imports intended for cleanup, use `remember: false` or the
 direct recorder. Bulk logs remain protected if a replay failed, a review is
 missing, a room lacks durable evidence, or a writer is still active.
@@ -670,7 +836,25 @@ cross-set findings and next-batch tests in the final BO3 checkpoint's existing
 decision references. Read those plans before the next authorized batch and
 check eligible opportunities, actual application and conversion in its reviews.
 No encounter means untested, and a passing service check is not proof of tactical
-adoption. This adds no runtime search guard or battle allowance.
+adoption. At that batch boundary, also update shared guidance with supported
+transferable lessons. When an existing rule was repeatedly missed, sharpen its
+trigger, ordering or compact decision check; private corrections and "already
+covered" alone do not complete the batch checkpoint. Record source paths and
+behavioral validation, sync the complete changed skill and read it before the
+next authorized batch. A genuine specific no-change reason remains valid when
+no supported improvement is available. Follow the portable cycle's
+[shared-guidance checkpoint](../skills/champions-mc-matchups/references/headless-battle-cycle.md#update-shared-guidance-before-the-next-batch).
+This adds no runtime search guard or battle allowance.
+
+After every batch, also follow the portable cycle's
+[control repair checkpoint](../skills/champions-mc-matchups/references/headless-battle-cycle.md#repair-every-batch-control-failure).
+Investigate every observed control failure, implement and validate the relevant
+runtime or operator correction, and record repaired/mitigated/unresolved causes
+and actual loaded adoption in the final checkpoint's `validation`. A skill edit
+alone does not repair a runtime bug. Unresolved control risks block another batch
+until repaired or covered by a validated mitigation. Keep normal batch-end
+shutdown; perform offline repairs afterward when needed and verify loaded changes
+at the next normal authorized startup, without extra battles or login for testing.
 
 See [matchup skill](../skills/champions-mc-matchups/SKILL.md),
 [teambuilding skill](../skills/champions-mc-teambuilding/SKILL.md), and

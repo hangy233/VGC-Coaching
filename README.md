@@ -185,6 +185,8 @@ The terminal streams readable events and prints watch URLs for the set and each 
 
 Agents can explicitly enable the current owned game's timer with [`battle_set_timer`](showdown/README.md#enable-the-current-battle-timer). The tool preserves move choices and reports the send separately from subsequent server timer observations; check the loaded client's capabilities before using it.
 
+For an authorized batch, `battle_set_timer_policy` or the explicit `--battle-timer` startup flag requests each child's timer immediately after its first sent choice. The policy defaults off and preserves existing or uncertain timer reservations. The maintained operator also supports stage-only planning, blocks optional research until the current request is protected, and uses separate short live-control and longer post-set timeouts. See the [agent workflow](showdown/AGENT-WORKFLOW.md#maintained-sdk-operator-and-immediate-recovery).
+
 After **every BO3**, including the final one, the agent must:
 
 1. Verify the official parent result and all expected child games.

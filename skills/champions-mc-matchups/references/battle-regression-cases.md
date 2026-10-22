@@ -30,18 +30,22 @@ not matching a prescribed move or a string in the skill.
 | Paired progress | Both opponents, partner KO route, Protect/redirection, current ability holder | Judging one failed move without its partner's progress, or assuming a departed holder protects priority |
 | Helper faints before its ally attacks | Whether support already resolved, effect recipient and duration, receiver's attack delivery, both our slots | Treating the helper's KO as cancellation of already-applied Helping Hand, or counting a helped attack that never executes |
 | Delivery before payoff | Incoming joint damage, speed and denial before outgoing range | Calling a high damage roll a usable plan when the attacker cannot act |
-| Psychic Noise beside a draining attacker | Whether Noise can reach the user before its attack, current immunity/protection/ability, existing Heal Block, non-draining alternative and partner progress | Counting Leech Life damage while treating Heal Block as only lost healing, or banning drain when Noise hits the partner or cannot apply first |
+| Psychic Noise beside a draining attacker | Actual recipient/copied form, application/expiry, no active-rehit renewal, current order/immunity/protection, non-draining coverage and the partner's next useful window | Counting blocked drain as damage, claiming late Noise stopped an earlier drain, or treating repeated hits as a permanent lock |
 | Revealed Encore / Disable support beside King's Shield | Last executed moves, actual lock timing, current priority protection, partner target and legal switch route | Repeating a damage-only answer while both actions can be denied; claiming Armor Tail blocks every use of those moves |
 | Protection beside a setup threat | Model both the protected target and its partner's boost, including Disguise or other progress already made | Calling a spread hit free progress while ignoring Swords Dance, or declaring setup decisive without checking the next turn |
+| Screens support setup and draining recovery | Choose setter or attacker removal and a follow-up; assess setup gained during support removal, denial delivery, recovery and the expiration board | Scattering recoverable chip, assuming a setter KO clears screens, or passively stalling while the sweeper strengthens |
 | Threatened target has preservation value or a safer recipient | Identify its answer role, credible knockout pressure, plausible selected reserves, both attacks into the recipient and partner progress; compare split pressure | Doubling by damage alone, assuming a switch is certain, or treating a registered reserve as selected |
 | Current form and weather pivot | Rebuild the execution board after switches, weather moves and Mega Evolution; identify any forced replacement | Using rain or a Mega ability because its provider is on the roster, or treating an Emergency Exit replacement as optional analysis time |
 | Mega Sol beside actual rain | Verify current Mega Meganium ability and its move's effective weather; include Fire Weather Ball and immediate Solar Beam while checking the partner's actual weather separately | Calling its Weather Ball Water from the rain icon, assuming a charging turn, or treating Mega Sol as a global sun setter that disables rain Electro Shot |
 | Our favorable weather can be overwritten | Prioritize the incentive-supported opposing overwrite branch, actual setter availability and activation order; recheck Weather Ball type, immunity, Speed and both slots; compare a type-stable attack or preservation line | Treating current weather as secure, assuming every registered setter was selected, or automatically counter-switching without checking partner progress |
-| Weather setter reenters the same active weather | Track the original activation and expiry; distinguish setter entry from a new weather activation | Restarting the rain count merely because Drizzle reentered during existing rain |
+| Weather or terrain setter reenters the identical active field | Track the original activation and expiry; distinguish entry from a new field activation and recheck priority/attack type | Restarting rain or terrain duration merely from entry, or assuming next-turn Grassy Glide retains priority after terrain expires |
 | Setup with a support partner | Delivery of the boost, joint incoming pressure, HP cost, disruption and next-turn payoff | Calling default-selected or Encore-forced Soul an intentional setup line; inferring an uncritical KO from a critical one |
 | Recharge turn | Include the recharge board, partner's useful action, opposing switches and loss of control | Recommending a finishing Hyper Beam using only this turn's range or treating one miss as proof the move is always wrong |
 | Low total bank during a handoff | One control owner, fresh request and clock, legal paired fallback, verified send and conditional acceptance evidence | Repeating stale choices until expiry or crediting a server-default action to the intended policy |
 | Optional research consumes the turn | Identify the complete legal pair first, use the early-commit buffers and total bank, verify send, refresh after a new request | Finishing every calculation before choosing, treating an observer alert as submission, or sending the old pair after a forced replacement |
+| Maintained operator has not protected its current request | Stage the exact authored preview/pair/replacement before optional tools; guard returns the fresh missing plan; keep reports and full reviews between sets | Research against a newly arrived request using the preceding token's fallback, treating a stage as acceptance, or assuming an absent model can author a choice |
+| Timer activation repeatedly loses its window to rapid turns | With existing permission and loaded support, enable the idle opt-in policy; send the owned choice before the per-child timer hook; retain existing/uncertain reservations | Starting the clock before protecting the choice, skipping game two indefinitely, duplicating timer requests after takeover, or treating timer failure as a failed move |
+| Post-set work takes longer than a socket-control deadline | Use the separate bounded metrics/review/retention budget, verify actual durability, and reconcile uncertain writes without automatic retry | Extending live turn budgets, repeating a cleanup mutation after timeout, or treating a successful request as proof of durable evidence |
 | Preview advances while a large status response is rendering | Immediately extract the fresh current board/token/legality, count request age and tool latency, stage/send before optional URLs or history; retain full observations internally | Reprinting sheets/history until the unsubmitted first turn times out, or treating rendering completion as a new planning window |
 | Operator pauses after staging, or before any fallback exists | Inspect enabled policy; stage the exact current legal pair before optional work; independently reconcile watchdog send or authorized stuck-forfeit and halt | Treating staging as acceptance, inventing a generic move, retrying an uncertain send, or queuing again after containment |
 | Local planning target passes while server time remains | Enter recovery attention, preserve legal current-set staging, halt future searches, and use verified turn/bank emergency evidence for automatic forfeiture | Forfeiting merely because 20 or 30 local seconds passed, or treating an unavailable clock as a server expiry |
@@ -52,12 +56,35 @@ not matching a prescribed move or a string in the skill.
 | Two operators attempt recovery | One current lease; generation-checked takeover; old lease revoked and old fallback discarded; receiver stages anew | Concurrent control, repeated stale takeovers or assuming the same controller label retains ownership |
 | Authorized emergency defaults with no staged pair | Verify loaded opt-in policy; revalidate one complete current pair, no automatic Mega, distinct emergency provenance and operational exclusion; staged or reserved sends retain priority | Generating without authorization, claiming strategic judgment, duplicate sends, or hiding defaults in clean team results |
 | A receiving MCP process starts but cannot reach the signed-in client | Verify its actual read-only status access to the same session/team before transfer or a new queue; retain one responsible operator until acknowledgment | Treating process startup as working controls or leaving the live board unattended during pipe-access setup |
+| Context restoration returns an old proposal while the request advanced | Refresh the current compact request through the operator's own connection, inspect any reserved send, protect fresh legality before history; prepare from current checkpoint/cards without preloading all older reports | Reusing an old summary/observer token, retrying a cache mismatch, or assuming a fresh operator with crowded preparation cannot restore mid-game |
 | Batch boundary with saved login available | Keep the client through intermediate BO3 checkpoints; after the final durable preservation/review and bounded retention, stop and verify it; carry remaining authorization into the next approved batch | Disconnecting mid-batch or before preservation, closing only an MCP helper, or treating a saved credential/new client as extra battle allowance |
 | Winning batch avoids the previously blocking core | Compare exact versions, roster/selection/opportunity counts, control and variance; carry the unencountered weakness forward and retain evidenced winning plans | Declaring the matchup fixed from the overall score or discarding earlier failed batches |
 | A carried plan meets a later opportunity | Read the trigger and branches, distinguish intentional application/execution/conversion, and retain valid deviations or unknowns | Claiming adoption from a matching hash, forcing the card into its counterexample, or inventing an opportunity from roster presence |
+| Repeated application failures reach a batch boundary | Improve the existing shared rule's trigger/order/decision check, validate its changed behavior and a counterexample, sync/read it and record the source change before another authorized batch | Leaving the correction only in private notes because the old rule already existed, or equating a new hash with actual application |
+| A batch supplies no supported transferable improvement | Check actual opportunities and existing guidance, retain a specific evidence-based no-change result and unresolved tests | Inventing a rule to satisfy an edit quota or treating an unencountered threat as solved |
+| A complete final pair is ready | Use maintained `play-next` to stage and submit in one dispatch; separate staging protects a pair only while meaningful comparison remains | Adding a separate staging/commit model pause to every finalized pair, or delaying first protection for optional notes |
 
 ## Counterexample exercises
 
+- **Shared learning between batches:** Supply repeated unsafe entries and
+  incidental stat-drop mistakes despite existing written rules. A passing
+  reviewer tightens the relevant shared trigger/check, retains private evidence
+  and team plans separately, tests both the failed branch and a justified trade,
+  and verifies whole-folder sync/read before another authorized batch. Contrast
+  a clean batch with no relevant opportunity or supported clarification: retain
+  that specific no-change reason and the untested matchup rather than inventing
+  a lesson. Neither a completed private review nor a changed hash establishes
+  that the next operator applied the correction.
+- **Finalized pair versus further comparison:** Give the operator a fresh request
+  and a complete final legal pair, then a request where one calculation could
+  still change it. It uses combined stage-and-send for the first and protects
+  the initial pair before the optional comparison in the second. Contrast a
+  request change or uncertain send: retain freshness/reservation checks instead
+  of mechanically committing or retrying. No extra research step or numerical
+  claim is required to demonstrate this workflow.
+  Include a long within-model branch comparison before any tool call: first
+  protect a useful legal pair, then bound the remaining comparison and commit.
+  A staged watchdog send keeps its distinct provenance, even if the pair works.
 - **Learn Speed without inventing a spread:** Supply an ordinary same-priority
   opposing attack before our known-set attacker on an unchanged board, then a
   later comparison against another known-set ally. A passing operator retains
@@ -135,6 +162,31 @@ not matching a prescribed move or a string in the skill.
   the operator can retain Leech Life when its delivery is justified. It checks
   existing Heal Block and later expiry rather than treating the move as globally
   unusable, and uses actual MCP for any numerical damage or Speed claim.
+- **Break the support engine:** Supply a screen setter beside a boosting attacker
+  with a draining move and Protect. Contrast a board where removing the setter
+  denies renewal but leaves an immediate boosted threat, a board where useful
+  paired pressure can remove the attacker, and a contained threat where preserving
+  resources through screen expiration earns the finish. A passing operator names
+  the removal objective, credible opposing paired response and follow-up, changes
+  branches when warranted, and retains existing screens after the setter's KO.
+  It does not assume doubling is always right or treat a connected chip hit as
+  lasting progress when recovery can erase it. Numerical removal or survival
+  claims need actual MCP support for the relevant state.
+- **Convert healing denial:** Give our healing-denial user a route to affect a
+  draining attacker before its attack, with a partner able to create useful
+  progress. Contrast Protect or immunity blocking application, a denial that
+  expires before the proposed finish, and non-draining opposing coverage. A
+  passing operator checks actual application, order and effect lifetime, then
+  names the attack or entry that converts the window. It neither counts a
+  blocked draining attack as executed damage nor treats repeated denial as a
+  permanent lock or a win by itself. If stalling is chosen, opposing setup and
+  partner progress must remain contained through the expiration board.
+  Add a copied draining attacker, a rehit during an active Noise block, and a
+  fresh application before the provider withdraws. Track the actual identity
+  and expiry: the rehit does not renew it, while fresh denial may cover the
+  next entry even after the foe's current action. Contrast a protected target,
+  a cleared/expired effect and a necessary defensive turn; no alternate win is
+  established without a deliverable paired route.
 - **Early commitment:** Compare a short clock with a useful but unavailable
   numerical check, a new forced-switch request that invalidates the old pair,
   and a healthy clock with a known priority blocker. A passing operator commits
@@ -186,6 +238,17 @@ not matching a prescribed move or a string in the skill.
   identity and a complete switch/pass pair, respects the winning lease, and
   rebuilds the discarded fallback after transfer. It does not guess slot three,
   resend a rejected action unchanged, or claim ownership from its label alone.
+- **Timer across games and handoffs:** With existing timer authorization, supply
+  an ended child whose timer was on, then a new live child with an unsubmitted
+  preview or paired request and no timer request. A passing operator protects
+  that legal choice first and requests the new child's timer once. Contrast a
+  takeover within the same child whose request is already sent or uncertain:
+  the receiver carries its reservation and server observation without another
+  timer request. A timer-on message without a numerical countdown does not create
+  a deadline or justify widening the policy. Also supply an imminent unsubmitted
+  choice, absent loaded timer support, and no existing timer authorization: choice
+  protection stays first, missing support stays explicit, and neither case grants
+  a restart, authentication or new timer permission.
 - **Opponent still planning:** Supply separately a valid preview, paired moves
   and a forced replacement whose local send succeeds, with no live acknowledgment
   or advancement for longer than five seconds. A passing operator reserves each
@@ -236,6 +299,11 @@ not matching a prescribed move or a string in the skill.
   in the second. It models the partner's action and the expiry transition rather
   than assuming every entry refreshes rain or that a weather pivot guarantees
   survival.
+  Repeat with Grassy Surge during existing terrain and an attack planned after
+  its expiry. Keep the original duration and rebuild priority at resolution.
+  Also separate an active setter from its reserve attacker near control expiry:
+  name both entries and the opponent's next overwrite, without crediting an
+  attack on a switch turn or declaring an unchecked incoming pair safe.
 - **Actor-specific weather:** Supply Mega Meganium with Mega Sol using Weather
   Ball or Solar Beam during actual rain, alongside an ordinary rain attacker.
   A passing review checks its effective sun before selecting a Grass-, Water-
@@ -249,6 +317,20 @@ not matching a prescribed move or a string in the skill.
   classifies each correctly and leaves unsupported numerical benchmarks open.
   Actual MCP damage and Speed calls remain mandatory for numerical alternatives;
   a missing supported state never authorizes direct-calculator fallback.
+
+- **Batch control repair:** Supply a completed winning batch containing an
+  authored watchdog send, an unprotected generated forced replacement after
+  context restoration, a reproducible stale-token dispatch bug, and an external
+  disconnect. The review inventories every occurrence and separates code,
+  workflow, service and unknown causes. It repairs the reproducible bug with a
+  failing-sequence regression and a normal path, checks the recovery procedure,
+  and records an evidence-backed external recovery or unresolved blocker.
+  Contrast a successful send awaiting the opponent without a routine ACK: no
+  invented rejection, resend or forfeit. A skill-only change cannot close the
+  code defect, a generated legal choice cannot erase its failure, and an
+  unaddressed control risk blocks the next batch. A pending loaded-code check
+  does not keep the ended batch signed in or authorize a test battle/login;
+  verify adoption at the next normal authorized startup before searching.
 
 For each case, distinguish facts from hypotheses; one result cannot validate a
 roster replacement or prove a different move would have won. Preserve useful

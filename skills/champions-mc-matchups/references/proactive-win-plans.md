@@ -32,6 +32,42 @@ progress. A sole remaining foe has no active partner to exploit a protected
 double; that is a different cost from ignoring an active setup threat. Keep the
 attack/sacrifice branch as well as the defensive read.
 
+### Resolve delivery before committing
+
+Use the existing forcing-pair plan to resolve the few checks that could invalidate
+it; this is not an additional live research or reporting step:
+
+- **Recipient:** After a plausible switch, pivot or redirection, who receives
+  each action? Use its actual current form and ability, including a copied form.
+  Check both actions against that recipient, including immunity,
+  move denial and relevant stat-drop triggers. A possible secondary drop is a
+  branch, not a certainty; a switch read does not establish their actual choice.
+- **Entry:** Before proposing our switch, establish the current trap holder,
+  form/ability, reserve and escape eligibility. Then check both opponents'
+  plausible actions and their combined pressure into the incoming Pokemon.
+  An uncertain request flag does not establish that the switch can execute.
+  Covering one hit does not establish a usable entry. An absent trapper or an
+  actually legal escape changes that branch; do not impose a blanket pivot ban.
+- **Payoff:** Can the required attacker act in the required order, through both
+  foes' damage or denial, while the control/denial window still applies? Name
+  the surviving pair and next useful attack. A switching reserve cannot attack
+  on its entry turn, and an applied support effect does not deliver its partner's
+  attack if that partner faints first.
+  When a conditional attack is paired with support or Protect, check its actual
+  eligibility against the leading defense/withdrawal branch and what the other
+  foe gains. Retain a necessary finishing gamble with its failure branch; do not
+  turn an uncertain removal into a guaranteed payoff.
+  If the needed field setter and closing attacker are separated, name a feasible
+  route to their shared attacking board and when renewal can resolve. A setter
+  on the roster does not protect an attacker before that renewal or after the
+  useful control window has expired.
+
+Resolve these against the current board before crediting a damage total or a
+safe entry. Reuse matching actual MCP evidence and leave unavailable numerical
+benchmarks unverified. Once the pair is final, submit promptly; optional notes
+and extra calculations must not delay its first protection. A justified double
+or intentional trade remains available when it leaves the better remaining route.
+
 ## Spend temporary advantages
 
 After gaining Room, Tailwind, favorable weather, a damaging boost, or a useful
@@ -53,6 +89,50 @@ removed Salamence while Farigiraf switched Golisopod into the closing position
 before Room expired. That observed sequence illustrates conversion and useful
 partner progress. It does not prove the earlier Politoed trade was optimal,
 establish an unseen investment, or guarantee the same removals on another board.
+
+### Break screens and recovery-backed setup
+
+Read the opposing engine together: mitigation buys setup turns, support protects
+the attacker, and draining recovery can erase scattered chip while dealing damage.
+Choose a removal objective and the paired actions that reach it, then name the
+follow-up that closes the game. Commit enough pressure to finish that objective;
+reassess after Protect, switches or new threats instead of attacking the same
+slot by habit. Do not spread recoverable damage merely because both hits connect.
+
+- **Remove the setter/support** when denying further screens, disruption or
+  positioning opens our attacker's route. Check what the opposing attacker gains
+  during that removal and our answer to its resulting boosted board. Removing
+  the setter does not clear screens already established; name the attack, screen
+  removal or contained expiration route that still delivers the finish.
+- **Remove or disable the attacker** when it is the immediate win condition and
+  its support cannot prevent a feasible removal. Check screens, Protect,
+  redirection, switches and both opposing actions before committing a double.
+  Name what our partner achieves if the target defends, and what remains after
+  the attacker is removed. A support KO is not compulsory when it leaves the
+  actual sweeper free to win.
+
+Use available disruption to create a conversion window. Healing prevention can
+stop a recovery loop; Psychic Noise's Heal Block can also make a draining attack
+unusable, as described in the [mechanics check](mc-rules-and-tools.md#psychic-noise-can-deny-a-draining-attack).
+Check the actual recipient, application and remaining lifetime against Protect,
+immunity, ability, move order and any switch. A fresh application can buy the
+partner's next attack or entry after the provider leaves, even when the foe has
+already acted this turn; it cannot prevent an already executed drain. An active
+Noise rehit does not renew its block. Use the mechanics check to distinguish
+that later conversion from same-turn prevention.
+Name the partner's useful attack or entry and the next-turn removal before the
+denial ends. Denial alone is not a finish, and non-draining coverage, further
+boosting or the other opposing slot can still threaten us. Preserve a needed
+priority blocker or other support only while it enables that conversion.
+
+Stalling screens is useful when setup, recovery and opposing partner progress
+are contained and the surviving pair can exploit expiration. Compare the board
+after those defensive turns, including screen renewal and our attacker's entry.
+Repeated Protects or pivots that give free boosts or a vulnerable drain target
+can strengthen their endgame despite spending screen turns. Prefer active
+removal or disruption there; prefer preservation when it actually earns a safer
+finish. Use only the actual team's tools, and leave unsupported screened damage
+or unknown Speed benchmarks unverified rather than inventing numerical certainty.
 
 ### Hand off from Room to a fast cleaner
 
@@ -110,7 +190,10 @@ review one created opportunity and one missed conversion when present, alongside
 the required failures and positive evidence. Ask whether our actions moved toward
 the stated finish, whether a passive turn spent control, and what the smallest
 testable improvement is. Promote a reusable lesson with a counterexample; keep
-application errors and unsupported hypotheses private. The [regression
+match-specific error records and unsupported hypotheses private. At the batch
+boundary, improve shared triggers/checks for repeated application failures under
+the cycle's [shared-guidance checkpoint](headless-battle-cycle.md#update-shared-guidance-before-the-next-batch).
+The [regression
 cases](battle-regression-cases.md) exercise both aggression and restraint.
 At each batch boundary, use the cycle's
 [pattern review](headless-battle-cycle.md#synthesize-each-completed-batch) to

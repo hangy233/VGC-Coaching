@@ -277,6 +277,23 @@ protection and relevant ability. A resisted hit can still apply the denial.
 Compare a non-draining attack or protected positioning, and
 account for the other active Pokemon's progress.
 
+Track the actual recipient, fresh application and expiry, including a transformed
+Pokemon's current form and ability rather than its registered base identity.
+A fresh Noise-created block lasts two turns, including the application turn.
+Hitting an already blocked target with Noise does not refresh that duration:
+the pinned Heal Block condition returns from a Psychic Noise restart without
+resetting it. Recheck the observed effect state after expiry, switching or a
+form/identity change; a form change alone does not establish that it cleared,
+and repeated hits alone do not establish a continuing lock.
+
+Noise delivered after a drain cannot stop that already executed attack. It can
+still buy a later window, including a partner's entry after the Noise user
+withdraws, if application succeeds, the target stays affected and the next action
+falls within the remaining duration. Compare that pre-application with necessary
+protection or removal, and check both foes' retargeting and non-draining coverage.
+Do not discard useful fresh denial merely because its target already acted,
+or count it as same-turn prevention.
+
 An observed reviewed turn had Psychic Noise apply Heal Block before a selected
 Leech Life, which was then unable to execute. Actual MCP `get_move` describes
 healing and draining moves as unusable, and the pinned `data/moves.ts` Heal Block

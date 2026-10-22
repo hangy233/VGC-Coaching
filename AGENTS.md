@@ -28,6 +28,28 @@ synthesis in the final BO3's team-owned checkpoint. Before the next authorized
 batch, read those plans; audit their actual application when opportunities recur.
 A winning score or synchronized skill alone does not prove they were applied.
 
+**Between batches, update shared guidance from supported transferable lessons.**
+When an existing rule is repeatedly missed, improve its trigger, ordering or
+compact decision check; citing "already covered" alone is insufficient. Keep
+team-specific plans private. Validate the changed behavior and a counterexample,
+sync the complete skill folder, and read the updated guidance before the next
+authorized batch. Record changed source paths, the behavioral correction and
+adoption in the final checkpoint. A genuine evidence-based no-change result is
+valid when no supported improvement is available; explain that specifically
+without inventing a lesson or duplicating a rule. Per-set no-change reviews do
+not replace this batch-level shared-guidance checkpoint.
+
+**After every batch, investigate and repair every observed control failure.**
+Include failures inside wins and recovered turns. Follow the cycle's control
+repair checkpoint: identify causes from actual traces, fix the relevant runtime
+or operator workflow, validate the failure and a normal countercase, and record
+each cause as repaired, mitigated or unresolved with evidence and adoption status.
+Skill wording or a successful fallback alone is not a control repair. Unresolved
+failures that can compromise control block the next batch until repaired or
+covered by a validated mitigation. Preserve normal batch-end shutdown; verify
+loaded runtime changes at the next normal authorized startup, without extra
+battles or authentication merely to test them.
+
 Close the battle client after each user-defined batch, unless the user gives a
 newer keep-open instruction. Keep it open between BO3s within that batch. After
 the final official result and server idle, finish replay preservation, metrics,

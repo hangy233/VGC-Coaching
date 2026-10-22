@@ -108,6 +108,12 @@ Reentry after expiry did establish new rain while the partner delivered Trick
 Room, so this is not a reason to discard weather pivots. Check the actual new
 activation and opposing responses before relying on the next weather window.
 
+The same duration check applies to terrain. The pinned `sim/field.ts`
+`setTerrain` returns before reinitializing an already identical terrain.
+Reentering Grassy Surge during existing Grassy Terrain therefore does not renew
+it. Track the actual new activation or expiry before relying on Grassy Glide's
+priority; a later activation after removal or replacement is a different board.
+
 **Weight the opponent's incentive to overwrite our weather.** When our weather
 suppresses their attacks or enables our plan, an available setter or other usable
 override that reverses that advantage is a leading high-likelihood response to

@@ -270,7 +270,7 @@ test('existing session descriptor is preserved and failed setup still closes the
 
 test('saved login is explicit in CLI parsing; default and unrelated controls are unchanged',()=>{
   const defaults=parseSessionArgs(['TofuRotom','--team','approved-team.txt']);
-  assert.deepEqual(defaults,{username:'TofuRotom',teamFile:resolve('approved-team.txt'),authorizedSets:1,autoReady:true,loginMethod:'terminal',saveReplays:false});
+  assert.deepEqual(defaults,{username:'TofuRotom',teamFile:resolve('approved-team.txt'),authorizedSets:1,autoReady:true,loginMethod:'terminal',saveReplays:false,battleTimer:false});
   const saved=parseSessionArgs(['TofuRotom','--saved-login','--team','approved-team.txt','--sets','2','--manual-ready']);
   assert.deepEqual(saved,{...defaults,authorizedSets:2,autoReady:false,loginMethod:'windows-credential-manager'});
   for(const args of [

@@ -7,7 +7,7 @@ import {DeadlineSupervisor} from './deadline-supervisor.mjs';
 import {replacementOptions,legalReplacementPairs} from './choice-validation.mjs';
 import {compactTurnBoard} from './turn-board.mjs';
 import {selectEmergencyActions} from './emergency-choice.mjs';
-import {compareTimerObservations} from './client.mjs';
+import {compareTimerObservations,safeServerNotice} from './client.mjs';
 
 const {Teams,TeamValidator}=createRequire(import.meta.url)('pokemon-showdown');
 const RUNTIME_REVISION=createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
@@ -22,11 +22,11 @@ function publishedSheet(packed){
     nature:columns[index]?.[5]?set.nature:null,level:columns[index]?.[10]?set.level:null,
     gender:columns[index]?.[7]?set.gender:null,shiny:!!set.shiny}));
 }
-const EVENTS = ['request','battle-event','sheet','timer','result','ready','server-error','choice-status','action-status','forfeit-status','search-state','room-renamed','replay-url','replay-verified','replay-failed','disconnected'];
+const EVENTS = ['request','battle-event','sheet','timer','result','ready','server-error','server-notice','search-rejected','choice-status','action-status','forfeit-status','search-state','room-renamed','replay-url','replay-verified','replay-failed','disconnected'];
 
 /** One explicitly bounded local session; emergency legal defaults are opt-in. */
 export class AgentSession extends EventEmitter {
-  constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter,replayPolicy=false,replayPreservationVerifier,controllerRequired=true,controlTimers={},monotonicNow=()=>performance.now()} = {}) {
+  constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter,replayPolicy=false,replayPreservationVerifier,timerPolicy=false,controllerRequired=true,controlTimers={},monotonicNow=()=>performance.now()} = {}) {
     super();
     check(typeof username === 'string' && normalized(username), 'Username required');
     check(typeof packed === 'string' && packed.length > 10, 'Approved packed team required');
@@ -38,6 +38,8 @@ export class AgentSession extends EventEmitter {
     this.replayFetchImpl=replayFetchImpl;this.replayBudgetMs=replayBudgetMs;this.savingReplays=false;
     check(typeof replayPolicy==='boolean'&&(replayPreservationVerifier===undefined||typeof replayPreservationVerifier==='function'),'Invalid replay preservation policy');
     this.replayPreservationVerifier=replayPreservationVerifier;this.replayPolicy={enabled:replayPolicy,configuredAt:replayPolicy?new Date(this.now()).toISOString():null,fromSearch:1};this.replayPreservation=new Map();this.replayTasks=new Map();
+    check(typeof timerPolicy==='boolean','Invalid owned battle timer policy');
+    this.timerPolicy={enabled:timerPolicy,configuredAt:timerPolicy?new Date(this.now()).toISOString():null};this.timerPolicyAttempts=new Map();this.timerPolicyDeferred=null;
     this.id = randomUUID(); this.revision = 0; this.searchesSent = 0; this.stopped = false;
     this.commands = new Map();this.commandFingerprints=new Map(); this.readySent = new Set(); this.notices = []; this.listeners = [];
     this.ownedRooms = new Set(); this.ownedParents = new Set(); this.roomParents = new Map(); this.awaitingSet = false;
@@ -46,6 +48,17 @@ export class AgentSession extends EventEmitter {
     this.supervisor=new DeadlineSupervisor({now,...controlTimers,getActions:()=>this.actions({includePending:true}),validate:(action,choices)=>this.validateAction(action,choices),submit:(action,choices,source)=>this.submitChoice(action,choices,source),selectDefault:action=>this.emergencyChoice(action),forfeit:(action,reason)=>this.containControlFailure(action,reason),onTrace:entry=>this.recordControlTrace({...entry,type:entry.type?.startsWith('watchdog-')?entry.type:`watchdog-${entry.type||'event'}`})});
     for (const event of EVENTS) {
       const listener = value => {
+        if(event==='server-notice'){
+          if(!client.authenticated)return;
+          const notice=safeServerNotice(value?.text,{authenticated:true});notice.truncated ||= value?.truncated===true;
+          this.notices.push({at:this.now(),kind:'server-notice',type:value?.type==='error'?'error':'popup',scope:value?.scope==='room'?'room':'global',...notice});
+          this.notices=this.notices.slice(-20);
+        }
+        if(event==='search-rejected'){
+          this.awaitingSet=false;
+          this.notices.push({at:this.now(),kind:'search-rejected',reasonCode:value.reasonCode,generation:value.generation,contextBound:value.contextBound===true});
+          this.notices=this.notices.slice(-20);
+        }
         if (event === 'disconnected') this.stopped = true;
         if(event==='room-renamed')this.migrateRoom(value);
         if(event==='action-status'){
@@ -121,7 +134,12 @@ export class AgentSession extends EventEmitter {
     const canonical=this.client.validateChoice(fresh.room,{rqid:fresh.rqid,revision:fresh.revision,actions:choices,deadlineAt}).actions;
     this.recordControlTrace({type:'selected',...fresh,source});this.choiceSources.set(fresh.room,source);
     this.client.authorize('choose',{room:fresh.room,confirmed:true});
-    try{return this.client.choose(fresh.room,{rqid:fresh.rqid,revision:fresh.revision,actions:canonical,deadlineAt});}
+    try{
+      const result=this.client.choose(fresh.room,{rqid:fresh.rqid,revision:fresh.revision,actions:canonical,deadlineAt});
+      // The socket choice is sent first. This synchronous hook runs before a
+      // later network frame can deliver another actionable request.
+      this.ensureTimerAfterChoice(fresh,result);return result;
+    }
     catch(error){
       const key=`choose:${fresh.room}:${fresh.rqid}:${fresh.revision}`;
       if(this.client.sent.has(key)){this.uncertainChoices.add(fresh.token);this.recordControlTrace({type:'watchdog-uncertain',...fresh,source,reasonCode:'socket-write-uncertain'});}
@@ -137,15 +155,41 @@ export class AgentSession extends EventEmitter {
     c.authorize('forfeit',{room:parent,confirmed:true});return c.forfeitSet(parent);
   }
   turnSnapshot(){
+    const observedAt=this.now(),controlPolicy=this.controlPolicySnapshot();
     const rooms=[...this.client.rooms.values()].filter(room=>this.ownedRooms.has(room.id)&&!room.ended&&!this.client.rooms.get(this.roomParents.get(room.id))?.ended);
     const actions=this.actions(),previewRooms=new Set(actions.filter(action=>action.kind==='preview').map(action=>action.room));
     const boards=rooms.filter(room=>room.id.startsWith('battle-')).map(room=>({room:room.id,parentId:this.roomParents.get(room.id),
       requestAgeMs:Number.isFinite(room.receivedAt)?Math.max(0,this.now()-room.receivedAt):null,clock:this.clock(room,room.request?.teamPreview?'preview':'turn'),timer:this.client.timerStatus(room.id),
       ...compactTurnBoard(this.client.battleSnapshot?.(room.id),{request:room.request,events:room.battleLog}),
       ...(previewRooms.has(room.id)?{opponentSheets:Object.fromEntries(Object.entries(room.sheets||{}).filter(([side])=>side!==room.request.side?.id).map(([side,packed])=>[side,publishedSheet(packed)])),opponentSheetUncertainty:'Registered six and published sets only; selected four, stat investments and next actions are unknown.'}:{})}));
-    return {sessionId:this.id,revision:this.revision,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),actions,
+    return {sessionId:this.id,revision:this.revision,observedAt,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,transport:this.client.transportStatus?.()||null,controller:this.controller.status(),controlPolicy,timerPolicy:this.timerPolicySnapshot(),actions,
+      autoReady:this.autoReady,savingReplays:this.savingReplays,awaitingSet:this.awaitingSet,searchPending:!!this.client.searchPending,switchingTeam:this.switchingTeam,search:this.client.searchState||null,
+      rooms:[...this.client.rooms.values()].filter(room=>this.ownedRooms.has(room.id)).map(room=>({id:room.id,parentId:this.roomParents.get(room.id),ended:room.ended,result:room.result||null})),
+      timing:{observedAt,requests:this.actions({includePending:true}).filter(action=>action.kind!=='ready').map(action=>{
+        const record=controlPolicy.pending.find(value=>value.token===action.token),remaining=value=>Number.isFinite(value)?Math.max(0,value-observedAt):null;
+        return {token:action.token,room:action.room,rqid:action.rqid,revision:action.revision,receivedAt:action.receivedAt,
+          requestAgeMs:Number.isFinite(action.receivedAt)?Math.max(0,observedAt-action.receivedAt):null,firstChoiceMissing:action.actionable!==false&&!record?.hasFallback,
+          planningDeadlineAt:record?.planningDeadlineAt??null,planningRemainingMs:remaining(record?.planningDeadlineAt),cutoffAt:record?.cutoffAt??null,cutoffRemainingMs:remaining(record?.cutoffAt),
+          hardDeadlineAt:record?.hardDeadlineAt??null,hardRemainingMs:remaining(record?.hardDeadlineAt),deadlineBasis:record?.deadlineBasis??null,
+          state:record?.state??null,hasFallback:record?.hasFallback??false,submissionStatus:action.submissionStatus??null,
+          urgency:action.actionable===false?'submission-reserved':record?.recovering||Number.isFinite(record?.cutoffAt)&&record.cutoffAt<=observedAt?'plan-overdue':'planning'};
+      }),limitation:'Planning and cutoff times are local control budgets. Only observed server clock evidence establishes a turn or bank countdown; a missing first choice never authorizes a retry or forfeit.'},
       boards,
       choices:rooms.filter(room=>room.lastAction).map(room=>({room:room.id,...room.lastAction}))};
+  }
+  actionFailure(command,error){
+    const reply={id:command.id,ok:false,error:error.message};
+    if(!['stage-fallback','choose'].includes(command.op)||command.confirmed!==true)return reply;
+    // A rejected controller must not obtain a new action token through a
+    // mutation response. Read-only observations retain their existing access.
+    try{this.controller.assert(command.controllerLease);}catch{return reply;}
+    const context=this.actionContexts.get(command.token),room=context&&this.client.resolveRoom(context.room),state=room&&this.client.rooms.get(room);
+    const reservation=!!context&&this.client.sent.has(`choose:${room}:${context.rqid}:${context.revision}`);
+    const matching=context&&state?.lastAction?.rqid===context.rqid&&state?.lastAction?.revision===context.revision?state.lastAction:null;
+    const uncertain=reservation&&this.uncertainChoices.has(command.token);
+    return {...reply,recovery:{operation:command.op,outcome:uncertain?'send-uncertain':reservation?'submission-reserved':'not-sent',retry:false,rebind:false,requiresNewDecision:true,
+      attempted:context?{token:command.token,room,rqid:context.rqid,revision:context.revision,reservation,submissionStatus:uncertain?'uncertain':matching?.status??(reservation?'sent':null)}:null,
+      state:this.turnSnapshot()}};
   }
   controlPolicySnapshot(){const {recentEvents,...policy}=this.supervisor.status();return policy;}
   readControlTrace({room,limit=50}={}){
@@ -189,10 +233,10 @@ export class AgentSession extends EventEmitter {
     }
   }
   roomTeamId(room){return this.roomTeams.get(this.client.resolveRoom(room))||this.client.expectedTeamHash;}
-  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','set-timer','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,emergencyDefaultChoice:true,compactTurnBoard:true,namedReplacements:true,controlTrace:true,ownedBattleTimer:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
+  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,loadedAt:LOADED_AT,operations:['status','turn-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','set-timer','set-timer-policy','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,emergencyDefaultChoice:true,compactTurnBoard:true,compactTurnWait:true,actionFailureRecovery:true,requestTiming:true,namedReplacements:true,controlTrace:true,ownedBattleTimer:true,ownedBattleTimerPolicy:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
   rememberAction(action){
     const state=this.client.rooms.get(action.room),turn=state?.battle?.turn;
-    if(!this.actionContexts.has(action.token))this.actionContexts.set(action.token,{room:action.room,teamId:this.roomTeamId(action.room),rqid:action.rqid,turn:Number(turn)||0,sessionId:this.id,token:action.token,lastObservedStatus:state?.lastAction?.rqid===action.rqid?state.lastAction.status:'unsubmitted'});
+    if(!this.actionContexts.has(action.token))this.actionContexts.set(action.token,{room:action.room,teamId:this.roomTeamId(action.room),rqid:action.rqid,revision:action.revision,turn:Number(turn)||0,sessionId:this.id,token:action.token,lastObservedStatus:state?.lastAction?.rqid===action.rqid?state.lastAction.status:'unsubmitted'});
     while(this.actionContexts.size>1000)this.actionContexts.delete(this.actionContexts.keys().next().value);
   }
   assertLive() {
@@ -265,8 +309,8 @@ export class AgentSession extends EventEmitter {
       sessionId:this.id,revision:this.revision,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,
       username:this.username,teamSha256:this.client.expectedTeamHash,authorizedSets:this.authorizedSets,searchesSent:this.searchesSent,autoReady:this.autoReady,
       savingReplays:this.savingReplays,awaitingSet:this.awaitingSet,searchPending:!!this.client.searchPending,
-      replayPolicy:this.replayPolicySnapshot(),
-      switchingTeam:this.switchingTeam,capabilities:this.capabilities(),
+      replayPolicy:this.replayPolicySnapshot(),timerPolicy:this.timerPolicySnapshot({includeChildren:true}),
+      switchingTeam:this.switchingTeam,capabilities:this.capabilities(),transport:this.client.transportStatus?.()||null,
       controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),
       metrics:this.metricsStatus(),
       search:this.client.searchState || null,cancellation:this.cancellation || null,actions:this.actions(),notices:this.notices,
@@ -354,6 +398,74 @@ export class AgentSession extends EventEmitter {
     this.replayPolicy={enabled,configuredAt:new Date(this.now()).toISOString(),fromSearch:this.searchesSent+1};this.replayPolicyChanged();
     return {...this.replayPolicySnapshot(),queued:false,uploaded:false,authorizedSets:this.authorizedSets,searchesSent:this.searchesSent};
   }
+  timerPolicySnapshot({includeChildren=false}={}){
+    const children=[...this.timerPolicyAttempts.values()].map(({key,...entry})=>({...entry,room:entry.room.replace(/-[a-z0-9]+pw$/u,'')}));
+    return {...this.timerPolicy,after:'successful-owned-choice-send',scope:'Once per live owned child after its complete choice is sent; never before preview or a fresh turn.',
+      requestAttempts:children.filter(entry=>entry.attempted).length,lastChild:children.at(-1)||null,lastDeferred:this.timerPolicyDeferred,
+      ...(includeChildren?{children}:{}),limitation:'A timer request is not server confirmation or a numerical countdown. Existing or uncertain requests are never repeated.'};
+  }
+  setTimerPolicy(enabled){
+    this.assertIdleForTeamSwitch();check(typeof enabled==='boolean','Timer policy enabled must be boolean');
+    check(typeof this.client.setTimer==='function'&&typeof this.client.timerStatus==='function','Owned battle timer support is unavailable in this loaded session');
+    this.timerPolicy={enabled,configuredAt:new Date(this.now()).toISOString()};
+    this.recordControlTrace({type:'timer-policy-configured',status:enabled?'enabled':'disabled'});
+    this.emit('change',{revision:++this.revision,event:'timer-policy'});
+    return {...this.timerPolicySnapshot(),queued:false,timerSent:false,authorizedSets:this.authorizedSets,searchesSent:this.searchesSent};
+  }
+  ownedTimerChild(room){
+    this.assertLive();const c=this.client,child=c.resolveRoom(room),parent=this.roomParents.get(child),state=c.rooms.get(child),parentState=c.rooms.get(parent);
+    check(typeof child==='string' && /^battle-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(child),'Expected the current authorized M-C child battle room');
+    check(this.ownedRooms.has(child) && this.ownedParents.has(parent) && this.ownedRooms.has(parent) && this.roomParents.get(parent)===parent && parentState?.children.includes(child),'Child battle is not linked to an owned authorized BO3 parent');
+    check(!parentState.ended && Object.hasOwn(c.searchState?.games || {},parent),'BO3 parent is not live in the current server search state');
+    const liveChildren=parentState.children.filter(id=>this.ownedRooms.has(id) && this.roomParents.get(id)===parent && !c.rooms.get(id)?.ended && c.rooms.get(id)?.epoch===c.epoch && c.rooms.get(id)?.request);
+    check(liveChildren.length===1 && liveChildren[0]===child && state?.epoch===c.epoch && state.request && !state.ended,'No unambiguous current live owned child battle request');
+    check(!state.request.side?.name || normalized(state.request.side.name)===normalized(this.username),'Child battle request belongs to another player');
+    check(!c.pendingForfeit(child),'BO3 forfeit was sent or is uncertain; await the official parent result');
+    return child;
+  }
+  ensureTimerAfterChoice(action,result){
+    if(!this.timerPolicy.enabled)return;
+    const c=this.client;
+    // Timer failure is separate from the already-sent choice. Never turn a
+    // successful submission into an apparent failed/uncertain move operation.
+    const changed=(entry,type)=>{
+      this.timerPolicyAttempts.set(entry.key,entry);this.timerPolicyDeferred=null;this.revision++;
+      try{this.recordControlTrace({type,room:entry.room,rqid:action.rqid,revision:action.revision,status:entry.status,source:'timer-policy'});this.emit('change',{revision:this.revision,event:'timer-policy-request'});}catch{}
+    };
+    const defer=reason=>{this.timerPolicyDeferred={room:String(action.room).replace(/-[a-z0-9]+pw$/u,''),rqid:action.rqid,at:this.now(),reason};};
+    let child,key,entry;
+    try{
+      if(this.controller.required&&!this.controller.status().owner){defer('no-current-controller');return;}
+      child=this.ownedTimerChild(action.room);
+      key=`${c.epoch}:${child.replace(/-[a-z0-9]+pw$/u,'')}`;
+      if(this.timerPolicyAttempts.has(key))return;
+      const state=c.rooms.get(child),requestKey=`choose:${child}:${action.rqid}:${action.revision}`;
+      // A synchronous transport test or callback may have delivered a newer
+      // request during send. Leave that fresh action first, never activate its
+      // clock because an older choice was protected.
+      if(result?.status!=='sent-not-acknowledged'||state.request.rqid!==action.rqid||state.revision!==action.revision||!c.sent.has(requestKey)){
+        defer('fresh-request-not-protected');return;
+      }
+      const timer=c.timerStatus(child);
+      entry={key,room:child,at:this.now(),attempted:false,status:'not-attempted'};
+      if(timer.request){changed({...entry,status:timer.request.status||'existing-request'},'timer-policy-existing-request');return;}
+      if(timer.serverObservation?.type==='inactive'&&/\bbattle timer is (?:now )?on\b|\btime left:\s*\d+\s*sec/i.test(timer.serverObservation.text||'')){
+        changed({...entry,status:'already-server-on'},'timer-policy-already-on');return;
+      }
+      entry={...entry,attempted:true,status:'send-uncertain'};
+      // Reserve before authorize/I/O, including unconfirmed failures. No retry
+      // loop is allowed on another turn, handoff, alias or timer-off message.
+      this.timerPolicyAttempts.set(key,entry);
+      c.authorize('set-timer',{room:child,confirmed:true});
+      const sent=c.setTimer(child,{enabled:true});
+      changed({...entry,status:sent.status},'timer-policy-sent');
+    }catch{
+      if(entry?.attempted){
+        const status=c.timerStatus?.(child)?.request?.status||'not-confirmed';
+        changed({...entry,status},'timer-policy-not-confirmed');
+      }else defer('current-owned-choice-unavailable');
+    }
+  }
   maybePreserveReplays(){
     if(this.stopped||!this.client.connected||!this.client.authenticated||this.savingReplays||this.switchingTeam||this.replayTasks.size)return;
     for(const [parent,entry]of this.replayPreservation){
@@ -410,17 +522,19 @@ export class AgentSession extends EventEmitter {
       return result;
     } finally {clearTimeout(timer);}
   }
-  async wait({afterRevision = this.revision, timeoutMs = 25000, signal} = {}) {
+  async wait({afterRevision = this.revision, timeoutMs = 25000, format = 'full', signal} = {}) {
     check(Number.isInteger(afterRevision) && afterRevision >= 0, 'Invalid revision');
     check(Number.isInteger(timeoutMs) && timeoutMs >= 0 && timeoutMs <= 30000, 'Wait must be 0–30000 ms');
-    if (this.revision > afterRevision || this.stopped || timeoutMs === 0) return this.snapshot();
+    check(['full','compact'].includes(format),'Wait format must be full or compact');
+    const snapshot=()=>format==='compact'?this.turnSnapshot():this.snapshot();
+    if (this.revision > afterRevision || this.stopped || timeoutMs === 0) return snapshot();
     await new Promise(resolve => {
       let timer;
       const done = () => { clearTimeout(timer);this.off('change',done);signal?.removeEventListener('abort',done);resolve(); };
       this.on('change',done);signal?.addEventListener('abort',done,{once:true});timer=setTimeout(done,timeoutMs);
       if (signal?.aborted || this.revision > afterRevision) done();
     });
-    return this.snapshot();
+    return snapshot();
   }
   execute(command, {signal} = {}) {
     if (!command || typeof command.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(command.id)) return Promise.resolve({ok:false,error:'A unique command id is required'});
@@ -437,7 +551,7 @@ export class AgentSession extends EventEmitter {
       if(!['control-claim','control-release','note-decision','metrics-sync'].includes(command.op))try{this.controller.assert(command.controllerLease);}catch(error){return Promise.resolve({id:command.id,ok:false,error:error.message});}
       return this.commands.get(command.id);
     }
-    const task = Promise.resolve().then(()=>this.dispatch(command)).then(result=>({id:command.id,ok:true,result}),error=>({id:command.id,ok:false,error:error.message}));
+    const task = Promise.resolve().then(()=>this.dispatch(command)).then(result=>({id:command.id,ok:true,result}),error=>this.actionFailure(command,error));
     this.commands.set(command.id,task);this.commandFingerprints.set(command.id,fingerprint);return task;
   }
   async saveSetReplays(parent,{deadline:outerDeadline=Infinity,assertControl=()=>{}}={}) {
@@ -504,18 +618,13 @@ export class AgentSession extends EventEmitter {
     }
     if(op==='stage-fallback'){this.supervisor.stage(token,actions);return this.controlPolicySnapshot();}
     if(op==='set-replay-policy')return this.setReplayPolicy(command.enabled);
+    if(op==='set-timer-policy')return this.setTimerPolicy(command.enabled);
     if(op==='switch-team')return this.switchTeam(command);
     if(['start','authorize-sets','save-replays'].includes(op))check(!this.switchingTeam,'Finish the approved team switch before this operation');
     if(op==='save-replays')return this.preserveSetReplays(c.resolveRoom(room),{assertControl:()=>this.controller.assert(command.controllerLease)});
     if(op==='set-timer'){
       check(command.enabled===undefined||command.enabled===true,'Only enabling the battle timer is supported');
-      const child=c.resolveRoom(room),parent=this.roomParents.get(child),state=c.rooms.get(child),parentState=c.rooms.get(parent);
-      check(typeof child==='string' && /^battle-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/.test(child),'Expected the current authorized M-C child battle room');
-      check(this.ownedRooms.has(child) && this.ownedParents.has(parent) && this.ownedRooms.has(parent) && this.roomParents.get(parent)===parent && parentState?.children.includes(child),'Child battle is not linked to an owned authorized BO3 parent');
-      check(!parentState.ended && Object.hasOwn(c.searchState?.games || {},parent),'BO3 parent is not live in the current server search state');
-      const liveChildren=parentState.children.filter(id=>this.ownedRooms.has(id) && this.roomParents.get(id)===parent && !c.rooms.get(id)?.ended && c.rooms.get(id)?.epoch===c.epoch && c.rooms.get(id)?.request);
-      check(liveChildren.length===1 && liveChildren[0]===child && state?.epoch===c.epoch && state.request && !state.ended,'No unambiguous current live owned child battle request');
-      check(!state.request.side?.name || normalized(state.request.side.name)===normalized(this.username),'Child battle request belongs to another player');
+      const child=this.ownedTimerChild(room);
       c.authorize('set-timer',{room:child,confirmed:true});
       try{return c.setTimer(child,{enabled:true});}
       finally{this.revision++;this.emit('change',{revision:this.revision,event:'timer-request'});}

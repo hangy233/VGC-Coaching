@@ -28,6 +28,8 @@ of skill files, review reports, and chat.
    At a new batch boundary, also read the previous batch's pattern synthesis
    and applicable answer/winning-plan cards from its final checkpoint, as
    described below. Carry unresolved tests forward; do not start from the score alone.
+   Read its control repair checkpoint too: resolve control blockers and verify
+   required correction/mitigation and adoption before the next batch's search.
 4. Read `battle_status` and `battle_capabilities` on the existing authorized client.
    On a newly started client advertising exclusive control and deadline protection,
    claim one controller with `battle_control_claim`. Keep the returned opaque
@@ -44,6 +46,10 @@ of skill files, review reports, and chat.
    With existing user authorization for automatic defaults, a client advertising
    `emergencyDefaultChoice` can enable that separate policy while idle. It defaults
    off; enabling deadline protection or stuck-forfeit alone does not authorize it.
+   When timer activation is already authorized and `ownedBattleTimerPolicy` is
+   loaded, enable its separate opt-in policy while idle before searching (or use
+   the explicit `--battle-timer` startup flag). Verify `timerPolicy.enabled`;
+   timer permission is not implied by deadline or emergency-default permission.
 5. Run `battle_preflight` and inspect its blockers and warnings: existing
    authentication, exact team, remaining authorization, actual idle state,
    loaded capabilities, prior review, skill adoption and report health. A source
@@ -100,6 +106,32 @@ they do not predict the opponent's choice. Unknown investments stay hypothetical
 Unsupported numerical states stay unverified; never replace MCP with a direct
 calculator or mental damage/Speed arithmetic.
 
+When timer activation is already authorized, check each new live child's timer
+state. Use the opt-in `ownedBattleTimerPolicy` when the loaded client supports
+it: configure `battle_set_timer_policy` while idle with the existing lease and
+timer permission, or use `--battle-timer` at the next normal authorized startup.
+It requests the child's timer synchronously after a successful owned choice,
+including already-authorized watchdog sends, so rapid next turns do not repeatedly
+postpone activation. Both configuration paths default off. It preserves existing
+or uncertain timer reservations across aliases and handoffs; inspect actual
+`timerPolicy` outcomes and `lastDeferred` rather than treating configuration as
+server confirmation. A timer error does not turn a sent move into a failed move.
+Disabling automatic requests does not turn the server's timer off. For a loaded
+client without that policy, protect the current legal preview or paired choice
+first, then use the
+loaded `ownedBattleTimer` / `battle_set_timer` capability to request that child's
+timer once before optional research. A previous game's timer is not this child's
+timer. Carry the current child identity, timer request and server observation in
+a handoff; an existing or uncertain request stays reserved rather than being
+repeated by the receiver. Follow the project's timer command contract for stable
+command IDs and privacy aliases. Keep a fresh actionable request protected if it
+arrives during activation. A sent request is not confirmation, and a server
+timer-on message alone supplies no numerical turn or bank deadline. Use actual
+clock evidence or retain the unknown-clock budget; activation never extends the
+policy, resets a halt or submits a choice. Without the user's timer authorization
+or loaded support, preserve that limitation rather than restarting, authenticating
+or enabling it merely to test these instructions.
+
 When the clock permits, call `battle_note_decision` with a stable `commandId`,
 the observed action token, short opposing paired predictions, our plan/reason,
 alternatives and optional verified `calculationRefs`. Submit first if necessary;
@@ -132,8 +164,31 @@ send can wait while the opponent plans, including beyond five seconds, without
 proving either acceptance or failure. Keep its duplicate-send reservation; do not
 resend, halt or forfeit merely because no acknowledgment or advancement arrived.
 From each fresh actionable request, identify a complete legal pair immediately.
+Choose a useful first pair before completing multi-turn branch ranking, checking
+known constraints rather than delaying protection until every alternative is
+settled. A model pause before its first tool call is not protected by a research
+guard. If comparison remains, stage early, bound the essential check and commit
+or revise before the buffer is spent; staging does not excuse a late commitment.
 With the enabled deadline policy, stage that exact pair using
 `battle_stage_fallback` before calculator calls, history reads or optional notes.
+The maintained SDK exposes `stage-next` for this first protection without waiting
+for another board, then `commit-next` for the stored pair or `play-next` for an
+authored replacement. If the complete pair is already final, use `play-next`
+directly to stage and send in one dispatch; separate staging is for a real
+remaining comparison, not an extra model/tool pause before every submission.
+It re-reads the current request before optional research,
+returns an unprotected fresh board instead of doing the research, and reserves
+long reports/reviews for idle between-set periods. Optional live RPCs remain
+short and stop before the local commit buffer; they do not gain the separate
+30-second budget used for post-set metrics/replay/review/retention. Timeout or
+uncertainty does not authorize a repeated mutation.
+Read live responses with the maintained `--view decision` reader. Keep the full
+registered sheet at preview and the current legal identities, field, denial and
+move-order evidence thereafter. Reader age is observation age, not model delivery
+or a server countdown. Wait for or drain the one-shot reader's actual process
+session; a pending read never warrants replaying the original command. A model
+pause before its first authored pair remains an operational risk despite these
+guards and must not be described as fixed from passing offline tests.
 This also applies to the first actionable request immediately after preview and
 after a forced replacement; optional reporting cannot occupy that transition.
 Use `battle_turn_status` for the compact current board, legal request, choice,
@@ -221,8 +276,20 @@ or deadline protection enabled: inspect the actually loaded client's safety stat
 
 Prepare a focused operator context between BO3s when the current context is large;
 automatic context restoration can consume a live request's remaining time.
+Load the complete current guidance, exact team, latest required checkpoint and
+compact carried plans. Do not preload every older parent's full transcript and
+review when the current cards cover the decision; retrieve older detail when it
+can change a plan, and keep deep cross-set work between BO3s. A fresh operator
+with an already crowded preparation context still risks live restoration.
 Do not reconstruct long history before staging the fresh pair. A focused context
 still needs the required guidance, locked team and verified working controls.
+After restoration, first refresh the compact current request through the
+operator's own working connection (`turn` in the maintained SDK), including
+legality, token and any reserved send. Protect an unsubmitted current request
+before catching up history or acting on an old summary/observer token. Preserve
+an existing or uncertain send; a cache mismatch calls for fresh state, not a
+retry of the old pair. This cue reduces recovery work, not the restoration
+latency itself or the need for enabled deadline protection.
 Prepare a deliberate operator handoff between BO3s when possible. Before a new
 search or transfer, the receiving operator must read the current guidance and
 successfully call `battle_status` through its own MCP connection, verifying the
@@ -243,6 +310,10 @@ inspect the enabled policy's bounded recovery. Do not create competing ownership
 Between games, handle readiness and preview deadlines promptly. Record observed
 response -> our adjustment -> their plausible counter-adjustment. Save deep log
 audits, skill edits and installation for after the official BO3 parent ends.
+Use the full same-opponent sheet already read plus new reveals to reconsider
+the next four and promptly protect the preview. Re-read consequential missing or
+changed facts, rather than repeating an unchanged full-sheet read. A new opponent
+still needs its full sheet, and reusing evidence does not mean reusing the four.
 
 ## Conclude every BO3
 
@@ -478,8 +549,10 @@ Group recurring problems by the threat/core and the mechanism that stopped us:
 missing coverage, loss of the answer, denied attack delivery, weather/control
 transitions, exploitable locks, passive turns, or submission failure. Read the
 decisive turns before attributing a loss to one species. An existing tactic missed
-again needs a concrete application correction; it does not automatically need
-another general rule. Keep genuine structural gaps and inconclusive cases explicit.
+again needs a concrete application correction. At the batch boundary, strengthen
+that existing shared rule's trigger, ordering or compact decision check so the
+correction reaches future operators; a private card and "already covered" alone
+are insufficient. Keep genuine structural gaps and inconclusive cases explicit.
 
 For the useful priority patterns, retain compact working cards:
 
@@ -508,6 +581,34 @@ those opportunities with the intended test and update each card's status. A
 reasonable counterexample is not a missed application; zero opportunities means
 untested. Matching skill hashes proves content adoption, not tactical application.
 
+### Update shared guidance before the next batch
+
+Complete a shared-skill checkpoint after every user-defined batch, alongside the
+private team synthesis. Map supported transferable findings to the existing
+shared instruction they improve. For a repeated application failure, make the
+trigger and required decision observable: what board condition activates the
+check, what must be resolved before committing, and what permits a different
+line. Amend or prioritize that instruction instead of adding another prohibition
+or copying a team-specific plan. Retain successful forcing sequences and a
+counterexample; do not turn a failed double or trade into a blanket ban.
+
+Record changed source paths and the intended behavioral correction in the final
+checkpoint's `validation`, with relevant scenario results, a materially different
+counterexample, and verified source/installed hashes. Validate and sync the whole
+changed folder, then read it into active context before the next authorized
+batch. Its receiving operator must adopt that version and carry the applicable
+private plans. A read receipt or matching digest proves delivery, not application;
+the next reviews must check whether the new trigger actually changed decisions.
+
+Per-set no-change reviews remain valid, but they do not replace this batch-level
+work. Use a batch no-change outcome only when there is no supported transferable
+improvement, including no useful clarification of a repeatedly missed rule.
+Explain that conclusion against the actual findings and counterexamples; merely
+listing existing rule names or reporting synchronized files is insufficient.
+Do not invent mechanics, duplicate instructions or edit wording solely to change
+a hash. Preserve historical adoption facts when recording a later update;
+retrospective edits cannot prove the new guidance was used in earlier games.
+
 Persist the compact synthesis in the final BO3's existing versioned checkpoint,
 using `validation` entries for cross-set patterns, prior checkpoint references
 and next-batch tests. The tool validates decision/positive/reusable-outcome game
@@ -515,9 +616,9 @@ references against that parent's children only; cite other parents in validation
 text, not as this parent's verified decision evidence. This keeps the synthesis
 owned by the team and covered by its existing deletion cascade, rather than
 creating an unmanaged batch-report location. An existing batch ledger can link
-to this checkpoint. Keep detailed evidence private; promote only supported,
-anonymized reusable changes to shared guidance, validate and sync them, or retain
-an explicit no-change reason. Apply the normal checkpoint/retention sequence to
+to this checkpoint. Keep detailed evidence private; complete the shared-guidance
+checkpoint above and record its source changes or specific no-change rationale.
+Apply the normal checkpoint/retention sequence to
 a revised final review. A later backfill must preserve its retrospective timing.
 
 Report the recurring obstacles, answers to test, winning patterns to retain and
@@ -525,6 +626,61 @@ remaining uncertainty alongside the batch result. This is a required agent
 workflow, not an additional runtime guard in `battle_start`. It grants no new
 battles, authentication, replay publication or roster changes; use any existing
 between-batch change authorization only after assessing gains and lost roles.
+
+## Repair every batch control failure
+
+After every user-defined batch, investigate **every observed control failure**,
+including those inside wins or recovered turns. Inventory authored watchdog sends,
+generated choices, late or missing submissions, stale/rejected attempts, uncertain
+writes, disconnections, ownership/handoff failures and operational forfeits with
+their actual request, timing, trace and outcome. A late local attempt blocked after
+a reserved send is distinct from a server rejection; a successful send without a
+routine acknowledgment is not itself a failure. Group repeated causes, but account
+for every occurrence rather than selecting only the worst loss.
+
+Classify each cause as runtime/tooling, operator timing or workflow, external
+service, or unresolved. Implement repairs in the affected client, MCP, SDK or
+operator procedure; a runtime defect needs a runtime correction, not only a new
+skill warning. For operator delays, correct preparation, first-pair protection,
+output or recovery ordering as supported by the trace. Do not infer the cause of
+an unexplained pause from timing alone. Diagnose external failures within bounds
+and verify a recovery or prevention plan without claiming to fix the service.
+
+Validate each correction or mitigation against the failing sequence, a normal
+successful path and relevant countercases. Use focused offline fixtures/tests for
+runtime changes and behavioral scenarios for operator changes; run applicable
+required checks. Preserve legal fresh-request protection, reserved/uncertain sends,
+exclusive ownership and actual clock/authorization limits. A wording match, skill
+sync, eventual win, generated legal fallback or absence of recurrence does not
+prove the cause repaired. Preserve the original operational classification.
+
+In the final BO3 checkpoint's existing `validation` entries, account for each cause:
+supporting game/trace references, correction and source paths, validation actually
+performed, status **repaired and validated / mitigated and validated / unresolved**,
+remaining limits, and guidance/runtime adoption. Put cross-parent references here,
+not in this parent's decision evidence. If none occurred, record the inspected
+coverage and that result; missing traces are a limitation, not a clean batch.
+Report **control review complete / causes repaired or mitigated / unresolved
+blockers / runtime adoption verified or pending** alongside the skill checkpoint.
+
+Complete repairs and offline checks between batches. A failure that can compromise
+control blocks further searches until repaired or covered by a validated mitigation;
+failed or unavailable essential validation remains a blocker. Do not silently
+reset a halt or carry the same unaddressed failure into another authorized batch.
+Before its search, the receiving controller must adopt the current guidance and
+verify required runtime changes in the actual loaded client/MCP/SDK. Source edits,
+a skill digest or one module fingerprint do not prove all affected dependencies
+were loaded. Record a normal path's passing checks separately from residual live
+reliability that has not yet been observed.
+
+This checkpoint preserves normal batch-end closure: once replay/evidence, metrics
+and review are durable, stop and verify the client even if repair work or loaded
+adoption is explicitly pending. Finish offline work after closure and verify loaded
+adoption at the next normal authorized startup before searching. Honor a newer
+keep-open instruction and disclose any resulting stale-runtime blocker. Do not
+start a battle, authenticate again, restart solely for validation, increase battle
+allowance or commit/push through this rule. It is an agent obligation, not a new
+runtime guard inside `battle_start`.
 
 ## End the batch
 
@@ -539,6 +695,9 @@ checkpoint, then inspect and apply bounded retention. Missing replay preservatio
 unflushed data or an incomplete review defers closure so recovery remains possible.
 Protected or shared disposable files can remain explicitly retained; they do not
 require keeping the client open once useful evidence and review are durable.
+Pending control repairs or loaded-adoption checks follow the
+[control repair checkpoint](#repair-every-batch-control-failure) and do not require
+keeping an otherwise completed batch signed in.
 
 Call `battle_stop` with `confirmed: true` and a stable `commandId`, then verify
 the stopped result and client exit or absence of an active local session.

@@ -3,13 +3,70 @@ import fileSystem, {lstat, mkdir, open, readFile, readdir, unlink} from 'node:fs
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {performance} from 'node:perf_hooks';
+import {projectDecisionView} from './operator-view.mjs';
 
 const FORMAT = 'vgc-operator-response-v1';
 const MAX_WAIT_MS = 22000;
 const MAX_RETAINED_RESPONSES = 16;
 const RENAME_RETRY_MS = [10, 20, 40, 80, 160];
 const transientFileErrors = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const publicationErrorCodes = new Set(['EPERM', 'EACCES', 'EBUSY', 'EISDIR', 'ENOTDIR', 'ENOENT', 'EEXIST', 'EINVAL', 'EXDEV', 'ENOSPC', 'EMFILE', 'ENFILE', 'EIO', 'EROFS']);
+const CALLER_TIMING_FIELDS = ['inputReceivedAt', 'mcpDispatchedAt', 'mcpSettledAt', 'boardCapturedAt'];
+const PERSISTED_TIMING_FIELDS = [...CALLER_TIMING_FIELDS, 'preparedAt'];
 const sensitiveKey = /^(?:password|passwd|passphrase|controllerlease|lease|readreceipt|assertion|challstr|credential|credentials|secret|clientsecret|accesstoken|refreshtoken|authorization|cookie|setcookie|capability)$/;
+
+const plainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
+const timestamp = value => Number.isSafeInteger(value) && value >= 0 && value <= 8640000000000000;
+
+// Timing is deliberately numeric and shallow. Unknown fields (including nested
+// credentials or arbitrary envelope data) never enter the retained response.
+function callerTiming(value) {
+  if (!plainObject(value) || Object.keys(value).length > 16) throw new TypeError('timing must be a plain object with at most 16 fields');
+  const result = {};
+  for (const key of CALLER_TIMING_FIELDS) {
+    if (!Object.hasOwn(value, key) || value[key] === undefined) continue;
+    if (!timestamp(value[key])) throw new TypeError('timing timestamps must be nonnegative safe integer epoch milliseconds');
+    result[key] = value[key];
+  }
+  return result;
+}
+
+// Unknown metadata is discarded, but discover any labelled credentials before
+// sanitizing payload errors that may echo them. Bound this optional input rather
+// than accepting an arbitrary JSON envelope through the timing option.
+function boundedTimingMetadata(value) {
+  let entries = 0, characters = 0;
+  const active = new WeakSet();
+  const invalid = () => { throw new TypeError('timing metadata exceeds bounded plain JSON limits'); };
+  function visit(item, depth = 0) {
+    if (depth > 8 || ++entries > 128) invalid();
+    if (typeof item === 'string') { characters += item.length; if (item.length > 4096 || characters > 16384) invalid(); return; }
+    if (item === null || item === undefined || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) return;
+    if (!item || typeof item !== 'object' || active.has(item) || !Array.isArray(item) && !plainObject(item)) invalid();
+    active.add(item);
+    for (const [key, child] of Object.entries(item)) { if (key.length > 128) invalid(); visit(child, depth + 1); }
+    active.delete(item);
+  }
+  visit(value);
+  return value;
+}
+
+function storedTiming(value) {
+  if (!plainObject(value)) return null;
+  return Object.fromEntries(PERSISTED_TIMING_FIELDS.filter(key => Object.hasOwn(value, key) && timestamp(value[key])).map(key => [key, value[key]]));
+}
+
+function sameRetainedResponse(text, candidate) {
+  let existing;
+  try { existing = JSON.parse(text); } catch { return false; }
+  if (!plainObject(existing) || Object.keys(existing).some(key => !['format', 'id', 'payload', 'timing'].includes(key))) return false;
+  if (Object.hasOwn(existing, 'timing') && (!timestamp(existing.timing?.preparedAt) || !plainObject(existing.timing) ||
+      Object.keys(existing.timing).some(key => !PERSISTED_TIMING_FIELDS.includes(key) || !timestamp(existing.timing[key])))) return false;
+  // A retry observes the original receipt. It cannot replace its first timing
+  // measurements merely because the caller obtained newer timestamps.
+  const withoutTiming = ({timing, ...value}) => JSON.stringify(value);
+  return withoutTiming(existing) === withoutTiming(candidate);
+}
 
 function validId(id) {
   if (typeof id !== 'string' || !/^[a-zA-Z0-9_.:-]{1,60}$/.test(id)) {
@@ -54,7 +111,7 @@ async function atomicWrite(target, text, temporary) {
   }
 }
 
-async function prepareRetention(target, id, text) {
+async function prepareRetention(target, id, text, value) {
   const area = `${target}.responses`;
   await mkdir(area).catch(error => { if (error.code !== 'EEXIST') throw error; });
   const areaInfo = await fileSystem.lstat(area);
@@ -62,10 +119,11 @@ async function prepareRetention(target, id, text) {
   const exact = retainedPath(target, id);
   try {
     const info = await lstat(exact);
-    if (!info.isFile() || info.isSymbolicLink() || await readFile(exact, 'utf8') !== text) {
+    const existingText = info.isFile() && !info.isSymbolicLink() ? await readFile(exact, 'utf8') : null;
+    if (existingText === null || existingText !== text && !sameRetainedResponse(existingText, value)) {
       throw new Error('Response ID already has a different or invalid retained result');
     }
-    return {area, exact, existing: true};
+    return {area, exact, existing: true, text: existingText};
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const retained = [];
   for (const entry of await readdir(area, {withFileTypes: true})) {
@@ -166,27 +224,37 @@ export function sanitizeResponse(payload, {redactValues = []} = {}) {
  * The caller can print a short marker after this resolves; readers use the file.
  * Use one in-flight result per path and a fresh ID for every dispatch. Keep at
  * most 16 immutable ID copies; latest replacement can fail without losing the ID.
+ * Optional timing accepts only inputReceivedAt, mcpDispatchedAt, mcpSettledAt and
+ * boardCapturedAt epoch milliseconds. Persisted preparedAt precedes file writes.
+ * Returned idAvailableAt/publicationReturnedAt observe this invocation only and
+ * are not written back into an immutable receipt. None measures model delivery.
  */
 export async function publishResponse(file, id, payload, options = {}) {
   validId(id);
   const target = outputPath(file);
-  const value = {format: FORMAT, id, payload: sanitizeResponse(payload, options)};
-  const text = JSON.stringify(value);
-  const retention = await prepareRetention(target, id, text);
+  const timing = options.timing === undefined ? undefined : {...callerTiming(options.timing), preparedAt: Date.now()};
+  const cleanPayload = timing ? sanitizeResponse({payload, timing: boundedTimingMetadata(options.timing)}, options).payload : sanitizeResponse(payload, options);
+  let value = {format: FORMAT, id, payload: cleanPayload, ...(timing ? {timing} : {})};
+  let text = JSON.stringify(value);
+  const retention = await prepareRetention(target, id, text, value);
+  if (retention.existing) { text = retention.text; value = JSON.parse(text); }
   if (!retention.existing) await atomicWrite(retention.exact, text, join(retention.area, 'pending-response.tmp'));
+  const idAvailableAt = Date.now();
+  const returned = publication => ({...value, ...(value.timing ? {timing: {...value.timing, idAvailableAt, publicationReturnedAt: Date.now()}} : {}), ...(publication ? {publication} : {})});
   try {
     await atomicWrite(target, text, join(retention.area, 'latest-response.tmp'));
   } catch (error) {
-    return {...value, publication: {idRetained: true, latestUpdated: false, warning: 'latest-response-not-updated', code: typeof error.code === 'string' ? error.code : 'PUBLISH_ERROR'}};
+    return returned({idRetained: true, latestUpdated: false, warning: 'latest-response-not-updated', code: publicationErrorCodes.has(error.code) ? error.code : 'PUBLISH_ERROR'});
   }
-  return value;
+  return returned();
 }
 
 /** Read only a complete, matching output envelope. Missing, partial, stale or
  * incompatible files are pending observations, never permission to resend.
  */
-export async function readResponse({file, id, redactValues = []}) {
+export async function readResponse({file, id, redactValues = [], view = 'full'}) {
   validId(id);
+  if (!['full', 'decision'].includes(view)) throw new TypeError('view must be full or decision');
   const target = outputPath(file);
   const area = `${target}.responses`;
   let retained = false;
@@ -196,9 +264,9 @@ export async function readResponse({file, id, redactValues = []}) {
     retained = true;
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   for (const path of retained ? [retainedPath(target, id), target] : [target]) {
-    let value;
+    let value, info;
     try {
-      const info = await lstat(path);
+      info = await lstat(path);
       if (!info.isFile() || info.isSymbolicLink()) throw new Error('Response output must be a regular file');
       value = JSON.parse(await readFile(path, 'utf8'));
     } catch (error) {
@@ -206,13 +274,23 @@ export async function readResponse({file, id, redactValues = []}) {
       throw error;
     }
     if (value?.format !== FORMAT || value.id !== id || !Object.hasOwn(value, 'payload')) continue;
-    return {format: FORMAT, id, payload: sanitizeResponse(value.payload, {redactValues})};
+    const timing = storedTiming(value.timing);
+    const readerMatchedAt = Date.now();
+    // These are observations by this file reader, not tool/model delivery. A
+    // filesystem mtime is labelled separately from the publisher's preparation.
+    const readerTiming = timing ? {...timing, readerMatchedAt,
+      ...(timestamp(timing.preparedAt) ? {preparedAgeMs: readerMatchedAt >= timing.preparedAt ? readerMatchedAt - timing.preparedAt : null} : {}),
+      ...(Number.isFinite(info.mtimeMs) && info.mtimeMs >= 0 ? {fileModifiedAt: Math.floor(info.mtimeMs), fileAgeMs: readerMatchedAt >= info.mtimeMs ? Math.floor(readerMatchedAt - info.mtimeMs) : null} : {})} : null;
+    const payload = timing ? sanitizeResponse({payload: value.payload, timing: boundedTimingMetadata(value.timing)}, {redactValues}).payload : sanitizeResponse(value.payload, {redactValues});
+    const envelope = {format: FORMAT, id, payload, ...(readerTiming ? {timing: readerTiming} : {})};
+    return view === 'decision' ? projectDecisionView(envelope, {now: readerMatchedAt}) : envelope;
   }
   return null;
 }
 
-export async function awaitResponse({file, id, timeoutMs = MAX_WAIT_MS, intervalMs = 50, redactValues = []}) {
+export async function awaitResponse({file, id, timeoutMs = MAX_WAIT_MS, intervalMs = 50, redactValues = [], view = 'full'}) {
   validId(id);
+  if (!['full', 'decision'].includes(view)) throw new TypeError('view must be full or decision');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_WAIT_MS) {
     throw new TypeError(`timeoutMs must be an integer from 0 to ${MAX_WAIT_MS}`);
   }
@@ -221,7 +299,7 @@ export async function awaitResponse({file, id, timeoutMs = MAX_WAIT_MS, interval
   }
   const started = performance.now();
   for (;;) {
-    const value = await readResponse({file, id, redactValues});
+    const value = await readResponse({file, id, redactValues, view});
     const elapsedMs = Math.round(performance.now() - started);
     if (value) return {complete: true, value, elapsedMs};
     const remaining = timeoutMs - (performance.now() - started);
@@ -233,10 +311,18 @@ export async function awaitResponse({file, id, timeoutMs = MAX_WAIT_MS, interval
 }
 
 async function main(args) {
-  if (args.length !== 4 && args.length !== 6 || args[0] !== '--wait' || args[2] !== '--id' || args.length === 6 && args[4] !== '--timeout-ms') {
-    throw new TypeError('Usage: node showdown/operator-response.mjs --wait FILE --id ID [--timeout-ms 0..22000]');
+  const usage = 'Usage: node showdown/operator-response.mjs --wait FILE --id ID [--timeout-ms 0..22000] [--view full|decision]';
+  if (args.length < 4 || args.length > 8 || args.length % 2 || args[0] !== '--wait' || args[2] !== '--id') throw new TypeError(usage);
+  let timeoutMs = MAX_WAIT_MS, view = 'full';
+  const seen = new Set();
+  for (let index = 4; index < args.length; index += 2) {
+    const flag = args[index], value = args[index + 1];
+    if (!['--timeout-ms', '--view'].includes(flag) || seen.has(flag)) throw new TypeError(usage);
+    seen.add(flag);
+    if (flag === '--timeout-ms') timeoutMs = Number(value);
+    else view = value;
   }
-  const result = await awaitResponse({file: args[1], id: args[3], timeoutMs: args.length === 6 ? Number(args[5]) : MAX_WAIT_MS});
+  const result = await awaitResponse({file: args[1], id: args[3], timeoutMs, view});
   process.stdout.write(`${JSON.stringify(result.value)}\n`);
   process.exitCode = result.complete ? 0 : 2;
 }

@@ -102,6 +102,115 @@ test('readers sanitize compatible output again instead of trusting an existing f
   assert.deepEqual((await readResponse({file: target, id: 'read'})).payload, {turn: 2});
 });
 
+test('optional timing distinguishes preparation, available output and matching file-reader observations', async () => {
+  const target = file('timed.json');
+  const inputReceivedAt = Date.now() - 1000;
+  const before = Date.now();
+  const published = await publishResponse(target, 'timed', {turn: 3}, {timing: {
+    inputReceivedAt, mcpDispatchedAt: inputReceivedAt + 10, mcpSettledAt: inputReceivedAt + 30, boardCapturedAt: inputReceivedAt + 35,
+  }});
+  const persisted = JSON.parse(await readFile(retainedFile(target, 'timed'), 'utf8'));
+  assert(persisted.timing.preparedAt >= before);
+  assert.equal(persisted.timing.inputReceivedAt, inputReceivedAt);
+  assert(published.timing.idAvailableAt >= persisted.timing.preparedAt);
+  assert(published.timing.publicationReturnedAt >= published.timing.idAvailableAt);
+  assert.equal(persisted.timing.idAvailableAt, undefined);
+  assert.equal(persisted.timing.publicationReturnedAt, undefined);
+  assert.deepEqual(JSON.parse(await readFile(target, 'utf8')), persisted);
+  const read = await readResponse({file: target, id: 'timed'});
+  assert.equal(read.timing.mcpSettledAt, persisted.timing.mcpSettledAt);
+  assert(read.timing.readerMatchedAt >= persisted.timing.preparedAt);
+  assert.equal(read.timing.preparedAgeMs, read.timing.readerMatchedAt - persisted.timing.preparedAt);
+  assert.equal(read.timing.idAvailableAt, undefined);
+  assert.equal(read.timing.publicationReturnedAt, undefined);
+  assert.equal(read.timing.fileModifiedAt, Math.floor((await fileSystem.lstat(retainedFile(target, 'timed'))).mtimeMs));
+  assert(read.timing.fileAgeMs === null || Number.isSafeInteger(read.timing.fileAgeMs) && read.timing.fileAgeMs >= 0);
+  const waited = await awaitResponse({file: target, id: 'timed', timeoutMs: 0});
+  assert.equal(waited.complete, true);
+  assert.equal(waited.value.timing.preparedAt, persisted.timing.preparedAt);
+  assert(waited.value.timing.readerMatchedAt >= read.timing.readerMatchedAt);
+  for (const key of ['publishedAt', 'deliveredAt', 'modelDeliveredAt']) assert.equal(read.timing[key], undefined);
+});
+
+test('idempotent publication preserves the first receipt and timestamps even when caller timing changes', async () => {
+  const target = file('timed-idempotent.json');
+  const first = await publishResponse(target, 'same', {accepted: true}, {timing: {inputReceivedAt: 100, mcpDispatchedAt: 110}});
+  const original = await readFile(retainedFile(target, 'same'), 'utf8');
+  const second = await publishResponse(target, 'same', {accepted: true}, {timing: {inputReceivedAt: 200, mcpDispatchedAt: 210, mcpSettledAt: 220}});
+  assert.equal(second.timing.inputReceivedAt, 100);
+  assert.equal(second.timing.mcpSettledAt, undefined);
+  assert.equal(second.timing.preparedAt, first.timing.preparedAt);
+  assert(second.timing.idAvailableAt >= first.timing.idAvailableAt);
+  assert.equal(await readFile(retainedFile(target, 'same'), 'utf8'), original);
+  assert.equal(await readFile(target, 'utf8'), original);
+  await assert.rejects(publishResponse(target, 'same', {accepted: false}, {timing: {inputReceivedAt: 300}}), /different or invalid retained result/);
+  const legacy = file('legacy-idempotent.json');
+  const old = await publishResponse(legacy, 'old', {ready: true});
+  assert.deepEqual(await publishResponse(legacy, 'old', {ready: true}, {timing: {inputReceivedAt: 400}}), old);
+});
+
+test('timing accepts only bounded numeric fields and cannot inject nested secrets or envelope metadata', async () => {
+  const target = file('timing-sanitize.json');
+  const secrets = ['fixture-nested-lease', 'fixture-nested-receipt', 'fixture-capability'];
+  const published = await publishResponse(target, 'safe', {error: secrets.join(' ')}, {timing: {
+    inputReceivedAt: 100,
+    nested: {controllerLease: secrets[0], readReceipt: secrets[1], capability: secrets[2]},
+    controllerLease: secrets[0], payload: {credential: secrets[1]}, preparedAt: secrets[2],
+    readerMatchedAt: secrets[0], publication: {code: secrets[2]},
+  }});
+  const persisted = JSON.parse(await readFile(target, 'utf8'));
+  assert.deepEqual(Object.keys(persisted.timing).sort(), ['inputReceivedAt', 'preparedAt']);
+  for (const value of [published, persisted, await readResponse({file: target, id: 'safe'})]) {
+    for (const secret of secrets) assert(!JSON.stringify(value).includes(secret));
+  }
+  const invalid = file('timing-invalid.json');
+  for (const value of [-1, 1.5, Infinity, NaN, 'fixture-private-invalid', {controllerLease: 'fixture-private-invalid'}, 8640000000000001]) {
+    await assert.rejects(publishResponse(invalid, 'invalid', {}, {timing: {inputReceivedAt: value}}), error => {
+      assert.equal(error.message.includes('fixture-private-invalid'), false);
+      return /timing timestamps/.test(error.message);
+    });
+  }
+  for (const timing of [null, [], 'fixture-private-invalid', new Date(), Object.fromEntries(Array.from({length: 17}, (_, index) => [`extra${index}`, index]))]) {
+    await assert.rejects(publishResponse(invalid, 'invalid', {}, {timing}), /plain object with at most 16 fields/);
+  }
+  const cyclic = {}; cyclic.nested = cyclic;
+  for (const extra of [cyclic, {large: 'x'.repeat(4097)}, {wide: Array.from({length: 129}, () => 0)}, {deep: {a: {b: {c: {d: {e: {f: {g: {h: {i: 0}}}}}}}}}}]) {
+    await assert.rejects(publishResponse(invalid, 'invalid', {}, {timing: {extra}}), /bounded plain JSON limits/);
+  }
+  await assert.rejects(readFile(invalid), {code: 'ENOENT'});
+  await assert.rejects(fileSystem.lstat(`${invalid}.responses`), {code: 'ENOENT'});
+});
+
+test('reader treats stored timing as untrusted and leaves legacy envelope shapes unchanged', async () => {
+  const target = file('timing-read-untrusted.json');
+  const legacy = {format: 'vgc-operator-response-v1', id: 'legacy', payload: {turn: 4}};
+  await writeFile(target, JSON.stringify(legacy));
+  assert.deepEqual(await readResponse({file: target, id: 'legacy'}), legacy);
+  await writeFile(target, JSON.stringify({...legacy, payload: {error: 'fixture-capability'}, timing: {inputReceivedAt: 100, preparedAt: Date.now() + 60000,
+    mcpSettledAt: 'fixture-secret', nested: {capability: 'fixture-capability'}, readerMatchedAt: 1, idAvailableAt: 1}}));
+  const value = await readResponse({file: target, id: 'legacy'});
+  assert.equal(value.timing.inputReceivedAt, 100);
+  assert.equal(value.timing.preparedAgeMs, null);
+  assert(value.timing.readerMatchedAt > 1);
+  for (const key of ['mcpSettledAt', 'nested', 'idAvailableAt']) assert.equal(value.timing[key], undefined);
+  assert(!JSON.stringify(value).includes('fixture-secret'));
+  assert(!JSON.stringify(value).includes('fixture-capability'));
+  assert.equal(value.payload.error, '[redacted]');
+});
+
+test('publication errors expose only known filesystem codes and never raw private errors', async t => {
+  const target = file('timing-error-code.json');
+  const originalRename = fileSystem.rename;
+  t.mock.method(fileSystem, 'rename', async (source, destination) => {
+    if (destination === target) throw Object.assign(new Error('fixture-private-error'), {code: 'fixture-private-code'});
+    return originalRename(source, destination);
+  });
+  const value = await publishResponse(target, 'error-safe', {}, {timing: {inputReceivedAt: 100}});
+  assert.equal(value.publication.code, 'PUBLISH_ERROR');
+  assert(!JSON.stringify(value).includes('fixture-private'));
+  assert(Number.isSafeInteger(value.timing.idAvailableAt));
+});
+
 test('whole JSON text secrets are redacted before parsing even when their echoes appear first', () => {
   for (const secret of ['["fixture-private-array"]', '  [ "fixture-private-array" ]\n', '{ "private": ["fixture-private-object"] }']) {
     assert.deepEqual(sanitizeResponse({echo: secret, password: secret}), {echo: '[redacted]'});
@@ -261,4 +370,34 @@ test('CLI timeout reads only, sends nothing, and a later invocation drains the s
   assert.equal(invalid.code, 1);
   assert.equal(invalid.stdout, '');
   assert.match(invalid.stderr, /Usage:/);
+});
+
+test('decision CLI view renders a matched nested board while retaining the complete receipt unchanged', async () => {
+  const target = file('decision-view.json'), room = 'battle-gen9championsvgc2026regmcbo3-456';
+  const payload = {result: {next: {reason: 'fresh-action', state: {ok: true, result: {
+    sessionId: 'fixture-session', observedAt: Date.now(), actions: [{kind: 'switch', room, rqid: 4, token: 'a'.repeat(64),
+      legalActions: {forceSwitch: [false, true], replacementPairs: [[{type: 'pass'}, {type: 'switch', pokemonId: 'p1-4'}]]}}],
+    boards: [{room, ownSide: 'p1', opponentSheets: {p2: ['repeated sheet']}, recentEvents: {lines: ['|cant|p1a: Ally|flinch']}}],
+    timing: {requests: [{room, rqid: 4, token: 'a'.repeat(64), receivedAt: Date.now() - 12000,
+      firstChoiceMissing: true, hasFallback: false, cutoffAt: Date.now() + 5000, hardDeadlineAt: null}]},
+  }}}}};
+  await publishResponse(target, 'decision-view', payload);
+  const retainedBefore = await readFile(retainedFile(target, 'decision-view'), 'utf8');
+  const result = await run(['--wait', target, '--id', 'decision-view', '--view', 'decision', '--timeout-ms', '0']);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, '');
+  const view = JSON.parse(result.stdout), board = view.payload.result.next.state.result;
+  assert.equal(view.decisionView.kind, 'retained-response-decision-view');
+  assert.equal(board.timing.requests[0].reader.commitNow, true);
+  assert.equal(board.timing.requests[0].reader.hardRemainingMs, null);
+  assert.equal(board.boards[0].opponentSheets, undefined);
+  assert.deepEqual(board.actions[0].legalActions, payload.result.next.state.result.actions[0].legalActions);
+  assert.equal(await readFile(retainedFile(target, 'decision-view'), 'utf8'), retainedBefore);
+  assert.deepEqual((await readResponse({file: target, id: 'decision-view'})).payload, payload);
+  const pending = await run(['--wait', target, '--id', 'missing', '--view', 'decision', '--timeout-ms', '0']);
+  assert.equal(pending.code, 2);
+  assert.deepEqual(JSON.parse(pending.stdout), {id: 'missing', pending: true, reason: 'response-file-timeout', resend: false});
+  const invalid = await run(['--wait', target, '--id', 'decision-view', '--view', 'send']);
+  assert.equal(invalid.code, 1);
+  assert.match(invalid.stderr, /view must be full or decision/);
 });

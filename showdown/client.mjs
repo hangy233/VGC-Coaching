@@ -1,5 +1,6 @@
 import {EventEmitter} from 'node:events';
 import {createHash} from 'node:crypto';
+import {stripVTControlCharacters} from 'node:util';
 import {createBattleState,reduceBattleLine,reduceBattleRequest,battleStateSnapshot} from './battle-state.mjs';
 import {validateChoice as compileChoice} from './choice-validation.mjs';
 export const FORMAT = 'gen9championsvgc2026regmcbo3';
@@ -20,6 +21,21 @@ const digestMove = value => typeof value==='string' ? value.toLowerCase().replac
 const replayID = value => battleRoomIdentity(value)?.replace(/^battle-/, '');
 const MAX_REPLAY_BYTES = 8 * 1024 * 1024;
 const isMcFormat = value => ['gen9championsvgc2026regmc', FORMAT].includes(userID(value));
+const OUTGOING_ACTIONS = new Set(['authenticate','join-room','upload-team','search','cancel-search','choose','ready','forfeit','set-timer','save-replay']);
+const emptyTransport = () => ({incomingFrames:0,lastIncomingAt:null,outgoingAttempts:0,lastOutgoingAt:null,lastOutgoingAction:null});
+const SEARCH_MAINTENANCE_REJECTIONS = new Set([
+  'The server will be restarting soon. Best-of-3 battles cannot be started at this time.',
+  'The server is restarting. Battles will be available again in a few minutes.',
+]);
+export function safeServerNotice(value, {authenticated=false}={}) {
+  // Server errors can echo authentication input or private access URLs. Retain
+  // only bounded plain text after login; sensitive payloads stay metadata-only.
+  if(!authenticated || typeof value!=='string')return {text:null,textSuppressed:true,truncated:false};
+  const normalized=stripVTControlCharacters(value),text=normalized.replace(/[\p{Cc}\p{Cf}]/gu,' ').replace(/\s+/g,' ').trim();
+  const sensitive=/\b(?:password|passwd|assertion|credential|authorization|capability|controllerLease|readReceipt|challstr|access[ _-]?token|auth[ _-]?token)\b|\/(?:trn|utm)\b|https?:\/\/|\||[<>]|\b[a-f0-9]{32,}\b|\b[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\b|\b[A-Za-z0-9_-]{40,}\b/i;
+  if([value,text,normalized.replace(/[\p{Cc}\p{Cf}]/gu,'')].some(candidate=>sensitive.test(candidate)))return {text:null,textSuppressed:true,truncated:false};
+  return {text:text.slice(0,512),textSuppressed:false,truncated:text.length>512};
+}
 function abortable(promise, signal) {
   if(signal.aborted){Promise.resolve(promise).catch(()=>{});return Promise.reject(new Error('Replay operation timed out'));}
   return new Promise((resolve,reject)=>{
@@ -58,6 +74,7 @@ export class ShowdownClient extends EventEmitter {
     super(); check(typeof expectedTeamHash === 'string' && /^[a-f0-9]{64}$/.test(expectedTeamHash), 'Expected an approved SHA-256 team hash'); this.WebSocketImpl = WebSocketImpl; this.now = now; this.log = log; this.broker = broker;
     this.expectedTeamHash = expectedTeamHash; this.rooms = new Map(); this.roomAliases = new Map(); this.observationSequence = 0; this.connected = false; this.authenticated = false; this.epoch = 0;
     this.sent = new Set(); this.grants = new Map(); this.pendingReplay = null; this.replayRequests = new Map(); this.replays = []; this.formats = ''; this.searchGeneration = 0; this.searchPending = false; this.searchObservedActive = false;
+    this.transport = emptyTransport();
   }
   audit(event, data = {}) { this.log({time: this.now(), event, ...data}); }
   resolveRoom(id) { return this.roomAliases.get(id) || id; }
@@ -102,6 +119,7 @@ export class ShowdownClient extends EventEmitter {
       ended:records.some(record=>record.ended),
       previewObserved:records.some(record=>record.previewObserved),
       startedObserved:records.some(record=>record.startedObserved),
+      startedObservedEpoch:Math.max(-1,...records.map(record=>record.startedObservedEpoch??-1)),
       lastAction:records.map(record=>record.lastAction).filter(Boolean).sort((a,b)=>b.sentAt-a.sentAt)[0],
       readyRevision:Math.max(...records.map(record=>record.readyRevision)),
       forfeitPending:records.find(record=>record.forfeitPending)?.forfeitPending || null,
@@ -141,6 +159,7 @@ export class ShowdownClient extends EventEmitter {
   async connect({timeoutMs = 15000} = {}) {
     check(!this.ws || this.ws.readyState > 1, 'Socket already open or connecting');
     this.epoch++; this.authenticated = false; this.challenge = null; this.expectedUser = null;
+    this.transport = emptyTransport();
     this.grants.clear(); this.teamHash = null; this.pendingReplay = null; this.searchState = null; this.searchPending = false; this.searchObservedActive = false;
     for (const r of this.rooms.values()) { r.epoch = -1; r.readyPrompt = null; }
     const ws = this.ws = new this.WebSocketImpl(SOCKET);
@@ -174,10 +193,11 @@ export class ShowdownClient extends EventEmitter {
     check(epoch === this.epoch && this.connected && this.challenge === challenge && !abort.signal.aborted, 'Connection changed during authentication');
     check(typeof assertion === 'string' && assertion.length > 10 && !/[\r\n|]/.test(assertion), 'Invalid broker assertion');
     this.expectedUser = userID(username);
-    this.ws.send(`|/trn ${username},0,${assertion}`); assertion = null;
+    this.recordOutgoing('authenticate'); this.ws.send(`|/trn ${username},0,${assertion}`); assertion = null;
     this.audit('authentication-submitted');
   }
   receive(frame) {
+    this.transport.incomingFrames=Math.min(Number.MAX_SAFE_INTEGER,this.transport.incomingFrames+1);this.transport.lastIncomingAt=this.now();
     let room = '';
     for (const line of frame.split('\n')) {
       if (line.startsWith('>')) { room = line.slice(1); check(roomID(room), 'Invalid room'); room=this.resolveRoom(room); continue; }
@@ -187,7 +207,7 @@ export class ShowdownClient extends EventEmitter {
       const r = room ? this.state(room) : null;
       if(r)r.observedSequence=++this.observationSequence;
       if(r && type==='teampreview')r.previewObserved=true;
-      if(r && gameplayLine(line))r.startedObserved=true;
+      if(r && gameplayLine(line)){r.startedObserved=true;r.startedObservedEpoch=this.epoch;}
       if(r && type !== 'request') {
         reduceBattleLine(r.battle,line,{now:this.now});
         this.observeAction(r,type,parts);
@@ -223,7 +243,22 @@ export class ShowdownClient extends EventEmitter {
         else if (this.searchPending && this.searchObservedActive) { this.searchPending = false; this.searchObservedActive = false; this.searchGeneration++; }
         this.emit('search-state',this.searchState); continue;
       }
-      if (type === 'popup') this.emit('server-notice',{text:value});
+      if (type === 'popup' || type === 'error' && !r) {
+        this.emit('server-notice',{type,scope:r?'room':'global',...safeServerNotice(value,{authenticated:this.authenticated})});
+        // These exact server responses reject battle creation. Other notices,
+        // an old idle snapshot, or missing acknowledgment retain the reservation.
+        const activeRequest=[...this.rooms.values()].some(state=>!state.ended&&(
+          state.request&&state.epoch===this.epoch || state.readyPrompt?.epoch===this.epoch ||
+          state.startedObserved&&state.startedObservedEpoch===this.epoch
+        ));
+        if(type==='popup' && !r && this.authenticated && this.searchPending && this.searchState && !this.searchState.searching.length && !Object.keys(this.searchState.games||{}).length && !activeRequest && SEARCH_MAINTENANCE_REJECTIONS.has(value)){
+          const generation=this.searchGeneration;
+          this.searchPending=false;this.searchObservedActive=false;this.searchGeneration++;
+          // The popup carries no server attempt ID; correlation is bounded to
+          // this pending generation and the last explicitly observed idle state.
+          this.emit('search-rejected',{reasonCode:'server-maintenance',generation,at:this.now(),contextBound:true});
+        }
+      }
       if (type === 'request' && r) {
         const request = value ? JSON.parse(value) : null;
         if (request && request.rqid !== undefined) check(Number.isSafeInteger(request.rqid), 'Invalid rqid');
@@ -231,7 +266,7 @@ export class ShowdownClient extends EventEmitter {
         if (JSON.stringify(r.request) !== JSON.stringify(request)) { r.revision++; r.confirmedChoice = null; }
         r.request = request; r.epoch = this.epoch; r.receivedAt = this.now(); r.requestSequence=this.observationSequence;
         if(request?.teamPreview)r.previewObserved=true;
-        else if(request && (Array.isArray(request.active) || Array.isArray(request.forceSwitch) || request.side?.pokemon?.some(p=>p.active)))r.startedObserved=true;
+        else if(request && (Array.isArray(request.active) || Array.isArray(request.forceSwitch) || request.side?.pokemon?.some(p=>p.active))){r.startedObserved=true;r.startedObservedEpoch=this.epoch;}
         if(request && !request.wait)for(const parent of this.rooms.values())if(parent.children.includes(room))parent.readyPrompt=null;
         reduceBattleRequest(r.battle,request,{now:this.now});
         if(r.lastAction && request?.rqid !== r.lastAction.rqid)r.lastAction.boundary='next-request';
@@ -316,6 +351,13 @@ export class ShowdownClient extends EventEmitter {
     action.evidence.push(evidence);action.status=type==='cant' && !action.evidence.some(entry=>entry.executed)?'resolution-observed':'execution-observed';
     this.emit('action-status',{room:r.id,status:action.status,evidence});
   }
+  // Per-connection observations only. Outgoing timestamps/actions describe write
+  // attempts before I/O, including throws; they never establish server delivery.
+  transportStatus() { return {...this.transport}; }
+  recordOutgoing(action) {
+    this.transport.outgoingAttempts=Math.min(Number.MAX_SAFE_INTEGER,this.transport.outgoingAttempts+1);this.transport.lastOutgoingAt=this.now();
+    this.transport.lastOutgoingAction=OUTGOING_ACTIONS.has(action)?action:'other';
+  }
   // One-shot, bounded operator grants. These enforce scope; they do not replace user approval.
   authorize(action, {room = '', ttlMs = 30000, confirmed = false} = {}) {
     check(confirmed, 'Operator confirmation required'); check(ttlMs > 0 && ttlMs <= 120000, 'Invalid grant lifetime');
@@ -331,7 +373,7 @@ export class ShowdownClient extends EventEmitter {
     check(!this.sent.has(key), 'Duplicate or uncertain action blocked');
     this.grants.delete(grantKey); this.sent.add(key); // Mark before I/O: ambiguous failures must not retry.
     if(action==='forfeit')this.state(room).forfeitPending={sentAt:this.now(),status:'sent-not-acknowledged'};
-    this.ws.send(`${room}|${command}`); this.audit('sent',{action,room,key:digest(key)});
+    this.recordOutgoing(action); this.ws.send(`${room}|${command}`); this.audit('sent',{action,room,key:digest(key)});
   }
   pendingForfeit(room) {
     room=this.resolveRoom(room);
@@ -384,7 +426,7 @@ export class ShowdownClient extends EventEmitter {
     check(this.connected && roomID(room), 'Connected socket and valid room required');
     check(room===this.resolveRoom(room), 'Room was renamed; inspect fresh state');
     const key = `join:${this.epoch}:${room}`; check(!this.sent.has(key), 'Room already joined this connection');
-    this.sent.add(key); this.ws.send(`|/join ${room}`); this.audit('joined',{room});
+    this.sent.add(key); this.recordOutgoing('join-room'); this.ws.send(`|/join ${room}`); this.audit('joined',{room});
   }
   cancelSearch() { this.send('cancel-search','', `/cancelsearch ${FORMAT}`, `cancel:${this.epoch}:${this.teamHash}:${this.searchGeneration}`); }
   validateChoice(room, {rqid, revision, actions, deadlineAt}) {
@@ -481,5 +523,5 @@ export class ShowdownClient extends EventEmitter {
     this.releaseReplayWait(pending.room);this.emit('replay-verified',{room:verified.room,roomId:verified.room,url:verified.url,verified:true,verifiedAt:verified.verifiedAt});return verified;
   }
   battleSnapshot(room) {return battleStateSnapshot(this.state(room).battle,{now:this.now});}
-  snapshot() { return {connected:this.connected,authenticated:this.authenticated,epoch:this.epoch,search:this.searchState || null,replays:this.replays,rooms:[...this.rooms.values()].map(({battle,...room})=>({...room,battle:battleStateSnapshot(battle,{now:this.now})}))}; }
+  snapshot() { return {connected:this.connected,authenticated:this.authenticated,epoch:this.epoch,transport:this.transportStatus(),search:this.searchState || null,replays:this.replays,rooms:[...this.rooms.values()].map(({battle,...room})=>({...room,battle:battleStateSnapshot(battle,{now:this.now})}))}; }
 }
