@@ -303,7 +303,12 @@ export async function saveBattle({ workspace, record, metadataOnly = false }) {
       quality: {
         ...selected.quality,
         operational: metadataOnly ? existing.quality.operational : Boolean(existing?.quality.operational || incoming.quality.operational),
-        warnings: metadataOnly ? existing.quality.warnings : [...new Set([...(existing?.quality.warnings ?? []), ...incoming.quality.warnings])],
+        // These two parser observations describe the current game, rather than
+        // a permanent source gap. A later full record can resolve them. Keep
+        // historical gaps, operational warnings and acceptance uncertainty.
+        warnings: (metadataOnly ? existing.quality.warnings : [...new Set([...(existing?.quality.warnings ?? []), ...incoming.quality.warnings])])
+          .filter(message => !(selected.completed && message === 'No official result was observed; this battle is incomplete.') &&
+            !(selected.selectionKnown && message === 'Full selected team is unknown; only observed Pokémon are counted as selected.')),
       },
       importedAt: existing?.importedAt ?? new Date().toISOString(),
     };

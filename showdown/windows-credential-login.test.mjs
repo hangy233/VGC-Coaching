@@ -5,11 +5,11 @@ import {PassThrough,Writable} from 'node:stream';
 import {readFile} from 'node:fs/promises';
 import {createWindowsCredentialBroker,windowsCredentialTarget} from './windows-credential-login.mjs';
 
-const context={username:'TofuRotom',challenge:'1|synthetic-public-challenge',origin:'https://play.pokemonshowdown.com'};
+const context={username:'FixturePlayer',challenge:'1|synthetic-public-challenge',origin:'https://play.pokemonshowdown.com'};
 // The pinned server's validateToken destructures challenge before userid.
-const signedData='synthetic-public-challenge,tofurotom,2,1792100000,sim3.psim.us';
+const signedData='synthetic-public-challenge,fixtureplayer,2,1792100000,sim3.psim.us';
 const assertion=signedData+';synthetic-signature';
-const success={ok:true,username:'tofurotom',assertion};
+const success={ok:true,username:'fixtureplayer',assertion};
 const SECRET='synthetic-password-must-never-reach-node-output';
 function helper({reply=success,exitCode=0,hang=false,onInput}={}){
   const calls=[];
@@ -28,14 +28,14 @@ function helper({reply=success,exitCode=0,hang=false,onInput}={}){
   };
   return {spawnImpl,calls};
 }
-const broker=(fake,options={})=>createWindowsCredentialBroker({username:'TofuRotom',platform:'win32',spawnImpl:fake.spawnImpl,...options});
+const broker=(fake,options={})=>createWindowsCredentialBroker({username:'FixturePlayer',platform:'win32',spawnImpl:fake.spawnImpl,...options});
 function redacted(code){return error=>{
   assert.equal(error.code,code);assert(!error.message.includes(SECRET));assert(!error.stack.includes(SECRET));
   assert.equal(Object.getOwnPropertyDescriptor(error,'code').writable,false);return true;
 };}
 
 test('opt-in saved login pins one approved account and never accepts target overrides',async()=>{
-  assert.equal(windowsCredentialTarget('Tofu Rotom'),'VGC-Coaching/PokemonShowdown/tofurotom');
+  assert.equal(windowsCredentialTarget('Fixture Player'),'VGC-Coaching/PokemonShowdown/fixtureplayer');
   assert.throws(()=>createWindowsCredentialBroker(),redacted('INVALID_LOGIN_CONTEXT'));
   assert.throws(()=>windowsCredentialTarget('../other'),redacted('INVALID_LOGIN_CONTEXT'));
   const fake=helper();
@@ -77,13 +77,13 @@ test('helper errors use an allowlist and cannot forward raw errors or password f
 
 test('assertion contract binds challenge field 0 and userid field 1, with five fields and a signature',async()=>{
   for(const invalid of [
-    'different-challenge,tofurotom,2,1792100000,sim3.psim.us;synthetic-signature',
-    '1|synthetic-public-challenge,tofurotom,2,1792100000,sim3.psim.us;synthetic-signature',
+    'different-challenge,fixtureplayer,2,1792100000,sim3.psim.us;synthetic-signature',
+    '1|synthetic-public-challenge,fixtureplayer,2,1792100000,sim3.psim.us;synthetic-signature',
     'synthetic-public-challenge,other,2,1792100000,sim3.psim.us;synthetic-signature',
-    'synthetic-public-challenge,TofuRotom,2,1792100000,sim3.psim.us;synthetic-signature',
-    'tofurotom,synthetic-public-challenge,2,1792100000,sim3.psim.us;synthetic-signature',
-    'tofurotom,1,synthetic-time,synthetic-host;synthetic-signature',
-    'synthetic-public-challenge,tofurotom,2,1792100000;synthetic-signature',
+    'synthetic-public-challenge,FixturePlayer,2,1792100000,sim3.psim.us;synthetic-signature',
+    'fixtureplayer,synthetic-public-challenge,2,1792100000,sim3.psim.us;synthetic-signature',
+    'fixtureplayer,1,synthetic-time,synthetic-host;synthetic-signature',
+    'synthetic-public-challenge,fixtureplayer,2,1792100000;synthetic-signature',
     signedData,
     signedData+';',
     signedData+';   ',

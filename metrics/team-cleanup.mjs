@@ -1,13 +1,16 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {lstat,readdir,readFile,realpath,rename,unlink,mkdir,writeFile} from 'node:fs/promises';
+import {lstat,readdir,opendir,readFile,realpath,rename,unlink,mkdir,writeFile} from 'node:fs/promises';
 import {isAbsolute,join,relative,resolve,sep,extname,basename} from 'node:path';
 import {listBattles,listTeams} from './store.mjs';
 import {beginMetricsTeamDeletion,finishMetricsTeamDeletion,getMetricsTeamDeletion,listMetricsTeamDeletions,acquireMetricsBattleLock} from './catalog.mjs';
 import {decodeInput,canonicalRoom,mutateMetricsSources} from './import.mjs';
 import {callLocalSession} from '../showdown/local-bridge.mjs';
+import {invalidatePlanningTeamCaches} from '../planning/numeric-cache.mjs';
 
 const HASH=/^[a-f0-9]{64}$/u,MAX=64*1024*1024;
 const controlId=createHash('sha256').update('team-metrics-cleanup-control').digest('hex');
+const PILOT_NAME='offline-timing-pilot',PILOT_KIND='private-offline-timing-pilot-artifacts';
+const PILOT_ARTIFACT='offline-pilot-artifact',PILOT_OWNERSHIP='offline-pilot-ownership';
 const slash=value=>value.replaceAll('\\','/');
 const digest=value=>createHash('sha256').update(value).digest('hex');
 const key=value=>slash(value).toLowerCase();
@@ -39,6 +42,43 @@ async function names(workspace,directory){
   return (await readdir(path,{withFileTypes:true})).filter(entry=>entry.isFile()||entry.isSymbolicLink()).map(entry=>slash(join(directory,entry.name)));
 }
 async function jsonAt(workspace,file){const value=await fileAt(workspace,file);return value?JSON.parse(value.bytes.toString('utf8')):null;}
+function pilotOwner(value,teamId,parentId){
+  return value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===4&&
+    value.schemaVersion===1&&value.kind===PILOT_KIND&&value.teamId===teamId&&value.parentId===parentId;
+}
+function pilotPath(file){
+  return /^(cache\/bo3-runs\/((?:game-)?bestof3-[a-z0-9]+-\d+)\/offline-timing-pilot)\//u.exec(slash(file));
+}
+/** One explicitly owned experiment directory, never arbitrary nested cache data.
+ * Collect paths before adding candidates so a failed bound/link check blocks the
+ * entire directory. Files are subsequently hashed/rechecked by fileAt/add.
+ */
+async function pilotFiles(workspace,directory){
+  const root=await realpath(workspace),start=resolve(root,directory);
+  if(!inside(root,start)||!slash(relative(root,start)).startsWith('cache/bo3-runs/'))throw fail('pilot directory must stay in its owned parent');
+  let current=root;
+  for(const part of relative(root,start).split(sep)){
+    current=join(current,part);let info;try{info=await lstat(current);}catch(error){if(error.code==='ENOENT')return [];throw error;}
+    if(info.isSymbolicLink()||!info.isDirectory()||!inside(root,await realpath(current)))throw fail('pilot directory is linked or unsafe');
+  }
+  const files=[];let entries=0;
+  async function walk(absolute,depth){
+    if(depth>8)throw fail('pilot directory exceeds the depth limit');
+    const info=await lstat(absolute),actual=await realpath(absolute);
+    if(info.isSymbolicLink()||!info.isDirectory()||actual!==start&&!inside(start,actual))throw fail('pilot directory is linked or unsafe');
+    for await(const entry of await opendir(absolute)){
+      if(++entries>6000)throw fail('pilot directory exceeds the entry limit');
+      const next=join(absolute,entry.name),stat=await lstat(next);
+      if(stat.isSymbolicLink())throw fail('pilot artifacts may not contain symbolic links or junctions');
+      if(stat.isDirectory())await walk(next,depth+1);
+      else if(stat.isFile()){
+        if(files.length>=3000)throw fail('pilot directory exceeds the file limit');
+        files.push(slash(relative(root,next)));
+      }else throw fail('pilot artifacts must be regular files');
+    }
+  }
+  await walk(start,0);return files.sort();
+}
 function alive(pid){if(!Number.isSafeInteger(pid)||pid<1)return false;try{process.kill(pid,0);return true;}catch(error){return error.code!=='ESRCH';}}
 async function sessionStatus(sessionCall,descriptor){
   let timer;
@@ -156,6 +196,7 @@ export async function planTeamCleanup({workspace,teamId,sessionCall=callLocalSes
   }
   for(const file of await names(workspace,'cache/team-metrics/decision-notes'))if(new RegExp('^'+teamId+'--(?:battle-[a-z0-9]+-\\d+|game-bestof3-[a-z0-9]+-\\d+)\\.json$','u').test(basename(file))||new RegExp('^\\.pending-'+teamId+'-[a-f0-9-]{36}\\.tmp$','u').test(basename(file)))await add(file,'decision-notes');
   for(const file of await names(workspace,'cache/team-metrics/calculations'))if(new RegExp('^'+teamId+'--[a-f0-9-]{36}\\.json$','u').test(basename(file))||new RegExp('^\\.pending-'+teamId+'-[a-f0-9-]{36}\\.tmp$','u').test(basename(file)))await add(file,'calculation-evidence');
+  for(const file of await names(workspace,'cache/team-metrics/timing'))if(new RegExp('^'+teamId+'--[a-f0-9-]{36}\\.timing\\.json\\.gz$','u').test(basename(file))||new RegExp('^\\.pending-'+teamId+'-[a-f0-9-]{36}\\.timing\\.tmp$','u').test(basename(file)))await add(file,'timing-evidence');
   for(const directory of ['','teams','reports/teams','evidence','replays'])for(const file of await names(workspace,'cache/team-metrics'+(directory?'/'+directory:'')))if(new RegExp('^\\.pending-'+teamId+'-[a-f0-9-]{36}\\.tmp$','u').test(basename(file)))await add(file,'temporary-file');
   for(const file of await names(workspace,'cache/team-metrics/deletions'))if(new RegExp('^\\.cleanup-'+teamId+'-[a-f0-9-]{36}\\.tmp$','u').test(basename(file)))await add(file,'temporary-file');
   await add(`cache/team-metrics/teams/${teamId}.txt`,'team-snapshot');
@@ -189,8 +230,35 @@ export async function planTeamCleanup({workspace,teamId,sessionCall=callLocalSes
       else if(/\.(?:tmp|temp)$/u.test(file))await add(file,'temporary-file',{shared:others.some(record=>record.parentId===parent)});
       else retained.push({path:file,kind:'run-artifact',reason:'Run artifact ownership or active control use is not established.'});
     }
+    const directory=`cache/bo3-runs/${parent}/${PILOT_NAME}`,markerFile=directory+'/ownership.json';
+    try{
+      const candidates=await pilotFiles(workspace,directory);
+      if(!candidates.length)continue;
+      const marker=await fileAt(workspace,markerFile);
+      if(!marker||marker.size>4096||!pilotOwner(JSON.parse(marker.bytes.toString('utf8')),teamId,parent))throw fail('pilot ownership marker is absent, malformed or belongs to another team/parent');
+      if(others.some(record=>canonicalRoom(record.parentId||'')===canonicalRoom(parent)))throw fail('pilot parent is shared with another retained team version');
+      // Pending journal hashes take precedence over rediscovery. A modified
+      // experiment file must not silently become a fresh deletion candidate.
+      const previous=new Map([...(journal?.files||[]),...(journal?.retained||[])].filter(entry=>typeof entry.path==='string')
+        .map(entry=>[key(entry.path),entry]));
+      for(const file of candidates){
+        // The validated fixed directory supplies ownership for opaque receipts,
+        // guidance and traces which are not themselves public protocol logs.
+        files.delete(key(file));
+        const index=retained.findIndex(entry=>key(entry.path)===key(file)&&entry.reason==='Source contains shared or unrecognized data; exclusive ownership is not established.');
+        if(index>=0)retained.splice(index,1);
+      }
+      const shared=file=>others.some(record=>(record.metadata.sources||[]).some(path=>key(path)===key(file)))||
+        otherSources.some(source=>[...(source.files||[]),source.ledgerFile,source.teamFile].filter(Boolean).some(path=>key(path)===key(file)));
+      for(const file of candidates.filter(file=>file!==markerFile))await add(file,PILOT_ARTIFACT,{expected:previous.get(key(file))?.sha256,shared:shared(file)});
+      // Keep the ownership marker last, including during an interrupted retry.
+      await add(markerFile,PILOT_OWNERSHIP,{expected:previous.get(key(markerFile))?.sha256,shared:shared(markerFile)});
+    }catch{
+      retained.push({path:directory,kind:'offline-pilot-directory',reason:'Pilot directory ownership, bounds or link safety could not be established.'});
+      blockers.push('Offline pilot artifacts are unsafe or not exclusively owned: '+directory);
+    }
   }
-  for(const previous of [...(journal?.files||[]),...(journal?.retained||[])])if(typeof previous.path==='string')await add(previous.path,previous.kind,{expected:previous.sha256,source:['source-log','run-log','review'].includes(previous.kind),shared:others.some(record=>(record.metadata.sources||[]).some(path=>key(path)===key(previous.path))||previous.path===`cache/team-metrics/replays/${digest(record.roomId.replace(/^battle-/u,''))}.json`)||otherSources.some(source=>[...(source.files||[]),source.ledgerFile].filter(Boolean).some(path=>key(path)===key(previous.path)))});
+  for(const previous of [...(journal?.files||[]),...(journal?.retained||[])])if(typeof previous.path==='string'&&previous.kind!=='offline-pilot-directory')await add(previous.path,previous.kind,{expected:previous.sha256,source:['source-log','run-log','review'].includes(previous.kind),shared:others.some(record=>(record.metadata.sources||[]).some(path=>key(path)===key(previous.path))||previous.path===`cache/team-metrics/replays/${digest(record.roomId.replace(/^battle-/u,''))}.json`)||otherSources.some(source=>[...(source.files||[]),source.ledgerFile].filter(Boolean).some(path=>key(path)===key(previous.path)))});
   return {schemaVersion:1,teamId,exists:catalog.some(team=>team.teamId===teamId)||owned.length>0||files.size>0||!!journal||!!tombstone,ready:blockers.length===0,complete:false,roomIds:[...rooms],parentIds:[...parents],files:[...files.values()],retained,blockers:[...new Set(blockers)],sourceRegistrations:registrations.length,tombstone,journalFile};
 }
 
@@ -214,7 +282,7 @@ export async function deleteTeamReport({workspace,teamId,dryRun=true,confirmed=f
   let plan=await planTeamCleanup({workspace,teamId,sessionCall});
   if(dryRun)return {...plan,dryRun:true,removed:[],pending:plan.retained.length>0||!plan.ready};
   if(!plan.ready)return {...plan,dryRun:false,removed:[],pending:true};
-  if(!plan.exists)return {...plan,dryRun:false,removed:[],complete:true,pending:false};
+  if(!plan.exists){invalidatePlanningTeamCaches({workspace,teamId});return {...plan,dryRun:false,removed:[],complete:true,pending:false};}
   const release=await acquireMetricsBattleLock({workspace,teamId:controlId,roomId:'delete-team-'+teamId});
   const removed=[];
   try{
@@ -227,6 +295,20 @@ export async function deleteTeamReport({workspace,teamId,dryRun=true,confirmed=f
     const retained=[...plan.retained];
     for(const entry of plan.files){
       try{
+        if([PILOT_ARTIFACT,PILOT_OWNERSHIP].includes(entry.kind)){
+          const match=pilotPath(entry.path),directory=match?.[1],parent=match?.[2];
+          const markerEntry=plan.files.find(candidate=>candidate.kind===PILOT_OWNERSHIP&&candidate.path===directory+'/ownership.json');
+          const marker=markerEntry&&await fileAt(workspace,markerEntry.path);
+          if(!match||!marker||marker.sha256!==markerEntry.sha256||!pilotOwner(JSON.parse(marker.bytes.toString('utf8')),teamId,parent)){
+            retained.push({...entry,reason:'Pilot ownership marker changed or is unavailable since the cleanup plan.'});continue;
+          }
+          if(entry.kind===PILOT_OWNERSHIP&&retained.some(candidate=>candidate.path?.startsWith(directory+'/'))){
+            retained.push({...entry,reason:'Pilot ownership is retained while an exact child artifact remains pending.'});continue;
+          }
+          if(entry.kind===PILOT_OWNERSHIP&&(await pilotFiles(workspace,directory)).some(file=>file!==entry.path)){
+            retained.push({...entry,reason:'Pilot directory acquired an unremoved artifact after the cleanup plan.'});continue;
+          }
+        }
         const current=await fileAt(workspace,entry.path);if(!current)continue;
         if(current.size!==entry.size||current.sha256!==entry.sha256){retained.push({...entry,reason:'Artifact changed after the cleanup plan.'});continue;}
         await unlink(current.absolute);removed.push(entry);

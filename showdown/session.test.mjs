@@ -96,7 +96,7 @@ class SyntheticClient extends ShowdownClient {
     // This transport never opens a socket. The real authenticate implementation
     // still exercises broker handoff and server identity acknowledgment.
     this.ws={readyState:1,send:command=>{
-      if(command.startsWith('|/trn '))queueMicrotask(()=>this.receive('|updateuser|TofuRotom|1|1'));
+      if(command.startsWith('|/trn '))queueMicrotask(()=>this.receive('|updateuser|FixturePlayer|1|1'));
       else this.commands.push(command);
     },close:()=>this.close()};
   }
@@ -108,12 +108,12 @@ class SyntheticClient extends ShowdownClient {
   close() {this.closeCalls++;this.connected=false;this.authenticated=false;this.emit('disconnected');}
 }
 
-async function fixture({login=async()=>ASSERTION,disconnectDuringSetup=false,autoReady=true,loginMethod='terminal'}={}) {
+async function fixture({login=async()=>ASSERTION,disconnectDuringSetup=false,autoReady=true,loginMethod='terminal',onLifecycle=()=>{}}={}) {
   const directory=await mkdtemp(join(tmpdir(),'vgc-session-'));
   const teamFile=join(directory,'team.txt'),descriptorPath=join(directory,'control.json');
   await writeFile(teamFile,TEAM);
   const tty=terminal(),signals=new EventEmitter(),loginCalls=[],brokerOptions=[];let client;
-  const options={username:'TofuRotom',teamFile,descriptorPath,authorizedSets:1,autoReady,loginMethod,input:tty.input,output:tty.output,signals,
+  const options={username:'FixturePlayer',teamFile,descriptorPath,authorizedSets:1,autoReady,loginMethod,input:tty.input,output:tty.output,signals,onLifecycle,
     brokerFactory:configuration=>{brokerOptions.push(configuration);return {login:async context=>{loginCalls.push({username:context.username,origin:context.origin});assert.equal(context.challenge,CHALLENGE);return login(context);}};},
     clientFactory:configuration=>{
       client=new SyntheticClient(configuration);
@@ -140,7 +140,7 @@ async function fixture({login=async()=>ASSERTION,disconnectDuringSetup=false,aut
 test('requires a genuine user TTY before constructing a broker, client, or connection',async()=>{
   for(const loginMethod of ['terminal','windows-credential-manager'])for(const change of [({input})=>{input.isTTY=false;},({output})=>{output.isTTY=false;},({input})=>{delete input.setRawMode;}]){
     const tty=terminal();change(tty);let touched=false;
-    await assert.rejects(runSession({username:'TofuRotom',teamFile:'unused-before-TTY-check',loginMethod,input:tty.input,output:tty.output,
+    await assert.rejects(runSession({username:'FixturePlayer',teamFile:'unused-before-TTY-check',loginMethod,input:tty.input,output:tty.output,
       clientFactory:()=>{touched=true;throw new Error('Must not construct');},brokerFactory:()=>{touched=true;throw new Error('Must not construct');}}),/visible user-operated terminal/);
     assert.equal(touched,false);
   }
@@ -150,7 +150,7 @@ test('rejects invalid teams before authentication or connection',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'vgc-invalid-team-')),teamFile=join(directory,'team.txt'),tty=terminal();let touched=false;
   try{
     await writeFile(teamFile,'Pikachu\n- Protect\n');
-    await assert.rejects(runSession({username:'TofuRotom',teamFile,input:tty.input,output:tty.output,
+    await assert.rejects(runSession({username:'FixturePlayer',teamFile,input:tty.input,output:tty.output,
       clientFactory:()=>{touched=true;},brokerFactory:()=>{touched=true;}}),/six-Pokémon team/);
     assert.equal(touched,false);
   }finally{await rm(directory,{recursive:true,force:true});}
@@ -160,20 +160,20 @@ test('login is terminal-only, publishes local controls afterward, streams events
   let finishLogin;
   const f=await fixture({login:()=>new Promise(resolve=>{finishLogin=resolve;})});
   try{
-    await deadline(f.tty.until(/Sign in as TofuRotom/));
+    await deadline(f.tty.until(/Sign in as FixturePlayer/));
     await assert.rejects(readFile(f.descriptorPath),/ENOENT/);
     assert(!f.tty.rendered().includes('MCP battle controls are ready'));
     finishLogin(ASSERTION);
     await deadline(f.tty.until(/MCP battle controls are ready/));
     assert.equal(f.client().connectCalls,1);
-    assert.deepEqual(f.loginCalls,[{username:'TofuRotom',origin:'https://play.pokemonshowdown.com'}]);
-    assert.deepEqual(f.brokerOptions,[{username:'TofuRotom',loginMethod:'terminal'}]);
+    assert.deepEqual(f.loginCalls,[{username:'FixturePlayer',origin:'https://play.pokemonshowdown.com'}]);
+    assert.deepEqual(f.brokerOptions,[{username:'FixturePlayer',loginMethod:'terminal'}]);
     const descriptor=JSON.parse(await readFile(f.descriptorPath,'utf8'));
     assert.equal(descriptor.version,1);
     assert.equal(typeof descriptor.address,'string');
     assert(!('port' in descriptor));
     const reply=await callLocalSession(f.descriptorPath,{id:'status',op:'status'});
-    assert.equal(reply.ok,true);assert.equal(reply.result.username,'TofuRotom');
+    assert.equal(reply.ok,true);assert.equal(reply.result.username,'FixturePlayer');
     assert.equal(reply.result.authenticated,true);assert.equal(reply.result.searchesSent,0);
     assert.equal(reply.result.controller.required,true);assert.equal(reply.result.controller.owner,null);
     assert.equal(reply.result.authorizedSets,1);assert.equal(reply.result.autoReady,true);
@@ -185,11 +185,11 @@ test('login is terminal-only, publishes local controls afterward, streams events
     assert.deepEqual(f.client().commands,[]); // Signing in must not search or upload.
     await assert.rejects(f.client().connect(),/new user-operated login/);
     const room='battle-gen9championsvgc2026regmcbo3-321';
-    f.client().receive(`>${room}\n|turn|1\n|move|p1a: Kommo-o|Aura Sphere|p2a: Archaludon\n|-damage|p2a: Archaludon|28/100\n|win|TofuRotom`);
+    f.client().receive(`>${room}\n|turn|1\n|move|p1a: Kommo-o|Aura Sphere|p2a: Archaludon\n|-damage|p2a: Archaludon|28/100\n|win|FixturePlayer`);
     assert.match(f.tty.rendered(),/\[Battle 321\] Turn 1/);
     assert.match(f.tty.rendered(),/Kommo-o used Aura Sphere/);
     assert.match(f.tty.rendered(),/Archaludon HP → 28\/100/);
-    assert.match(f.tty.rendered(),/Winner: TofuRotom/);
+    assert.match(f.tty.rendered(),/Winner: FixturePlayer/);
     for(const entry of await readdir(f.directory,{withFileTypes:true}))if(entry.isFile()){
       const saved=await readFile(join(f.directory,entry.name),'utf8');
       assert(!saved.includes(ASSERTION));assert(!saved.includes(CHALLENGE));assert(!saved.includes('password'));
@@ -258,7 +258,7 @@ test('existing session descriptor is preserved and failed setup still closes the
   const previous='{"sessionId":"previous-session","pid":12345}',tty=terminal(),signals=new EventEmitter();let client;
   try{
     await writeFile(teamFile,TEAM);await writeFile(descriptorPath,previous);
-    await assert.rejects(deadline(runSession({username:'TofuRotom',teamFile,descriptorPath,input:tty.input,output:tty.output,signals,
+    await assert.rejects(deadline(runSession({username:'FixturePlayer',teamFile,descriptorPath,input:tty.input,output:tty.output,signals,
       clientFactory:options=>(client=new SyntheticClient(options)),brokerFactory:()=>({login:async()=>ASSERTION})})),/descriptor already exists/);
     assert.equal(await readFile(descriptorPath,'utf8'),previous);
     assert.equal(client.connected,false);assert.equal(client.commands.length,0);
@@ -269,24 +269,24 @@ test('existing session descriptor is preserved and failed setup still closes the
 });
 
 test('saved login is explicit in CLI parsing; default and unrelated controls are unchanged',()=>{
-  const defaults=parseSessionArgs(['TofuRotom','--team','approved-team.txt']);
-  assert.deepEqual(defaults,{username:'TofuRotom',teamFile:resolve('approved-team.txt'),authorizedSets:1,autoReady:true,loginMethod:'terminal',saveReplays:false,battleTimer:false});
-  const saved=parseSessionArgs(['TofuRotom','--saved-login','--team','approved-team.txt','--sets','2','--manual-ready']);
+  const defaults=parseSessionArgs(['FixturePlayer','--team','approved-team.txt']);
+  assert.deepEqual(defaults,{username:'FixturePlayer',teamFile:resolve('approved-team.txt'),authorizedSets:1,autoReady:true,loginMethod:'terminal',saveReplays:false,battleTimer:false});
+  const saved=parseSessionArgs(['FixturePlayer','--saved-login','--team','approved-team.txt','--sets','2','--manual-ready']);
   assert.deepEqual(saved,{...defaults,authorizedSets:2,autoReady:false,loginMethod:'windows-credential-manager'});
   for(const args of [
-    ['TofuRotom','--team','approved-team.txt','--password','do-not-echo-me'],
-    ['TofuRotom','--team','approved-team.txt','--saved-login=do-not-echo-me'],
-    ['TofuRotom','--team','--saved-login'],
-    ['TofuRotom','--team','approved-team.txt','--sets'],
-    ['TofuRotom','--team','approved-team.txt','--sets','0'],
-    ['TofuRotom','--team','approved-team.txt','--sets','1.5'],
-    ['TofuRotom','--team','approved-team.txt','--sets','101'],
+    ['FixturePlayer','--team','approved-team.txt','--password','do-not-echo-me'],
+    ['FixturePlayer','--team','approved-team.txt','--saved-login=do-not-echo-me'],
+    ['FixturePlayer','--team','--saved-login'],
+    ['FixturePlayer','--team','approved-team.txt','--sets'],
+    ['FixturePlayer','--team','approved-team.txt','--sets','0'],
+    ['FixturePlayer','--team','approved-team.txt','--sets','1.5'],
+    ['FixturePlayer','--team','approved-team.txt','--sets','101'],
   ])assert.throws(()=>parseSessionArgs(args),error=>!error.message.includes('do-not-echo-me'));
 });
 
 test('unknown login methods fail before any broker, client, or connection',async()=>{
   const tty=terminal();let touched=false;
-  await assert.rejects(runSession({username:'TofuRotom',teamFile:'unused-team.txt',loginMethod:'automatic',input:tty.input,output:tty.output,
+  await assert.rejects(runSession({username:'FixturePlayer',teamFile:'unused-team.txt',loginMethod:'automatic',input:tty.input,output:tty.output,
     brokerFactory:()=>{touched=true;},clientFactory:()=>{touched=true;}}),/Unsupported login method/);
   assert.equal(touched,false);
 });
@@ -295,9 +295,9 @@ test('explicit saved-login selection passes approved account to its broker and s
   const f=await fixture({loginMethod:'windows-credential-manager'});
   try{
     await deadline(f.tty.until(/MCP battle controls are ready/));
-    assert.deepEqual(f.brokerOptions,[{username:'TofuRotom',loginMethod:'windows-credential-manager'}]);
+    assert.deepEqual(f.brokerOptions,[{username:'FixturePlayer',loginMethod:'windows-credential-manager'}]);
     assert.equal(f.loginCalls.length,1);
-    assert.match(f.tty.rendered(),/Sign in as TofuRotom using Windows Credential Manager/);
+    assert.match(f.tty.rendered(),/Sign in as FixturePlayer using Windows Credential Manager/);
     assert(!f.tty.rendered().includes('password'));
     const status=await callLocalSession(f.descriptorPath,{id:'saved-status',op:'status'});
     assert.equal(status.ok,true);assert.equal(status.result.authenticated,true);assert.equal(status.result.searchesSent,0);
@@ -317,11 +317,32 @@ test('saved-login failure makes one attempt without falling back to terminal log
   const f=await fixture({loginMethod:'windows-credential-manager',login:async()=>{throw new Error('Synthetic saved login unavailable');}});
   try{
     await assert.rejects(deadline(f.running),/Synthetic saved login unavailable/);
-    assert.deepEqual(f.brokerOptions,[{username:'TofuRotom',loginMethod:'windows-credential-manager'}]);
+    assert.deepEqual(f.brokerOptions,[{username:'FixturePlayer',loginMethod:'windows-credential-manager'}]);
     assert.equal(f.loginCalls.length,1);assert.equal(f.client().connectCalls,1);
     assert.equal(f.client().connected,false);
     assert(!f.tty.rendered().includes('MCP battle controls are ready'));
     await assert.rejects(readFile(f.descriptorPath),/ENOENT/);
     assert.equal(f.signals.eventNames().length,0);
+  }finally{await f.cleanup();}
+});
+
+test('lifecycle observer records exact normal boundaries with no broker payload',async()=>{
+  const phases=[],f=await fixture({loginMethod:'windows-credential-manager',onLifecycle:phase=>phases.push(phase)});
+  try{
+    await deadline(f.tty.until(/MCP battle controls are ready/));
+    assert.deepEqual(phases,['before-connect','before-authenticate','after-authenticate','before-bridge']);
+    f.client().close();await deadline(f.running);
+    assert.deepEqual(phases,['before-connect','before-authenticate','after-authenticate','before-bridge','end']);
+    assert(!JSON.stringify(phases).includes(ASSERTION));assert(!JSON.stringify(phases).includes(CHALLENGE));
+  }finally{await f.cleanup();}
+});
+
+test('failed pre-auth lifecycle persistence prevents broker authentication and still closes',async()=>{
+  const phases=[],f=await fixture({loginMethod:'windows-credential-manager',onLifecycle:phase=>{phases.push(phase);if(phase==='before-authenticate')throw new Error('Synthetic audit unavailable');}});
+  try{
+    await assert.rejects(deadline(f.running),/Synthetic audit unavailable/);
+    assert.deepEqual(phases,['before-connect','before-authenticate','end']);
+    assert.equal(f.loginCalls.length,0);assert.equal(f.client().connected,false);
+    await assert.rejects(readFile(f.descriptorPath),/ENOENT/);
   }finally{await f.cleanup();}
 });

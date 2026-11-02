@@ -1,4 +1,5 @@
 import {stripVTControlCharacters} from 'node:util';
+import {cantActionAttribution} from './protocol-action.mjs';
 
 // Only these structured protocol events become terminal text. Chat, HTML,
 // authentication events, assertions, and unknown messages are never rendered.
@@ -33,8 +34,16 @@ export function formatBattleEvent(event) {
     const species = text(data[1]?.split?.(',')[0]);
     return actor && species && condition(data[2]) ? `${actor} ${type === 'drag' ? 'was dragged in' : type === 'replace' ? 'was revealed' : 'entered'} (${species}); HP ${condition(data[2])}.` : null;
   }
-  case 'move': return actor && second ? `${actor} used ${second}${target ? ` → ${target}` : ''}.` : null;
-  case 'cant': return actor && second ? `${actor} could not act (${statuses[second] || second}${target ? `: ${target}` : ''}).` : null;
+  case 'move': return actor && second ? `${actor} ${data.includes('[still]')?'attempted':'used'} ${second}${target ? ` → ${target}` : ''}.` : null;
+  case 'cant': {
+    const attribution=cantActionAttribution(data);
+    if(attribution.kind==='blocked-user'){
+      const denied=text(attribution.actor),holder=text(attribution.holder),move=text(attribution.move),ability=effect(attribution.reason);
+      return denied&&holder&&move&&ability?`${denied} could not use ${move} (blocked by ${holder}'s ${ability}).`:null;
+    }
+    if(attribution.kind==='unknown-ability')return actor&&second?`${actor}: ${second}${target?` (${target})`:''}; move-user attribution unverified.`:null;
+    return actor && second ? `${actor} could not act (${statuses[second] || second}${target ? `: ${target}` : ''}).` : null;
+  }
   case 'faint': return actor ? `${actor} fainted.` : null;
   case 'swap': return actor && second ? `${actor} changed position (${second}).` : null;
   case '-damage': case '-heal': return actor && condition(data[1]) ? `${actor} ${type === '-heal' ? 'healed; ' : ''}HP → ${condition(data[1])}.` : null;

@@ -1,8 +1,9 @@
 import {readFile,writeFile,mkdir,lstat,realpath,rename,rm} from 'node:fs/promises';
 import {join,dirname,relative,isAbsolute,sep} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {acquireMetricsBattleLock,assertMetricsTeamWritable} from '../metrics/catalog.mjs';
 import {readCalculation} from '../workflow/calculations.mjs';
+import {validateTurnPlan,turnPlanResolutionSchema,turnPlanMetaSchema,validatePreviewPlan} from './turn-plan.mjs';
 
 const HASH=/^[a-f0-9]{64}$/u, ROOM=/^battle-gen9championsvgc2026regmc(?:bo3)?-[1-9]\d*$/u;
 const canonical=value=>String(value||'').replace(/-[a-z0-9]+pw$/u,'');
@@ -29,11 +30,27 @@ async function load(path,teamId,room){
 export async function saveDecisionNote({workspace,teamId,room,note}={}){
   room=identity(teamId,room);await assertMetricsTeamWritable({workspace,teamId});
   if(!note||!HASH.test(note.token||'')||typeof note.noteId!=='string'||!/^[A-Za-z0-9_-]{1,80}$/u.test(note.noteId)||!Number.isSafeInteger(note.turn)||note.turn<0||!Number.isSafeInteger(note.rqid)||note.rqid<0)throw new Error('Decision note must identify one observed action token, turn and request');
-  const clean={noteId:note.noteId,sessionId:text(note.sessionId,100),token:note.token,rqid:note.rqid,turn:note.turn,recordedAt:new Date().toISOString(),provenance:'Agent-provided reasoning and predictions are unverified. Included calculation references are separately verified against retained actual MCP tool results; they do not verify other numerical claims in the prose.',actionStatusAtNote:text(note.actionStatusAtNote||'unsubmitted',50),
+  const plan=note.turnPlan===undefined?undefined:validateTurnPlan(note.turnPlan),resolution=note.turnPlanResolution===undefined?undefined:turnPlanResolutionSchema.parse(note.turnPlanResolution);
+  const previewPlan=note.previewPlan===undefined?undefined:validatePreviewPlan(note.previewPlan);
+  if(note.previewPlanCapture!==undefined&&!previewPlan)throw new Error('Preview capture metadata requires its exact atomic preview plan');
+  if(previewPlan){
+    const capture=note.previewPlanCapture;
+    if(plan||resolution||!Number.isSafeInteger(note.revision)||note.revision<0||!capture||Object.keys(capture).length!==3||
+      !Number.isSafeInteger(capture.capturedAt)||capture.capturedAt<0||capture.capturedAt>Date.now()||!['selected','staged'].includes(capture.intentStatus)||
+      capture.intentStatus!==note.actionStatusAtNote||capture.planHash!==createHash('sha256').update(JSON.stringify(previewPlan)).digest('hex'))throw new Error('Exact same-command preview capture time, intent status and plan hash required');
+  }
+  if((plan||resolution)&&(!Number.isSafeInteger(note.revision)||note.revision<0))throw new Error('Turn plan notes require the observed request revision');
+  const clean={noteId:note.noteId,sessionId:text(note.sessionId,100),...(plan||resolution?{requestRef:createHash('sha256').update(JSON.stringify([note.sessionId,room,note.rqid,note.revision])).digest('hex'),revision:note.revision}:{token:note.token}),rqid:note.rqid,turn:note.turn,recordedAt:new Date().toISOString(),provenance:'Agent-provided reasoning and predictions are unverified. Included calculation references are separately verified against retained actual MCP tool results; they do not verify other numerical claims in the prose.',actionStatusAtNote:text(note.actionStatusAtNote||'unsubmitted',50),
     predictedOpposingActions:(note.predictedOpposingActions||[]).slice(0,2).map(value=>text(value,1000)),ourPlan:text(note.ourPlan),alternatives:(note.alternatives||[]).slice(0,3).map(value=>text(value,1000)),reason:text(note.reason),calculationRefs:[]};
+  if(plan){clean.turnPlan=plan;clean.ourPlan ||= plan.objective;if(note.turnPlanMeta!==undefined)clean.turnPlanMeta=turnPlanMetaSchema.parse(note.turnPlanMeta);}
+  if(previewPlan){clean.previewPlan=previewPlan;clean.previewPlanCapture={...note.previewPlanCapture};clean.ourPlan ||= previewPlan.objective;
+    clean.requestRef=createHash('sha256').update(JSON.stringify([note.sessionId,room,note.rqid,note.revision])).digest('hex');clean.revision=note.revision;delete clean.token;
+    clean.previewIntentSemantics='Claims captured from the same explicit preview command before control publication. Note persistence time is separate; no server acceptance, execution or later rationale is established.';}
+  if(resolution){clean.turnPlanResolution=resolution;clean.observationProvenance='Session-observed control event, separate from agent intent. Execution observations may cover only one slot; a sent choice alone does not establish acceptance or execution.';}
   if(!clean.ourPlan.trim()&&!clean.reason.trim())throw new Error('Supply a plan or reason for the decision note');
   if(!Array.isArray(note.calculationRefs||[])||(note.calculationRefs||[]).length>10)throw new Error('Supply at most ten MCP calculation evidence IDs');
-  for(const id of note.calculationRefs||[]){
+  const refs=[...new Set([...(note.calculationRefs||[]),...(plan?.evidenceRefs||[])])];if(refs.length>10)throw new Error('Supply at most ten MCP calculation evidence IDs');
+  for(const id of refs){
     if(typeof id!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(id))throw new Error('Calculation references must be MCP evidence IDs');
     const receipt=await readCalculation({workspace,teamId,id});
     if(receipt.roomId!==room||receipt.turn!==null&&receipt.turn!==note.turn)throw new Error('Calculation evidence belongs to a different battle or turn');

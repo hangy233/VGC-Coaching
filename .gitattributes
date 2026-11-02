@@ -1,0 +1,18 @@
+# Source/guidance pins must be reproducible across Windows and Unix checkouts.
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.md text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.txt text eol=lf
+*.ps1 text eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.zip binary

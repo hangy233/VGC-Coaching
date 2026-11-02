@@ -106,9 +106,12 @@ function sanitizeDecision(value, turn) {
   return result;
 }
 /** Bounded control telemetry only: never retain commands, errors, URLs or secrets. */
-const CONTROL_TRACE_TIMES=['at','elapsedMs','latencyMs','planningDeadlineAt','cutoffAt','emergencyAt','hardDeadlineAt','turnDeadlineAt','bankDeadlineAt','unknownCutoffAt','clockObservedAt','recoveryStartedAt','timerDisabledAt'];
+const CONTROL_TRACE_TIMES=['at','elapsedMs','latencyMs','planningDeadlineAt','cutoffAt','emergencyAt','hardDeadlineAt','turnDeadlineAt','bankDeadlineAt','unknownCutoffAt','clockObservedAt','recoveryStartedAt','timerDisabledAt','closeCode'];
 const CONTROL_TRACE_LABELS=['controllerId','source','status','kind','reasonCode','clockSource','observedClockSource','deadlineBasis'];
-const CONTROL_TRACE_FLAGS=['clockFreshForRequest','emergencyEligible','controlFailure','recovering'];
+const CONTROL_TRACE_FLAGS=['clockFreshForRequest','emergencyEligible','controlFailure','recovering','closeWasClean','localCloseRequested','reasonTextRetained'];
+const SERVER_ERROR_CATEGORIES=new Set(['invalid-choice','unavailable-choice','unclassified']);
+const SERVER_ERROR_REASONS=new Set(['too-late','game-over','not-your-turn','nothing-to-choose','nothing-to-cancel','trapped','move-disabled','battle-crashed','unclassified']);
+const SERVER_ERROR_FIELDS=['serverErrorCategory','serverErrorReason','serverErrorTextRetained','stateEndedAtError','requestPresentAtError'];
 export function sanitizeControlTrace(value, turn = 0) {
   if (value?.event !== 'control-trace' || typeof value.type !== 'string' || !/^[A-Za-z0-9_.:-]{1,80}$/u.test(value.type)) return null;
   const room = canonicalRoom(value.room);
@@ -120,6 +123,14 @@ export function sanitizeControlTrace(value, turn = 0) {
   for (const field of CONTROL_TRACE_TIMES) if (time(value[field]) !== undefined) result[field] = value[field];
   for (const field of CONTROL_TRACE_LABELS) if (typeof value[field] === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/u.test(value[field])) result[field] = value[field];
   for (const field of CONTROL_TRACE_FLAGS) if (typeof value[field] === 'boolean') result[field] = value[field];
+  // Only typed server-error enums survive. Raw error messages remain excluded,
+  // including legacy/forged strings that arrive directly at the recorder.
+  if(value.type==='server-error'){
+    if(SERVER_ERROR_CATEGORIES.has(value.serverErrorCategory))result.serverErrorCategory=value.serverErrorCategory;
+    if(SERVER_ERROR_REASONS.has(value.serverErrorReason))result.serverErrorReason=value.serverErrorReason;
+    if(value.serverErrorTextRetained===false)result.serverErrorTextRetained=false;
+    for(const field of ['stateEndedAtError','requestPresentAtError'])if(typeof value[field]==='boolean')result[field]=value[field];
+  }
   return result;
 }
 function mergeControlTrace(previous = [], incoming = []) {
@@ -423,7 +434,7 @@ async function canonicalSourceCoverage(workspace, content, extension, records, p
       }
       if (['action-status', 'choice-status', 'decision', 'choice'].includes(value.event) && !sanitizeDecision(value, 0)) return 'An unsupported action journal entry remains in the source.';
       if (value.event === 'control-trace') {
-        const allowed = new Set(['event','type','room','turn','seq','rqid','revision','generation',...CONTROL_TRACE_TIMES,...CONTROL_TRACE_LABELS,...CONTROL_TRACE_FLAGS]);
+        const allowed = new Set(['event','type','room','turn','seq','rqid','revision','generation',...CONTROL_TRACE_TIMES,...CONTROL_TRACE_LABELS,...CONTROL_TRACE_FLAGS,...SERVER_ERROR_FIELDS]);
         const trace = sanitizeControlTrace(value, 0);
         if (!trace || Object.keys(value).some(key => !allowed.has(key) || !(key in trace))) return 'An unsupported or unarchived control observation remains in the source.';
       }

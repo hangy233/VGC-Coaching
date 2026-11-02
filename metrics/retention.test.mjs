@@ -14,8 +14,8 @@ const URL = 'https://replay.pokemonshowdown.com/gen9championsvgc2026regmc-123';
 const CHECKPOINT = `cache/champions-mc-reviews/${PARENT}.json`;
 const { Teams } = createRequire(import.meta.url)('pokemon-showdown');
 const target = `cache/bo3-runs/${PARENT}/events.jsonl`;
-const record = overrides => ({ schemaVersion: 1, roomId: ROOM, parentId: PARENT, teamId: TEAM, username: 'TofuRotom', ownSide: 'p1', outcome: 'win', completed: true, turns: 2, players: { p1: 'TofuRotom', p2: 'Opponent' }, opponentRoster: ['Archaludon'], selected: ['Golisopod'], selectionKnown: false, leads: ['Golisopod'], pokemon: [{ key: 'golisopod', species: 'Golisopod', forms: [], selected: true, lead: true, moves: [{ move: 'Protect', uses: 1 }] }], quality: { complete: true, operational: false, warnings: [] }, team: { name: 'Rain team', format: 'gen9championsvgc2026regmc', roster: ['Golisopod'] }, metadata: { setResult: { outcome: 'win', completed: true }, sources: ['cache/events.jsonl'] }, ...overrides });
-const protocol = [ ['gametype', 'doubles'], ['tier', '[Gen 9] Champions VGC 2026 Reg M-C'], ['player', 'p1', 'TofuRotom'], ['player', 'p2', 'Opponent'], ['start'], ['turn', '1'], ['move', 'p1a: Golisopod', 'Protect', 'p1a: Golisopod'], ['turn', '2'], ['move', 'p1a: Golisopod', 'Leech Life', 'p2a: Archaludon'], ['win', 'TofuRotom'] ];
+const record = overrides => ({ schemaVersion: 1, roomId: ROOM, parentId: PARENT, teamId: TEAM, username: 'FixturePlayer', ownSide: 'p1', outcome: 'win', completed: true, turns: 2, players: { p1: 'FixturePlayer', p2: 'Opponent' }, opponentRoster: ['Archaludon'], selected: ['Golisopod'], selectionKnown: false, leads: ['Golisopod'], pokemon: [{ key: 'golisopod', species: 'Golisopod', forms: [], selected: true, lead: true, moves: [{ move: 'Protect', uses: 1 }] }], quality: { complete: true, operational: false, warnings: [] }, team: { name: 'Rain team', format: 'gen9championsvgc2026regmc', roster: ['Golisopod'] }, metadata: { setResult: { outcome: 'win', completed: true }, sources: ['cache/events.jsonl'] }, ...overrides });
+const protocol = [ ['gametype', 'doubles'], ['tier', '[Gen 9] Champions VGC 2026 Reg M-C'], ['player', 'p1', 'FixturePlayer'], ['player', 'p2', 'Opponent'], ['start'], ['turn', '1'], ['move', 'p1a: Golisopod', 'Protect', 'p1a: Golisopod'], ['turn', '2'], ['move', 'p1a: Golisopod', 'Leech Life', 'p2a: Archaludon'], ['win', 'FixturePlayer'] ];
 const values = () => protocol.map(([type, ...data]) => ({ room: ROOM, event: 'battle-event', type, data }));
 const replayFetch = async () => new Response(JSON.stringify({ id: ROOM.slice(7), log: protocol.map(parts => `|${parts.join('|')}`).join('\n') }));
 const checkpoint = overrides => ({ parentId: PARENT, teamSha256: TEAM, reviewedAt: new Date().toISOString(), status: 'review-complete', decisionReview: { positive: 'Observed Protect executed.', limitation: 'No paired action journal supplied.' }, reusableOutcome: { action: 'no-change', reason: 'Insufficient evidence for a new general rule.' }, adoption: { sourceSha256: 'b'.repeat(64), installedSha256: 'b'.repeat(64), syncVerified: true }, children: [{ id: ROOM }], ...overrides });
@@ -28,7 +28,7 @@ const args = dir => ({ workspace: dir, teamId: TEAM, parentId: PARENT, checkpoin
 test('canonical evidence retains state, sheets and explicit decision phases while removing credentials and chat', async t => {
   const dir = await workspace(t), events = values();
   events.splice(6, 0,
-    { room: `${ROOM}-hiddenpw`, event: 'request', request: { rqid: 3, password: 'NEVER-PERSIST', assertion: 'NEVER-PERSIST', active: [{ moves: ['private'] }], side: { id: 'p1', name: 'TofuRotom', pokemon: [{ ident: 'p1: Golisopod', details: 'Golisopod, L50', condition: '100/100', active: true, password: 'NEVER-PERSIST' }] } } },
+    { room: `${ROOM}-hiddenpw`, event: 'request', request: { rqid: 3, password: 'NEVER-PERSIST', assertion: 'NEVER-PERSIST', active: [{ moves: ['private'] }], side: { id: 'p1', name: 'FixturePlayer', pokemon: [{ ident: 'p1: Golisopod', details: 'Golisopod, L50', condition: '100/100', active: true, password: 'NEVER-PERSIST' }] } } },
     { room: ROOM, event: 'action-status', status: 'selected', turn: 1, selected: true, accepted: false, actions: ['move 1, move 2'], password: 'NEVER-PERSIST' },
     { room: ROOM, event: 'action-status', status: 'accepted', turn: 1, accepted: true, executed: false },
     { room: ROOM, event: 'action-status', status: 'execution-observed', turn: 1, evidence: { type: 'move', move: 'Protect', executed: true, assertion: 'NEVER-PERSIST' } },
@@ -82,6 +82,24 @@ test('canonical control traces are bounded allowlisted observations with private
   assert.deepEqual(filtered.controlTrace.map(value=>value.seq),[2,3]);
 });
 
+test('owned server-error diagnostics retain only category enums and observed flags through canonical evidence',async t=>{
+  const dir=await workspace(t),events=values();
+  const error={event:'control-trace',room:ROOM,type:'server-error',seq:10,at:100,serverErrorCategory:'invalid-choice',serverErrorReason:'game-over',
+    stateEndedAtError:true,requestPresentAtError:false,serverErrorTextRetained:false,text:'NEVER-PERSIST',error:'NEVER-PERSIST',message:'NEVER-PERSIST',controllerLease:'NEVER-PERSIST'};
+  events.push(error,{...error,seq:11,type:'request',serverErrorCategory:'invalid-choice'},
+    {...error,seq:12,serverErrorCategory:'NEVER-PERSIST',serverErrorReason:'NEVER-PERSIST',serverErrorTextRetained:true},
+    {event:'control-trace',room:ROOM,type:'server-error',seq:13,at:101,reasonCode:'inspect-fresh-request'});
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});
+  const evidence=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM}),traces=evidence.controlTrace.slice(-4);
+  assert.equal(traces[0].serverErrorCategory,'invalid-choice');assert.equal(traces[0].serverErrorReason,'game-over');assert.equal(traces[0].stateEndedAtError,true);
+  assert.equal(traces[0].requestPresentAtError,false);assert.equal(traces[0].serverErrorTextRetained,false);
+  for(const key of ['serverErrorCategory','serverErrorReason','stateEndedAtError','requestPresentAtError','serverErrorTextRetained'])assert.equal(traces[1][key],undefined);
+  assert.equal(traces[2].serverErrorCategory,undefined);assert.equal(traces[2].serverErrorReason,undefined);assert.notEqual(traces[2].serverErrorTextRetained,true);
+  assert.equal(traces[3].reasonCode,'inspect-fresh-request');
+  for(const key of ['serverErrorCategory','serverErrorReason','stateEndedAtError','requestPresentAtError','serverErrorTextRetained'])assert.equal(traces[3][key],undefined);
+  assert.equal(JSON.stringify(evidence.controlTrace).includes('NEVER-PERSIST'),false);assert.equal(evidence.events.filter(value=>value.type==='win').length,1);
+});
+
 test('later recording preserves earlier control traces, including a late partial-history recovery', async t => {
   const dir=await workspace(t),trace=(seq,type)=>({room:ROOM,event:'control-trace',type,seq,at:100+seq,rqid:31,revision:1});
   const first=[...values(),trace(1,'request-received')];
@@ -93,7 +111,7 @@ test('later recording preserves earlier control traces, including a late partial
   const updated=await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:[...values().slice(0,6),trace(3,'watchdog-forfeit')]});
   assert.equal(updated.complete,true);assert.equal(updated.status,'updated');
   read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});assert.deepEqual(read.controlTrace.map(value=>value.seq),[1,2,3]);
-  assert.equal(read.events.at(-1).type,'win');assert.equal(read.events.at(-1).data[0],'TofuRotom');
+  assert.equal(read.events.at(-1).type,'win');assert.equal(read.events.at(-1).data[0],'FixturePlayer');
   await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:[...values(),{...trace(2,'fallback-sent'),at:500}]});
   read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});assert.deepEqual(read.controlTrace.map(value=>value.seq),[1,2,3,2]);
   assert.equal(read.controlTrace.at(-1).at,500);
@@ -109,6 +127,25 @@ test('cleanup protects unarchived or unsupported control traces until canonical 
   plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,false);assert.match(plan.files[0].reason,/unsupported or unarchived control/);
   await write(dir,target,[...events,{...trace,seq:2,status:'https://example.test/private'}].map(value=>JSON.stringify(value)).join('\n')+'\n');
   plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,false);assert.match(plan.files[0].reason,/unsupported or unarchived control/);
+});
+
+test('owned server-error diagnostics require canonical coverage before guarded cleanup and preserve malformed source fields',async t=>{
+  const dir=await prepared(t),trace={room:ROOM,event:'control-trace',type:'server-error',seq:3,at:300,serverErrorCategory:'invalid-choice',
+    serverErrorReason:'game-over',serverErrorTextRetained:false,stateEndedAtError:true,requestPresentAtError:false};
+  const events=[...values(),trace],text=rows=>rows.map(value=>JSON.stringify(value)).join('\n')+'\n';
+  await write(dir,target,text(events));
+  let plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,false);assert.match(plan.files[0].reason,/control observations absent/u);
+  await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});
+  plan=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(plan.files[0].eligible,true);
+  for(const malformed of [{serverErrorReason:'private-unsupported-value'},{serverErrorTextRetained:true},{serverErrorCategory:'invalid-category'},{stateEndedAtError:'true'},{text:'NEVER-PERSIST'},{type:'request'}]){
+    await write(dir,target,text([...values(),{...trace,...malformed}]));
+    const blocked=await buildCleanupPlan({...args(dir),files:[target]});assert.equal(blocked.files[0].eligible,false);assert.match(blocked.files[0].reason,/unsupported or unarchived control/u);
+  }
+  await write(dir,target,text(events));const cleaned=await cleanupBo3Files({...args(dir),files:[target],confirmed:true});assert.equal(cleaned.removedCount,1);
+  await assert.rejects(readFile(join(dir,target)),{code:'ENOENT'});
+  const evidence=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM}),retained=evidence.controlTrace.find(value=>value.seq===3);
+  assert.equal(retained.serverErrorReason,'game-over');assert.equal(retained.stateEndedAtError,true);assert.equal(evidence.complete,true);
+  t.diagnostic(JSON.stringify({kind:'owned-error-guarded-cleanup-roundtrip',unarchivedProtected:true,archivedEligible:true,malformedProtected:true,removedCount:cleaned.removedCount,retainedReason:retained.serverErrorReason,complete:evidence.complete}));
 });
 
 test('partial evidence can complete but cannot downgrade completed evidence or rewrite conflicting history', async t => {
@@ -136,12 +173,12 @@ test('completed evidence accepts later player lifecycle observations without rew
   events.splice(4,0,{room:ROOM,event:'decision',phase:'preview',status:'unknown',turn:0,at:99,reason:'Preview submission history was not observed.',evidence:{type:'preview-transition',transition:'battle-start'}});
   await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events});
   const before=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});
-  const later=[...events,{room:ROOM,type:'player',data:['p1',''],at:200},{room:ROOM,type:'player',data:['p1','TofuRotom'],at:201}];
+  const later=[...events,{room:ROOM,type:'player',data:['p1',''],at:200},{room:ROOM,type:'player',data:['p1','FixturePlayer'],at:201}];
   const saved=await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:later});
   assert.equal(saved.status,'updated');assert.equal(saved.eventCount,before.events.length+2);
   const read=await readGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM});
   assert.deepEqual(read.events.slice(0,before.events.length),before.events);assert.deepEqual(read.decisions,before.decisions);
-  assert.deepEqual(read.events.slice(-2).map(value=>value.data),[['p1',''],['p1','TofuRotom']]);
+  assert.deepEqual(read.events.slice(-2).map(value=>value.data),[['p1',''],['p1','FixturePlayer']]);
   assert.equal((await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:later})).status,'unchanged');
   // Receiving the same history after a reconnect does not change fact timestamps.
   assert.equal((await saveGameEvidence({workspace:dir,teamId:TEAM,roomId:ROOM,events:later.map(value=>({...value,at:value.at+1000}))})).status,'unchanged');
@@ -236,7 +273,7 @@ test('same-room new turns, decisions, sheets and unknown JSON remain protected u
 
 test('parent results are removable only when their whitelisted facts match the retained official outcome', async t => {
   const dir = await prepared(t);
-  const parent = { room: PARENT, event: 'result', type: 'win', winner: 'TofuRotom', at: Date.now() };
+  const parent = { room: PARENT, event: 'result', type: 'win', winner: 'FixturePlayer', at: Date.now() };
   await write(dir, target, sourceText() + JSON.stringify(parent) + '\n');
   let plan = await buildCleanupPlan({ ...args(dir), files: [target] }); assert.equal(plan.files[0].eligible, true);
   for (const unsafe of [{ ...parent, winner: 'Opponent' }, { ...parent, privateDecisionReview: 'Useful and not archived' }, { ...parent, type: 'tie' }]) {

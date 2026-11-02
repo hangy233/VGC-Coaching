@@ -27,6 +27,12 @@ const state = overrides => ({sessionId: 'fixture', revision: 8, observedAt: 2000
   choices: [{room: ROOM, rqid: 1, status: 'sent'}], ...overrides});
 const envelope = value => ({format: 'vgc-operator-response-v1', id: 'fixture-id', payload: {result: {ok: true, result: value}}});
 
+test('simulation decision rendering keeps gates/order/risk/final state beside next request without repeated full snapshots',()=>{
+  const simulation={engine:{gen:0,format:'gen9championsvgc2026regmc'},source:{room:ROOM,token:TOKEN},hypotheses:['Unknown foe spread candidate'],calculationRef:{id:'receipt'},summary:{allGatesPassed:false},limitations:['Samples only'],samples:[{branchId:'pair',seed:[1,2,3,4],start:{sides:[]},openingEvents:[],events:[{index:1,type:'move',actorId:'a',targetId:'b',raw:'|move|a|Example|b'},{index:2,type:'-damage',actorId:'b',raw:'|-damage|b|1/200'},{index:3,type:'cant',actorId:'b',raw:'|cant|b|par'},{index:4,type:'faint',actorId:'b',raw:'|faint|b'}],actionOutcomes:[],accepted:{p1:{accepted:true}},gate:{passed:false,cleanSample:false},boundary:'forced-replacement',pendingActions:[{kind:'move'}],pendingPhases:['move','residual'],noPendingContinuation:false,stochastic:{sampleOnly:true,actionDenialEvents:['par']},final:{turn:1,field:{terrain:'grassyterrain'},sides:[{id:'p1',active:['a'],pokemon:[{id:'a',hp:1,maxhp:200,status:'',pp:[1,2,3,4],lifecycle:{activeMoveActions:1}}]}]}}]};
+  const original=envelope({conditional:{calculations:[{name:'simulate_turn',result:simulation}]},next:{state:state()}}),before=structuredClone(original),projected=projectDecisionView(original,{now:5000}),result=projected.payload.result.result.conditional.calculations[0].result;
+  assert.deepEqual(original,before);assert.equal(result.samples[0].start,undefined);assert.equal(result.samples[0].openingEvents,undefined);assert.deepEqual(result.samples[0].orderedEvents.map(event=>event.native.split('|')[1]),['move','-damage','cant','faint']);assert.deepEqual(result.samples[0].gate,simulation.samples[0].gate);assert.deepEqual(result.samples[0].pendingPhases,['move','residual']);assert.equal(result.samples[0].final.sides[0].pokemon[0].hp,1);assert.equal(result.samples[0].final.sides[0].pokemon[0].pp,undefined);assert.equal(result.decisionViewSimulation.fullResponseRetained,true);assert.deepEqual(projected.payload.result.result.next.state.actions,before.payload.result.result.next.state.actions);assert.equal(projected.decisionReady.distinctObservations,1);
+});
+
 test('preview preserves the complete registered opposing six and own legal request without editing the receipt', () => {
   const original = envelope(state({actions: [action({kind: 'preview'})]}));
   original.payload.result.result.boards[0].opponentSheets = {p1: Array.from({length: 6}, (_, index) => ({species: `fixture-${index}`, moves: ['Protect', 'Psychic Noise'], item: 'Sitrus Berry'}))};
@@ -195,4 +201,223 @@ test('pending and unrelated outputs retain their existing shape', () => {
   const unrelated = {format: 'vgc-operator-response-v1', id: 'done', payload: {complete: true}};
   assert.deepEqual(projectDecisionView(unrelated, {now: 10}), unrelated);
   assert.throws(() => projectDecisionView(pending, {now: NaN}), /epoch/);
+});
+
+test('action-ready index precedes metadata and points to exact first-pair legality and board without selecting actions', () => {
+  // Anonymized equivalent of the missed first pair: one fresh observation,
+  // no optional tools or duplicate states, two active slots and one reserve.
+  const s = state({connected: true, authenticated: true, stopped: false,
+    transport: {incomingFrames: 900}, futureField: {keep: 'exact'}});
+  s.actions[0].legalActions = {teamPreview: false, forceSwitch: null,
+    active: [{moves: [{move: 'Protect', disabled: false, target: 'self'}]},
+      {moves: [{move: 'Protect', disabled: false, target: 'self'}]}],
+    pokemon: [{ident: 'p2: Active A', active: true}, {ident: 'p2: Active B', active: true},
+      {ident: 'p2: Reserve', condition: '200/200', active: false}]};
+  s.controlPolicy.pending = [{token: TOKEN, room: ROOM, rqid: 3, hasFallback: false,
+    attempted: false, receivedAt: 1000, cutoffAt: 31000, hardDeadlineAt: 56000}];
+  s.timing.requests[0].cutoffAt = 31000;
+  s.timing.requests[0].hardDeadlineAt = 56000;
+  const source = envelope(s), original = structuredClone(source);
+  const view = projectDecisionView(source, {now: 1066});
+  assert.equal(Object.keys(view)[0], 'decisionReady');
+  assert.equal(view.decisionReady.distinctObservations, 1);
+  const index = view.decisionReady.observations[0], request = index.requests[0];
+  assert.equal(index.statePath, '$.payload.result.result');
+  assert.equal(request.attention, 'unprotected-request-observed');
+  assert.match(request.nextActionFocus, /first useful complete legal pair.*next tool.*before extended ranking, reports or handoff/);
+  assert.equal(request.token, TOKEN);
+  assert.equal(request.rqid, 3);
+  assert.equal(request.reader.requestAgeMs, 66);
+  assert.equal(request.reader.cutoffRemainingMs, 29934);
+  assert.equal(request.reader.hardRemainingMs, 54934);
+  assert.equal(request.legalActionsPath, '$.payload.result.result.actions[0].legalActions');
+  assert.deepEqual(request.boardPaths, ['$.payload.result.result.boards[0]']);
+  assert.deepEqual(request.pendingSafety, {hasFallback: false, attempted: false});
+  assert.equal(request.pendingSafetyPath, '$.payload.result.result.controlPolicy.pending[0]');
+  assert.equal(request.clockPath, '$.payload.result.result.actions[0].clock');
+  assert.equal(index.safetyPath, '$.payload.result.result.controlPolicy');
+  assert.equal(Object.hasOwn(request, 'actions'), false);
+  assert.equal(Object.hasOwn(request, 'recommendedActions'), false);
+  assert.deepEqual(Object.keys(view.payload.result.result).slice(0, 6),
+    ['actions', 'timing', 'boards', 'controlPolicy', 'choices', 'controller']);
+  assert.deepEqual(view.payload.result.result.actions[0].legalActions, s.actions[0].legalActions);
+  assert.deepEqual(view.payload.result.result.futureField, s.futureField);
+  assert.deepEqual(source, original);
+});
+
+test('normal post-send index presents the fresh request while preserving the previous send receipt', () => {
+  const s = state(), sent = {ok: true, result: {rqid: 2, status: 'sent-not-acknowledged'}};
+  const source = {format: 'vgc-operator-response-v1', id: 'normal',
+    payload: {result: {sent, next: {reason: 'fresh-action', state: {ok: true, result: s}}}}};
+  const view = projectDecisionView(source, {now: 2500});
+  assert.equal(view.decisionReady.observations[0].statePath, '$.payload.result.next.state.result');
+  assert.equal(view.decisionReady.observations[0].requests[0].rqid, 3);
+  assert.deepEqual(view.payload.result.sent, sent);
+  assert.equal(view.payload.result.next.reason, 'fresh-action');
+});
+
+test('action-ready index preserves reserved, uncertain, staged and nonactionable observations even when old', () => {
+  for (const status of ['sent', 'uncertain', 'accepted', 'execution-observed']) {
+    const s = state(); s.actions[0].submissionStatus = status;
+    const request = projectDecisionView(envelope(s), {now: 90000}).decisionReady.observations[0].requests[0];
+    assert.equal(request.attention, 'preserve-existing-reservation', status);
+    assert.equal(request.submissionStatus, status);
+    assert.match(request.nextActionFocus, /Preserve the send reservation and observe/);
+    assert.doesNotMatch(request.nextActionFocus, /Author the first/);
+  }
+  const staged = state();
+  staged.controlPolicy.pending = [{token: TOKEN, room: ROOM, rqid: 3, hasFallback: true, fallbackSource: 'fallback', attempted: false}];
+  assert.equal(projectDecisionView(envelope(staged), {now: 90000}).decisionReady.observations[0].requests[0].attention,
+    'existing-fallback-observed');
+  assert.match(projectDecisionView(envelope(staged), {now: 90000}).decisionReady.observations[0].requests[0].nextActionFocus,
+    /Commit or revise the stored authored choice.*original deadline.*not a send or acceptance/);
+  staged.controlPolicy.pending[0].attempted = true;
+  assert.equal(projectDecisionView(envelope(staged), {now: 90000}).decisionReady.observations[0].requests[0].attention,
+    'preserve-existing-reservation');
+  const inactive = state(); inactive.actions[0].actionable = false;
+  assert.equal(projectDecisionView(envelope(inactive), {now: 90000}).decisionReady.observations[0].requests[0].attention,
+    'preserve-existing-status');
+});
+
+test('a fallback with unknown or emergency provenance is never presented as a confirmed agent-staged pair', () => {
+  for (const fallbackSource of [undefined, 'emergency-default']) {
+    const s = state();
+    s.controlPolicy.pending = [{token: TOKEN, room: ROOM, rqid: 3, hasFallback: true, fallbackSource, attempted: false}];
+    const request = projectDecisionView(envelope(s), {now: 1066}).decisionReady.observations[0].requests[0];
+    assert.equal(request.attention, 'existing-fallback-observed');
+    assert.match(request.nextActionFocus, /Inspect the existing fallback provenance/);
+    assert.doesNotMatch(request.nextActionFocus, /Commit the stored/);
+    assert.equal(request.pendingSafety.fallbackSource, fallbackSource);
+  }
+});
+
+test('native timing-only send reservations remain visible without inventing an action or acceptance', () => {
+  for (const submissionStatus of ['sent', 'uncertain']) {
+    const s = state({actions: []});
+    s.timing.requests[0].submissionStatus = submissionStatus;
+    const source = envelope(s), before = structuredClone(source);
+    const view = projectDecisionView(source, {now: 90000});
+    const request = view.decisionReady.observations[0].requests[0];
+    assert.equal(request.attention, 'preserve-existing-reservation');
+    assert.equal(request.submissionStatus, submissionStatus);
+    assert.equal(request.actionable, false);
+    assert.equal(request.reservationPath, '$.payload.result.result.timing.requests[0]');
+    assert.match(request.nextActionFocus, /missing acknowledgment does not authorize a resend/);
+    assert.equal(request.legalActionsPath, undefined);
+    assert.deepEqual(view.payload.result.result.actions, []);
+    assert.deepEqual(source, before);
+  }
+});
+
+test('halt preserves current-set recovery scope without interpreting retired exposure metadata', () => {
+  const s = state(); s.controlPolicy.halted = true; s.controlPolicy.haltReason = 'prior-control-failure';
+  const source = envelope(s);
+  source.payload.operatorExposure = {transferDue: true, successorId: 'prepared-successor', publishedCharacters: 7000};
+  const before = structuredClone(source), view = projectDecisionView(source, {now: 1066});
+  const index = view.decisionReady.observations[0];
+  assert.equal(index.policy.halted, true);
+  assert.match(index.haltScope, /blocks future search.*already user-authorized CURRENT SET recovery.*no new permission, policy reset or search/);
+  assert.equal(view.decisionReady.exposureAttention, undefined);
+  assert.match(index.requests[0].nextActionFocus, /first useful complete legal pair.*next tool/);
+  assert.equal(index.requests[0].attention, 'unprotected-request-observed');
+  assert.deepEqual(view.payload.operatorExposure, source.payload.operatorExposure);
+  assert.deepEqual(source, before);
+});
+
+test('every distinct observation has its own index; none is selected across changed recovery variants', () => {
+  const first = state(), next = structuredClone(first);
+  next.actions[0].token = 'b'.repeat(64);
+  next.actions[0].rqid = 4;
+  next.actions[0].submissionStatus = 'uncertain';
+  next.timing.requests[0].token = next.actions[0].token;
+  next.timing.requests[0].rqid = 4;
+  const source = rejectedReceipt(first, next), view = projectDecisionView(source, {now: 17000});
+  assert.equal(view.decisionReady.distinctObservations, 2);
+  const entries = view.decisionReady.observations;
+  assert.deepEqual(entries.map(entry => entry.statePath), ['$.payload.result.recovery.state', '$.payload.result.next.state']);
+  assert.deepEqual(entries.map(entry => entry.requests[0].token), [TOKEN, 'b'.repeat(64)]);
+  assert.deepEqual(entries.map(entry => entry.requests[0].attention),
+    ['unprotected-request-observed', 'preserve-existing-reservation']);
+  assert.equal(Object.hasOwn(view.decisionReady, 'currentObservation'), false);
+  assert.match(view.decisionReady.limitation, /without selecting a current variant/);
+  assert.equal(view.payload.result.recovery.retry, false);
+  assert.equal(view.payload.result.recovery.rebind, false);
+  assert.equal(view.payload.result.error, source.payload.result.error);
+});
+
+test('no-action and mismatched timing indices invent neither a request nor a countdown', () => {
+  const empty = state({actions: []}), view = projectDecisionView(envelope(empty), {now: 17000});
+  assert.deepEqual(view.decisionReady.observations[0].requests, []);
+  assert.equal(view.decisionReady.observations[0].attention, 'no-action-in-this-observation');
+  const mismatch = state(); mismatch.timing.requests[0].token = 'b'.repeat(64);
+  mismatch.controlPolicy.pending = [{token: 'b'.repeat(64), room: ROOM, rqid: 3, hasFallback: true, attempted: true}];
+  const request = projectDecisionView(envelope(mismatch), {now: 17000}).decisionReady.observations[0].requests[0];
+  assert.equal(request.reader, null);
+  assert.equal(request.pendingSafety, undefined);
+  assert.equal(request.attention, 'unprotected-request-observed');
+});
+
+function withRoomHistory(s = state()) {
+  const parent = 'game-bestof3-fixture-current';
+  s.actions[0].parentId = parent;
+  s.boards[0].parentId = parent;
+  s.boards[0].request = {rqid: s.actions[0].rqid};
+  s.rooms = [
+    {id: 'game-bestof3-fixture-old', parentId: 'game-bestof3-fixture-old', ended: true, result: {type: 'win', winner: 'prior'}},
+    {id: 'battle-fixture-old', parentId: 'game-bestof3-fixture-old', ended: true, result: {type: 'win', winner: 'prior'}},
+    {id: parent, parentId: parent, ended: false, result: null},
+    {id: 'battle-fixture-current-ended', parentId: parent, ended: true, result: {type: 'win', winner: 'current'}},
+    {id: ROOM, parentId: parent, ended: false, result: null},
+    {id: 'battle-other-live', parentId: 'game-bestof3-other-live', ended: false, result: null},
+    {id: 'battle-old-unknown-schema', parentId: 'game-bestof3-fixture-old', ended: true, result: null, warning: 'keep exact'},
+  ];
+  return s;
+}
+
+test('decision rendering omits only completed prior-set summaries after exact action and board parent binding', () => {
+  const s = withRoomHistory(), original = structuredClone(s);
+  const view = projectDecisionView(envelope(s), {now: 17000}).payload.result.result;
+  assert.deepEqual(view.rooms, original.rooms.slice(2));
+  assert.equal(view.decisionViewHistoricalRooms.omitted, 2);
+  assert.equal(view.decisionViewHistoricalRooms.currentParentId, s.actions[0].parentId);
+  assert.match(view.decisionViewHistoricalRooms.retained, /immutable matching response/);
+  for (const field of ['actions', 'controller', 'controlPolicy', 'choices', 'timerPolicy', 'boards']) {
+    assert.deepEqual(view[field], original[field], field);
+  }
+  assert.deepEqual(s, original);
+});
+
+test('full preview sheets and all six own legal options survive unrelated completed-room omission', () => {
+  const s = withRoomHistory(); s.actions[0].kind = 'preview';
+  s.actions[0].legalActions.pokemon = Array.from({length: 6}, (_, index) => ({ident: `p2: Own ${index}`, slot: index + 1}));
+  s.boards[0].opponentSheets = {p1: Array.from({length: 6}, (_, index) => ({species: `Opponent ${index}`, moves: ['Protect', 'Psychic Noise'], item: 'Sitrus Berry'}))};
+  const view = projectDecisionView(envelope(s), {now: 17000}).payload.result.result;
+  assert.equal(view.decisionViewHistoricalRooms.omitted, 2);
+  assert.deepEqual(view.actions, s.actions);
+  assert.deepEqual(view.boards[0].opponentSheets, s.boards[0].opponentSheets);
+  assert.deepEqual(view.boards[0].sides, s.boards[0].sides);
+});
+
+test('terminal, reserved, mismatched, missing and multiple-parent observations keep complete room history', () => {
+  const cases = {
+    terminal: s => {s.actions = [];},
+    reserved: s => {s.actions[0].submissionStatus = 'uncertain';},
+    nonactionable: s => {s.actions[0].actionable = false;},
+    request: s => {s.boards[0].request.rqid++;},
+    room: s => {s.boards[0].room += '-alias';},
+    parent: s => {s.actions[0].parentId += '-different';},
+    missingParent: s => {delete s.actions[0].parentId;},
+    missingBoardRequest: s => {delete s.boards[0].request;},
+    multipleParents: s => {
+      const a = structuredClone(s.actions[0]), b = structuredClone(s.boards[0]);
+      a.room += '-other'; b.room = a.room; a.parentId += '-other'; b.parentId = a.parentId;
+      s.actions.push(a); s.boards.push(b);
+    },
+  };
+  for (const [name, change] of Object.entries(cases)) {
+    const s = withRoomHistory(); change(s);
+    const view = projectDecisionView(envelope(s), {now: 17000}).payload.result.result;
+    assert.deepEqual(view.rooms, s.rooms, name);
+    assert.equal(view.decisionViewHistoricalRooms, undefined, name);
+  }
 });

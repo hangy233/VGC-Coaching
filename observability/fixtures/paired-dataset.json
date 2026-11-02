@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "synthetic-decision-example",
+  "positions": [
+    {
+      "id": "synthetic-position-1",
+      "cutoffAt": 1700000001000,
+      "provenance": {
+        "sourceId": "synthetic-example-no-battle-evidence",
+        "savedAt": 1700000001000,
+        "cutoffAttested": true
+      },
+      "contexts": {
+        "fresh": {
+          "position": {"observedAt": 1700000001000, "value": {"kind": "synthetic-example", "turn": 3, "legalPairs": ["pair-a", "pair-b"], "unknownOpposingInvestments": true}},
+          "history": [{"observedAt": 1700000000900, "value": {"turn": 2, "knownAtCutoff": "synthetic public observation"}}],
+          "openSheets": {"observedAt": 1700000000000, "value": {"p1": "SYNTHETIC COMPLETE SHEET PLACEHOLDER", "p2": "SYNTHETIC COMPLETE SHEET PLACEHOLDER"}}
+        },
+        "long": {
+          "position": {"observedAt": 1700000001000, "value": {"kind": "synthetic-example", "turn": 3, "legalPairs": ["pair-a", "pair-b"], "unknownOpposingInvestments": true}},
+          "history": [
+            {"observedAt": 1700000000500, "value": {"turn": 1, "knownAtCutoff": "earlier synthetic public observation"}},
+            {"observedAt": 1700000000900, "value": {"turn": 2, "knownAtCutoff": "synthetic public observation"}}
+          ],
+          "openSheets": {"observedAt": 1700000000000, "value": {"p1": "SYNTHETIC COMPLETE SHEET PLACEHOLDER", "p2": "SYNTHETIC COMPLETE SHEET PLACEHOLDER"}}
+        }
+      }
+    }
+  ]
+}

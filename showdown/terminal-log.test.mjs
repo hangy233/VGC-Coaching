@@ -7,6 +7,21 @@ import {ShowdownClient} from './client.mjs';
 
 const room = 'battle-gen9championsvgc2026regmcbo3-123';
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('holder-first ability cant rendering names the denied user while ordinary and unknown failures retain their limits',()=>{
+  for(const ability of ['Armor Tail','Dazzling','Queenly Majesty']){
+    const data=['p1b: Farigiraf',`ability: ${ability}`,'Baby-Doll Eyes','[of] p2a: Luxray'],before=structuredClone(data);
+    assert.equal(formatBattleEvent({type:'cant',data}),`p2a: Luxray could not use Baby-Doll Eyes (blocked by p1b: Farigiraf's ${ability}).`);
+    assert.deepEqual(data,before);
+  }
+  assert.equal(formatBattleEvent({type:'cant',data:['p1a: Golisopod','flinch','Leech Life','[of] p2a: Foe']}),'p1a: Golisopod could not act (flinch: Leech Life).');
+  const unknown=formatBattleEvent({type:'cant',data:['p1b: Holder','ability: Unknown Ability','Psychic','[of] p2a: Foe']});
+  assert.match(unknown,/move-user attribution unverified/);assert(!unknown.includes('could not act'));
+  assert.match(formatBattleEvent({type:'cant',data:['p1b: Holder','ability: Armor Tail','Baby-Doll Eyes']}),/attribution unverified/);
+  assert.equal(formatBattleEvent({type:'move',data:['p2a: Luxray','Baby-Doll Eyes','','[still]']}),'p2a: Luxray attempted Baby-Doll Eyes.');
+  assert.equal(formatBattleEvent({type:'move',data:['p1b: Farigiraf','Psychic','p2a: Luxray']}),'p1b: Farigiraf used Psychic → p2a: Luxray.');
+});
+
 function fixture() {
   const client = new EventEmitter(); let rendered = '',time = 1000;
   const output = new Writable({write(chunk,_encoding,done) { rendered += chunk; done(); }});
@@ -19,7 +34,7 @@ test('streams a realistic protocol sequence and labels server submission separat
   const output = new Writable({write(chunk,_encoding,done) { rendered += chunk; done(); }});
   const client = new ShowdownClient();
   const cleanup = attachTerminalLog(client,{output,now:()=>1000});
-  client.receive(`>${room}\n|player|p1|TofuRotom|1|\n|teampreview\n|start\n|switch|p1a: Kommo-o|Kommo-o, L50, M|182/182\n|switch|p2a: Archaludon|Archaludon, L50, M|100/100\n|turn|1\n|sentchoice|move 3 1, move 1\n|move|p1a: Kommo-o|Aura Sphere|p2a: Archaludon\n|-supereffective|p2a: Archaludon\n|-damage|p2a: Archaludon|28/100\n|-boost|p2a: Archaludon|def|1\n|-weather|RainDance|[from] ability: Drizzle\n|-fieldstart|move: Grassy Terrain|[from] ability: Grassy Surge\n|-status|p1a: Kommo-o|par\n|-heal|p1a: Kommo-o|155/182 par|[from] item: Sitrus Berry\n|faint|p2a: Archaludon\n|win|TofuRotom`);
+  client.receive(`>${room}\n|player|p1|FixturePlayer|1|\n|teampreview\n|start\n|switch|p1a: Kommo-o|Kommo-o, L50, M|182/182\n|switch|p2a: Archaludon|Archaludon, L50, M|100/100\n|turn|1\n|sentchoice|move 3 1, move 1\n|move|p1a: Kommo-o|Aura Sphere|p2a: Archaludon\n|-supereffective|p2a: Archaludon\n|-damage|p2a: Archaludon|28/100\n|-boost|p2a: Archaludon|def|1\n|-weather|RainDance|[from] ability: Drizzle\n|-fieldstart|move: Grassy Terrain|[from] ability: Grassy Surge\n|-status|p1a: Kommo-o|par\n|-heal|p1a: Kommo-o|155/182 par|[from] item: Sitrus Berry\n|faint|p2a: Archaludon\n|win|FixturePlayer`);
   assert.match(rendered,/\[Battle 123\] Turn 1/);
   assert.match(rendered,/Choice confirmed submitted by server; waiting for resolution/);
   assert.match(rendered,/Kommo-o used Aura Sphere → p2a: Archaludon/);
@@ -30,7 +45,7 @@ test('streams a realistic protocol sequence and labels server submission separat
   assert.match(rendered,/is paralyzed/);
   assert.match(rendered,/healed; HP → 155\/182 par/);
   assert.match(rendered,/Archaludon fainted/);
-  assert.equal((rendered.match(/Winner: TofuRotom/g)||[]).length,1);
+  assert.equal((rendered.match(/Winner: FixturePlayer/g)||[]).length,1);
   assert(!rendered.includes('move 3 1'));
   cleanup(); await tick(); await tick();
   assert.equal(output.listenerCount('error'),0);
@@ -41,7 +56,7 @@ test('renders readiness, timer, forced replacements, search state, and elapsed t
   f.client.emit('search-state',{searching:['format'],games:null});
   f.client.emit('search-state',{searching:['format'],games:null});
   f.setTime(42000);
-  f.client.emit('timer',{room,text:'TofuRotom has 30 seconds left.'});
+  f.client.emit('timer',{room,text:'FixturePlayer has 30 seconds left.'});
   f.client.emit('ready',{room:'game-bestof3-gen9championsvgc2026regmcbo3-45'});
   f.client.emit('request',{room,request:{rqid:7,forceSwitch:[true,false]}});
   f.client.emit('request',{room,request:{rqid:8,teamPreview:true}});
@@ -51,7 +66,7 @@ test('renders readiness, timer, forced replacements, search state, and elapsed t
   f.client.emit('choice-status',{room,submitted:false});
   f.client.emit('result',{room,type:'tie'});
   assert.equal((f.rendered().match(/Searching for a battle/g)||[]).length,1);
-  assert.match(f.rendered(),/\[\+00:41\].*Timer: TofuRotom has 30 seconds left/);
+  assert.match(f.rendered(),/\[\+00:41\].*Timer: FixturePlayer has 30 seconds left/);
   assert.match(f.rendered(),/\[Set 45\] Ready confirmation requested/);
   assert.match(f.rendered(),/Replacement required \(request 7\)/);
   assert.match(f.rendered(),/Choose your team and leads \(request 8\)/);

@@ -42,14 +42,30 @@ snapshot; do not confuse that with the official 45-second ranked limit.
 | Task | Tool and check |
 | --- | --- |
 | Find a candidate | `search_pokemon`, `get_pokemon`; existence is not M-C eligibility. |
-| Verify a set or six | `validate_pokemon`, `validate_team`, explicitly passing the M-C format. |
-| Learnset and mechanics | `get_movepool`, `get_move`; supplement with Champions Dex when generic data differs. |
-| Item or ability lookup | `search_item`, `search_ability`, then inspect its full Champions effect and validate the set. |
-| Type interaction | `get_type_effectiveness` for the actual defending types; verify ability-based exceptions separately. |
-| Showdown ladder usage | `get_usage_stats`, `get_pokemon_usage`, with explicit M-C, period, and rating. Missing data is not zero usage. |
-| Champions ladder data | `get_champions_usage_stats`, `get_champions_pokemon_usage`, with battle type, season, and snapshot date. Species ranks are not usage percentages. |
-| Damage | `calculate_damage`, with the native Champions mode below. |
-| Stats and effective Speed | `calculate_speed`, native Champions current-state snapshots; ties and unsupported order effects remain explicit. |
+| Verify a set or six | `validate_pokemon`, `validate_team`, explicitly passing M-C. |
+| Learnset and mechanics | `get_movepool`, `get_move`, `get_ability`; inspect Champions-specific effects. |
+| Item or ability search | `search_item`, `search_ability`, then validate the set and actual effect. |
+| Type interaction | `get_type_effectiveness` for actual types; verify ability exceptions separately. |
+| Showdown ladder usage | `get_usage_stats`, `get_pokemon_usage` with format, period and rating; missing is not zero. |
+| Champions ladder data | `get_champions_usage_stats`, `get_champions_pokemon_usage` with battle type, season and snapshot date; ranks are not percentages. |
+| Damage benchmark | `calculate_damage` in native Champions mode. |
+| Investment uncertainty | `calculate_damage_range` with legal explicit domains, coverage and extrema witnesses. |
+| Effective Speed | `calculate_speed` with native current-state inputs; ties and unknown modifiers remain explicit. |
+| Live paired sequence | `simulate_choices`, one authored own/opposing pair and conditional outcome. |
+| Offline explicit position | `simulate_turn`, full native inputs and bounded samples; it grants no live allowance. |
+
+The battle model's projected live catalog contains only `get_pokemon`,
+`get_move`, `get_ability`, `get_movepool`, `calculate_damage`,
+`calculate_damage_range`, `calculate_speed` and `simulate_choices`.
+Validation, usage, metrics and control tools above serve manager/analysis tasks,
+not extra model callbacks.
+
+Follow [bounded turn planning](turn-planning.md) and its three-calculator,
+one-outcome live ceiling. Ask the smallest material scalar question first; use
+simulation for a consequential sequence left unresolved. Live historical
+inference reuses compatible cached receipts only and starts no automatic numeric
+checks. Inputs depending on earlier results remain ordered. A faster tool reply
+or smaller output does not prove faster useful decisions.
 
 ### Usage sources and provenance
 
@@ -146,6 +162,13 @@ action never executed because of a knockout or denial, or an ambiguous identity
 does not by itself establish the user's relative Speed. Missing action evidence
 is not proof that the other actor was slower.
 
+Read protocol roles before treating a `cant` line as action failure. Priority
+blocking abilities can name their holder first and the denied move user in
+`[of]`; that does not establish that the holder failed its own selected attack.
+Match the actor and selected move, and inspect subsequent execution. A
+`[still]` announcement alone proves no completed move. Unknown or malformed
+attribution stays unresolved and cannot establish a Speed relation.
+
 For an otherwise ordinary same-priority comparison, earlier action outside Room
 supports being at least as fast under those conditions, with a tie still possible;
 inside Room interpret that relation in the reverse direction. Do not convert an
@@ -240,9 +263,13 @@ stats are 202 HP, 124 Defense, 143 Special Defense. This is an assumed test case
 not an assertion about common spreads. Chople must be intact; its reduction
 cannot be applied anew on every hit in a multi-turn knockout estimate.
 
-The current MCP field schema accepts game type, weather, terrain, and gravity.
-It does not expose all calculator options such as screens, Helping Hand, or
-current HP. Unknown fields may be stripped. Inspect the current MCP schema;
+The October 24, 2026 damage extension exposes actual `curHP` on either actor,
+supported activation/history inputs, move crit/hit/history options, and side
+conditions including screens, Aurora Veil, Helping Hand and Friend Guard. It also
+exposes supported room, aura and Ruin field flags. Supply them only when known
+or explicitly hypothesized; an omitted input is not proof that the effect is absent.
+Inspect the connected schema and actual result before use. The wrapper still
+does not support every native state or automatically resolve a complete turn;
 if a necessary condition remains unsupported, mark that benchmark unverified.
 The project's October 14, 2026 status extension accepts `attackerOptions.status`
 and `defenderOptions.status`: `brn`, `par`, `psn`, `tox`, `slp`, or `frz`; omit the
@@ -264,6 +291,90 @@ Focus Sash, Sturdy, and other survival mechanics; a raw OHKO label does not
 establish those effects were applied even when the item or ability was supplied.
 A critical-hit KO does not establish that a normal hit would have KOed, or that
 the critical hit was necessary to win.
+
+## Simulate a knockout-dependent turn
+
+Use actual damage and Speed calculators for their scalar questions. When a
+required removal depends on unresolved paired sequence, use the single actual
+MCP `simulate_choices` outcome allowed by the
+[live research budget](turn-planning.md#choose-the-smallest-useful-check) before committing it. State the required target and deadline
+explicitly, such as removal before its pending attack. Supply complete authored
+actions for both sides, including their partner's response. Check a materially
+plausible Protect, switch, redirection or retarget response most consequential to
+the plan. Untested responses remain unknown. Neither independently favorable damage ranges nor a Speed ranking replace
+the paired sequence. A slower partner's selected attack cannot prevent an earlier
+retaliation, and a knockout after that retaliation does not meet the earlier gate.
+
+For the live compact tool, author one `ourActions` and `opposingActions` pair,
+including Mega and switch choices, with optional continuations for that same
+trajectory. Do not add alternative pairs. The tool uses the native
+locked team, published sheet, exact private request and audited battle history to
+construct the simulator request. Known forms, PP, consumed items, boosts, fields,
+Choice restrictions and lifecycle counters are mechanical facts. Audited past
+move order and exact own HP changes can constrain representative opposing
+allocations through compatible cached actual MCP receipts. Live inference makes
+no new numerical calls; unchecked constraints remain deferred. Ambiguous critical,
+multihit, rounded-HP, forced-order or unknown-modifier observations are ignored. Hidden investments,
+unseen selected reserves and ranged durations stay explicitly labeled finite
+hypotheses. Read the single outcome's assumptions, ordered actions, denials, pending
+replacement boundary and stochastic events. At a returned replacement boundary,
+supply only the sides listed in `replacementRequest.sides`; omit a nonrequesting
+side instead of filling it with a pass pair. Prefer a named entrant or stable
+identity. A numeric continuation slot refers to that native replacement menu,
+whose party order can differ after an earlier switch. If the turn completed or
+the pivot was blocked, there is no replacement choice to force. No sampled world or internal delivery
+bookkeeping asserts that your tactical goal passed. Unknown state or lost history may produce a labeled conditional
+native world; inspect its field-level assumptions. If a known fact cannot be
+mounted faithfully, the outcome remains unavailable rather than changing the
+authored action or inventing exact state. Frozen waiting-time results must be rechecked against the next fresh
+turn, with new material research when required.
+
+Use the exact registered own sets and a supported opening reconstruction or fresh
+before-actions position. Keep unknown opposing investments, selected reserves,
+current HP and other material assumptions explicit; a registered sheet is not a
+selected four. In the strict observed-position input, every
+opposing active and reserve `statPoints` object must explicitly supply all six
+fields (`hp`, `atk`, `def`, `spa`, `spd`, `spe`), including zero allocations.
+Label that complete allocation as a hypothesis. The individual damage and Speed
+calculators' omitted-stat defaults do not apply to this adapter. Reconstructed
+current positions must preserve forms, actual
+abilities, consumed items, boosts, status, field durations, Choice restrictions
+and relevant action counters. Do not reapply entry effects such as a consumed
+Seed, Intimidate or weather to a midgame position. A refused or incomplete state
+does not verify the line. A simulation must stop rather than silently choose a
+forced replacement or fill an unauthored action.
+
+A reconstruction refusal is not a sampled negative result. Before correcting
+it, inspect the complete available missing-field/conflict inventory and the
+original remaining time. Preserve fresh request facts; a hypothesis must not
+contradict known PP or other exact state. Revise only when the material gaps are
+actually resolvable from evidence or allowed labeled hypotheses and time remains
+for the tool return and final choice. If a correction merely exposes another
+unknown current-state dependency, switch to a useful nondependent final pair
+instead of spending the turn on successive broad reconstructions. A valid
+correction with sufficient time remains appropriate; refusal alone is neither
+a tactical counterexample nor a reason to invent missing facts.
+For a damaged observed opponent, `hp: "observed-high"` lets the native engine
+choose the highest HP candidate compatible with its public HP display and the
+supplied spread. Retain the returned candidate interval and hypothesis label;
+this neither reveals its exact HP nor makes the whole turn conservative. Do not
+guess HP by mental arithmetic or use this directive for our exact HP or an unseen
+reserve.
+
+Read the actual ordered events: which attacks executed or were denied, when the
+required target fainted, whether its relevant retaliation already executed, and
+the resulting HP, status and field. Retain the returned evidence reference and
+the tested hypothesis/response. Finite seeded native-engine outcomes are samples;
+they establish neither a guaranteed knockout nor a probability, and an incidental
+critical hit, miss or tie outcome cannot establish a reliable finish. Continue to
+use actual MCP `calculate_damage` and `calculate_speed` for numerical ranges,
+probabilities and Speed benchmarks. Unsupported calculator conditions remain
+unverified even when a native simulation can demonstrate a mechanic.
+
+Keep the original deadline and actual tool limits. If a required check remains
+unavailable, apply [failed-delivery recovery](turn-planning.md#recover-failed-delivery):
+use a viable independently useful pair or identify the necessary gamble and its
+remaining answer. Do not invent missing facts or a second live outcome.
 
 ## Legality and mechanics traps
 

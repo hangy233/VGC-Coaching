@@ -36,7 +36,7 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
     activeReplays.add(roomId);
     enqueue('replay:'+roomId,async()=>{
       // This rereads an already saved replay; it never requests another upload.
-      await replayAttacher({workspace,teamId,roomId,url});
+      await replayAttacher({workspace,teamId,roomId,url,...(typeof session?.snapshot==='function'?{sessionReader:async()=>session.snapshot()}: {})});
       stableReport=await updateTeamReport({workspace,teamId});
     }).finally(()=>activeReplays.delete(roomId));
   };
@@ -50,9 +50,51 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
   });
   initialize();
   const owned=room=>!session||session.ownedRooms.has(client.resolveRoom?.(room)||room)&&(!session.roomTeamId||session.roomTeamId(room)===teamId);
-  const get=room=>{const id=canonicalRoom(room);if(!/^battle-/.test(id)||!owned(room))return null;if(!buffers.has(id))buffers.set(id,{roomId:id,events:[],truncated:false});return buffers.get(id);};
+  const protocolKey=(event,turn)=>JSON.stringify([turn,event.type,event.data||[]]);
+  function recoveryAppend(buffer,value){
+    if(value.event==='battle-event'){
+      if(value.type==='turn')buffer.recoveryTurn=Number(value.data?.[0])||0;
+      const key=protocolKey(value,buffer.recoveryTurn),count=buffer.recoveryCounts.get(key)||0;
+      if(count){buffer.recoveryCounts.set(key,count-1);return;}
+    }
+    if(buffer.events.length>=20000){buffer.truncated=true;return;}
+    buffer.events.push(value);
+  }
+  const get=room=>{
+    const id=canonicalRoom(room);if(!/^battle-/.test(id)||!owned(room))return null;
+    if(!buffers.has(id)){
+      const buffer={roomId:id,events:[],truncated:false};buffers.set(id,buffer);
+      if(session?.isRestoredRoom?.(room)){
+        // Recovery never invents a current private choice. Preserve the prior
+        // hash-checked private decisions while suppressing replayed public facts
+        // by turn and occurrence count, so rejoining cannot double move usage.
+        const seed=session.restoredEvidenceForRoom?.(room)?.observed;
+        buffer.operational=true;buffer.recoveryCounts=new Map();buffer.recoveryTurn=0;
+        buffer.recoverySheets=seed?.sheets||{};buffer.previewClosed=!!seed;
+        let turn=0;
+        for(const event of seed?.events||[]){
+          if(event.type==='turn')turn=Number(event.data?.[0])||0;
+          const value={...event,event:event.type==='request'?'request':'battle-event',room};buffer.events.push(value);
+          if(event.type!=='request'){const key=protocolKey(event,turn);buffer.recoveryCounts.set(key,(buffer.recoveryCounts.get(key)||0)+1);}
+        }
+        for(const decision of seed?.decisions||[])buffer.events.push({...decision,room});
+        for(const trace of seed?.controlTrace||[])buffer.events.push({...trace,event:'control-trace',room});
+        const log=client.state?.(room)?.battleLog||[];
+        for(const line of log){const [,type,...data]=line.split('|');recoveryAppend(buffer,{event:'battle-event',type,data,room,at:Date.now()});}
+        buffer.recoveryEcho=log.at(-1)||null;
+      }
+    }
+    return buffers.get(id);
+  };
   const on=(event,handler)=>{client.on(event,handler);listeners.push([event,handler]);};
-  const append=(room,value)=>{const b=get(room);if(!b)return;if(b.events.length>=20000){b.truncated=true;return;}b.events.push({...value,room,at:Number.isFinite(value.at)&&value.at>=0?value.at:Date.now()});};
+  const append=(room,value)=>{
+    const b=get(room);if(!b)return;
+    if(b.recoveryCounts){
+      if(value.event==='battle-event'&&b.recoveryEcho){const echo=b.recoveryEcho;b.recoveryEcho=null;if(echo===`|${value.type}|${(value.data||[]).join('|')}`)return;}
+      recoveryAppend(b,{...value,room,at:Number.isFinite(value.at)&&value.at>=0?value.at:Date.now()});return;
+    }
+    if(b.events.length>=20000){b.truncated=true;return;}b.events.push({...value,room,at:Number.isFinite(value.at)&&value.at>=0?value.at:Date.now()});
+  };
   const finishPreview=(room,transition)=>{
     const b=get(room);if(!b||b.previewClosed)return;
     const preview=b.preview;b.previewClosed=true;
@@ -82,7 +124,7 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
       // Persist partial state and control diagnostics at the existing turn,
       // disconnect and explicit-flush boundaries as well. A crash before an
       // official result must not leave its last submission evidence only in RAM.
-      if(/^battle-gen9championsvgc2026regmc(?:bo3)?-\d+$/.test(roomId))await saveGameEvidence({workspace,teamId,roomId,events,sheets:client.state?.(roomId)?.sheets});
+      if(/^battle-gen9championsvgc2026regmc(?:bo3)?-\d+$/.test(roomId))await saveGameEvidence({workspace,teamId,roomId,events,sheets:{...b.recoverySheets,...client.state?.(roomId)?.sheets}});
       if(saved.status!=='unchanged'||!stableReport||failures.has('battle:'+roomId))stableReport=await updateTeamReport({workspace,teamId});
     });
   };
@@ -147,7 +189,7 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
     if(value.type==='turn'){const b=get(value.room);if(b)save(b);}
     if(['win','tie'].includes(value.type)){const b=get(value.room);if(b)save(b);}
   });
-  on('result',value=>{
+  const observeResult=value=>{
     // The protocol win follows the result callback synchronously in this client.
     if(/^game-bestof/.test(value.room)){
       const own=String(username).toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -169,7 +211,8 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
         if(canonicalRoom(parent)===canonicalRoom(value.room))save(b,result);
       }});
     }
-  });
+  };
+  on('result',observeResult);
   on('timer',value=>{if(/lost due to inactivity|disconnected.*lost|inactivity.*loss/i.test(value.text||'')){const b=get(value.room);if(b)b.operational=true;}});
   on('replay-verified',value=>{
     const b=get(value.roomId||value.room);if(!b)return;
@@ -180,6 +223,14 @@ export function attachMetricsRecorder(client,{workspace,username,teamId,team,nam
   on('disconnected',()=>{for(const b of buffers.values())save(b);});
   return {
     status,
+    restoreObserved(){
+      // Cached current-connection protocol is observation, not a synthetic
+      // action. Hydrate only the explicitly recovered scope after admission.
+      for(const room of client.rooms?.values()||[])if(session?.isRestoredRoom?.(room.id)&&owned(room.id)){
+        if(/^battle-/.test(room.id)){const b=get(room.id);if(b)save(b);}
+        else if(room.ended&&['win','tie'].includes(room.result?.type))observeResult({room:room.id,...room.result});
+      }
+    },
     onChange(observer){observers.add(observer);return()=>observers.delete(observer);},
     async flush({savePending=false}={}){
       // The parent's result callback precedes its protocol event. Drain that

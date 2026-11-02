@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import showdown from 'pokemon-showdown';
-import {createBattleState, reduceBattleLine, reduceBattleRequest, battleStateSnapshot} from './battle-state.mjs';
+import {createBattleState, reduceBattleLine, reduceBattleRequest, battleStateSnapshot,validateOwnReservePpSnapshot} from './battle-state.mjs';
+import {ShowdownClient} from './client.mjs';
+import {compactTurnBoard} from './turn-board.mjs';
 const {Dex} = showdown;
 
 const feed = (state, ...lines) => { for (const line of lines) reduceBattleLine(state, line, {now: 1000}); return state; };
@@ -9,6 +11,25 @@ const start = (...lines) => feed(createBattleState(), '|gen|9', '|gametype|doubl
 const active = (state, side, slot) => state.sides[side].pokemon.find(p => p.id === state.sides[side].active[slot]);
 const field = state => battleStateSnapshot(state).field;
 const request = (pokemon, extra = {}) => ({rqid: 4, side: {id: 'p2', name: 'Player', pokemon}, ...extra});
+
+test('Toxic Spikes count native layers without a duration; missing prefix never invents the first layer',()=>{
+  const state=createBattleState();
+  const line=text=>reduceBattleLine(state,text,{epoch:1,connected:true,now:1000});
+  line('|gen|9');line('|start');
+  for(const expected of [1,2,2]){
+    line('|-sidestart|p1: Owner|Toxic Spikes');
+    const condition=battleStateSnapshot(state).sides.find(side=>side.id==='p1').conditions.toxicspikes;
+    assert.equal(condition.layers,expected);assert.equal(condition.remainingTurns,null);
+  }
+  line('|-sideend|p1: Owner|Toxic Spikes');line('|-sidestart|p1: Owner|Toxic Spikes');
+  assert.equal(state.sides.p1.conditions.toxicspikes.layers,1);
+  const partial=createBattleState();
+  reduceBattleLine(partial,'|-sidestart|p1: Owner|Toxic Spikes',{epoch:1,connected:true});
+  assert.equal(partial.sides.p1.conditions.toxicspikes.layers,null);
+  reduceBattleLine(partial,'|-sideend|p1: Owner|Toxic Spikes',{epoch:1,connected:true});
+  reduceBattleLine(partial,'|-sidestart|p1: Owner|Toxic Spikes',{epoch:1,connected:true});
+  assert.equal(partial.sides.p1.conditions.toxicspikes.layers,1);
+});
 const entry = (name, species = name, extra = {}) => ({ident: `p2: ${name}`, details: `${species}, L50`,
   active: false, condition: '182/182', stats: {atk: 117, def: 157, spa: 156, spd: 125, spe: 105},
   ability: 'soundproof', item: 'sitrusberry', moves: ['clangingscales', 'protect'], ...extra});
@@ -129,6 +150,39 @@ test('a request which replaces unknown active identity cannot delete the new act
   assert.equal(state.sides.p2.pokemon.filter(p => p.activeSlot === 'a').length, 1);
 });
 
+test('preview default active flags do not assign battle positions or duplicate a reordered lead', () => {
+  const state = start();
+  const preview = [entry('First', 'Kommo-o', {active: true}), entry('Pivot', 'Rillaboom', {active: true}), entry('Partner', 'Sylveon')];
+  reduceBattleRequest(state, request(preview, {teamPreview: true}));
+  const pivot = state.sides.p2.pokemon.find(p => p.nickname === 'Pivot');
+  const original = pivot.id;
+  assert.deepEqual(state.sides.p2.active, {});
+  assert.equal(pivot.activeSlot, null);
+  feed(state, '|switch|p2a: Pivot|Rillaboom, L50|200/200', '|switch|p2b: Partner|Sylveon, L50|202/202');
+  for (let rqid = 5; rqid < 8; rqid++) reduceBattleRequest(state, request([
+    entry('Pivot', 'Rillaboom', {active: true}), entry('Partner', 'Sylveon', {active: true}), entry('First', 'Kommo-o'),
+  ], {rqid}));
+  assert.equal(active(state, 'p2', 'a').id, original);
+  assert.equal(state.sides.p2.pokemon.filter(p => p.nickname === 'Pivot').length, 1);
+});
+
+test('a form change invalidates a known base ability until current-form evidence arrives', () => {
+  const state = start('|switch|p1a: Attacker|Staraptor, L50|100/100',
+    '|-ability|p1a: Attacker|Intimidate', '|-boost|p1a: Attacker|atk|2');
+  const original = active(state, 'p1', 'a').id;
+  feed(state, '|detailschange|p1a: Attacker|Staraptor-Mega, L50',
+    '|-mega|p1a: Attacker|Staraptor|Staraptite');
+  const evolved = active(state, 'p1', 'a');
+  assert.equal(evolved.id, original);
+  assert.equal(evolved.boosts.atk, 2);
+  assert.equal(evolved.ability, null);
+  assert.equal(evolved.abilitySuppressed, null);
+  feed(state, '|-ability|p1a: Attacker|Contrary', '|-ability|p1a: Attacker|Soundproof|[from] move: Skill Swap');
+  assert.equal(evolved.ability, 'Soundproof');
+  feed(state, '|detailschange|p1a: Attacker|Staraptor-Mega, L50, M');
+  assert.equal(evolved.ability, 'Soundproof');
+});
+
 test('duplicate nicknames use active positions, ambiguity on re-entry is explicit', () => {
   const state = start('|switch|p1a: Twin|Pikachu, L50|100/100', '|switch|p1b: Twin|Pikachu, L50|100/100',
     '|-boost|p1a: Twin|spe|2', '|-damage|p1b: Twin|40/100');
@@ -222,4 +276,77 @@ test('opponent chat cannot inject state, snapshots are detached, result does not
   assert.equal(snap.observedAt, 4321);
   snap.sides[0].pokemon[0].species = 'Changed';
   assert.equal(active(state, 'p1', 'a').species, 'Archaludon');
+});
+
+
+function retainedPpClient({prefix=true}={}) {
+  const room='battle-gen9championsvgc2026regmcbo3-991',client=new ShowdownClient({now:()=>1234});
+  client.connected=true;client.authenticated=true;client.epoch=7;client.ws={close(){}};
+  const moves=['protect','tackle','helpinghand','substitute'];
+  const pokemon=['A','B','C','D'].map((name,index)=>({ident:`p1: ${name}`,details:`${name}, L50`,condition:'100/100',active:index<2,moves:[...moves],ability:'Pressure',item:''}));
+  const active=[{moves:moves.map((id,index)=>({id,move:id,pp:7+index}))},{moves:moves.map(id=>({id,move:id,pp:12}))}];
+  const request={rqid:1,side:{id:'p1',pokemon},active};
+  const feed=lines=>client.receive(`>${room}\n${lines}`);
+  feed(`|gen|9\n|gametype|doubles\n${prefix?'|start\n':''}|switch|p1a: A|A, L50|100/100\n|switch|p1b: B|B, L50|100/100\n|turn|1`);
+  feed('|request|'+JSON.stringify(request));
+  const exit=()=>feed('|switch|p1a: C|C, L50|100/100');
+  const benchRequest=()=>{const next=structuredClone(request);next.rqid=2;next.side.pokemon=[next.side.pokemon[2],next.side.pokemon[1],next.side.pokemon[0],next.side.pokemon[3]];next.side.pokemon.forEach((p,index)=>p.active=index<2);next.active=[active[1],active[1]];return next;};
+  const read=()=>{const snapshot=client.battleSnapshot(room),q=client.state(room).request,board=compactTurnBoard(snapshot,{request:q}),p=board.sides[0].pokemon.find(p=>p.nickname==='A'),entry=q.side.pokemon.find(p=>p.ident==='p1: A');return {snapshot,board,p,entry,fact:validateOwnReservePpSnapshot({pokemon:p,requestEntry:entry,observation:board.ownPpObservation,rqid:q.rqid})};};
+  return {client,room,feed,request,exit,benchRequest,read};
+}
+
+test('retained own PP comes only from a private active request through a clean observed hard switch',()=>{
+  const f=retainedPpClient();f.exit();f.feed('|request|'+JSON.stringify(f.benchRequest()));
+  const {fact,p,board}=f.read();assert.deepEqual(fact.pp,[7,8,9,10]);assert.equal(fact.provenance.epoch,7);assert.equal(fact.provenance.actorId,p.id);assert.equal(fact.provenance.rqid,1);assert.equal(fact.provenance.benchVerifiedRqid,2);
+  assert.equal(board.sides[0].pokemon.find(p=>p.nickname==='D').ownPpSnapshot,undefined,'never-active PP is not inferred');
+  fact.pp[0]=64;assert.equal(f.read().fact.pp[0],7,'consumer facts are detached');
+});
+
+test('retained own PP loses eligibility on active mutation, missing/replayed stream, epoch and ambiguous merge',()=>{
+  const mutations=[
+    f=>f.feed('|move|p1a: A|Tackle|p2a: Foe'),f=>f.feed('|cant|p1a: A|par'),
+    f=>f.feed('|-transform|p1a: A|p2a: Foe'),f=>f.feed('|-formechange|p1a: A|A-Other'),
+    f=>f.feed('|detailschange|p1a: A|A-Other, L50'),f=>f.feed('|-item|p1a: A|Leppa Berry'),
+    f=>f.feed('|turn|3'),f=>f.feed('|turn|1'),f=>f.feed('|upkeep\n|upkeep'),
+    f=>f.feed('|request|'+JSON.stringify(f.request)),f=>{f.client.epoch++;},f=>f.feed('|error|Malformed protocol state'),
+    f=>f.client.close(),f=>{assert.throws(()=>f.feed('|request|{bad'));},
+    f=>f.client.renameRoom(f.room,f.room+'-privatepw'),
+    f=>{f.client.state(f.room).battle.sides.p1.pokemon[0].identityConfidence='ambiguous-duplicate';},
+  ];
+  for(const mutate of mutations){const f=retainedPpClient();mutate(f);f.exit();f.feed('|request|'+JSON.stringify(f.benchRequest()));assert.equal(f.read().fact,null,String(mutate));}
+  const noPrefix=retainedPpClient({prefix:false});noPrefix.exit();noPrefix.feed('|request|'+JSON.stringify(noPrefix.benchRequest()));assert.equal(noPrefix.read().fact,null);
+  const pivot=retainedPpClient();pivot.feed('|switch|p1a: C|C, L50|100/100|[from] move: U-turn');pivot.feed('|request|'+JSON.stringify(pivot.benchRequest()));assert.equal(pivot.read().fact,null);
+  const missing=retainedPpClient();missing.feed('|request|'+JSON.stringify(missing.benchRequest()));assert.equal(missing.read().fact,null,'request-only unexplained exit cannot prove a switch');
+});
+
+test('retained own PP refuses conflicting consumer bindings and drops targeted bench or move-order changes',()=>{
+  const f=retainedPpClient();f.exit();f.feed('|request|'+JSON.stringify(f.benchRequest()));
+  const {p,entry,board}=f.read();
+  assert.throws(()=>validateOwnReservePpSnapshot({pokemon:p,requestEntry:entry,observation:{...board.ownPpObservation,lastRequestRqid:1},rqid:2}),/observation order/);
+  for(const change of [s=>{s.actorId='other';},s=>{s.epoch++;},s=>{delete s.epoch;},s=>{s.details='Other, L50';},s=>{s.moves.reverse();},s=>{s.benchVerifiedRqid++;},s=>{s.exitSequence=s.requestSequence;},s=>{s.exitSequence=String(s.exitSequence);},s=>{s.pp=new Array(4);}]){
+    const altered=structuredClone(p);change(altered.ownPpSnapshot);assert.throws(()=>validateOwnReservePpSnapshot({pokemon:altered,requestEntry:entry,observation:board.ownPpObservation,rqid:2}),/Observed reserve PP/);
+  }
+  f.feed('|-item|p1: A|Leppa Berry');assert.equal(f.read().fact,null);
+  for(const kind of ['order','identity']){const other=retainedPpClient();other.exit();const next=other.benchRequest();if(kind==='order')next.side.pokemon[2].moves.reverse();else next.side.pokemon[2].ident='p1: Different';other.feed('|request|'+JSON.stringify(next));assert.equal(other.read().fact,null);}
+  for(const key of ['item','ability','condition']){
+    const changed=retainedPpClient();changed.exit();changed.feed('|request|'+JSON.stringify(changed.benchRequest()));
+    const next=changed.benchRequest();next.rqid=3;next.side.pokemon[2][key]=key==='item'?'Leppa Berry':key==='ability'?'Other Ability':'99/100';
+    changed.feed('|request|'+JSON.stringify(next));assert.equal(changed.read().fact,null,key+' request-only change');
+  }
+  for(const incomplete of ['omitted','missing-side']){
+    const changed=retainedPpClient();changed.exit();changed.feed('|request|'+JSON.stringify(changed.benchRequest()));
+    const next=changed.benchRequest();next.rqid=3;if(incomplete==='omitted')next.side.pokemon.splice(2,1);else delete next.side;
+    changed.feed('|request|'+JSON.stringify(next));const restored=changed.benchRequest();restored.rqid=4;
+    changed.feed('|request|'+JSON.stringify(restored));assert.equal(changed.read().fact,null,incomplete+' cannot revive old PP');
+  }
+});
+
+test('retained own PP is unavailable after the actual client reconnect path changes epoch',async()=>{
+  const f=retainedPpClient();
+  class Socket extends EventTarget {constructor(){super();queueMicrotask(()=>this.dispatchEvent(new Event('open')));}close(){this.dispatchEvent(new Event('close'));}}
+  f.client.ws.readyState=3;f.client.WebSocketImpl=Socket;
+  await f.client.connect();f.exit();f.feed('|request|'+JSON.stringify(f.benchRequest()));
+  assert.equal(f.read().fact,null);assert.equal(f.client.epoch,8);
+  f.client.ws.dispatchEvent(new Event('error'));assert.equal(f.read().fact,null);
+  f.client.ws.close();assert.equal(f.read().fact,null);
 });

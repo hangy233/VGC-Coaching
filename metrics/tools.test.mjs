@@ -85,7 +85,7 @@ test('export refuses a reports directory symbolic link',async t=>{
 test('CLI rejects unknown options, invalid team IDs and unsupported command options',async()=>{
   const {parseArguments}=await import('./cli.mjs');
   assert.equal(parseArguments(['--help']).command,'help');
-  assert.deepEqual(parseArguments(['import','--file','one.log','--file','two.log','--username','TofuRotom','--team-file','team.txt']).values.files,['one.log','two.log']);
+  assert.deepEqual(parseArguments(['import','--file','one.log','--file','two.log','--username','FixturePlayer','--team-file','team.txt']).values.files,['one.log','two.log']);
   assert.deepEqual(parseArguments(['import','--url','https://replay.pokemonshowdown.com/a','--url','https://replay.pokemonshowdown.com/b']).values.urls,['https://replay.pokemonshowdown.com/a','https://replay.pokemonshowdown.com/b']);
   assert.equal(parseArguments(['list','--include-archived']).values.includeArchived,true);
   assert.equal(parseArguments(['register','--team-file','team.txt']).command,'register');
@@ -152,19 +152,19 @@ test('MCP tools expose strict schemas, explicit network scope and no battle cont
   assert.equal(evidenceSchema.safeParse({teamId:id,roomId:'battle-gen9championsvgc2026regmcbo3-123',fromTurn:0,toTurn:7}).success,true);
   for(const args of [{teamId:'latest',roomId:'battle-gen9championsvgc2026regmcbo3-123'},{teamId:id,roomId:'game-bestof3-gen9championsvgc2026regmcbo3-123'},{teamId:id,roomId:'battle-gen9championsvgc2026regmcbo3-123',fromTurn:1.5},{teamId:id,roomId:'battle-gen9championsvgc2026regmcbo3-123',toTurn:-1}])assert.equal(evidenceSchema.safeParse(args).success,false);
   const importSchema=registrations.get('team_metrics_import').settings.inputSchema;
-  assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'TofuRotom',teamFile:'teams/team.txt'}).success,true);
-  assert.equal(importSchema.safeParse({files:[],username:'TofuRotom',teamFile:'teams/team.txt'}).success,false);
-  assert.equal(importSchema.safeParse({files:Array(21).fill('cache/log.jsonl'),username:'TofuRotom',teamFile:'teams/team.txt'}).success,false);
+  assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'FixturePlayer',teamFile:'teams/team.txt'}).success,true);
+  assert.equal(importSchema.safeParse({files:[],username:'FixturePlayer',teamFile:'teams/team.txt'}).success,false);
+  assert.equal(importSchema.safeParse({files:Array(21).fill('cache/log.jsonl'),username:'FixturePlayer',teamFile:'teams/team.txt'}).success,false);
   assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'a'.repeat(31),teamFile:'teams/team.txt'}).success,false);
-  assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'TofuRotom',teamId:id}).success,true);
-  assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'TofuRotom'}).success,false);
-  assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'TofuRotom',teamId:id,teamFile:'teams/team.txt'}).success,false);
+  assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'FixturePlayer',teamId:id}).success,true);
+  assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'FixturePlayer'}).success,false);
+  assert.equal(importSchema.safeParse({files:['cache/log.jsonl'],username:'FixturePlayer',teamId:id,teamFile:'teams/team.txt'}).success,false);
   const replaySchema=registrations.get('team_metrics_import_replays').settings.inputSchema;
-  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom',teamFile:'teams/team.txt'}).success,true);
-  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom',teamFile:'teams/team.txt',remember:true}).success,false);
-  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom',teamId:id}).success,true);
-  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom'}).success,false);
-  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'TofuRotom',teamId:id,teamFile:'teams/team.txt'}).success,false);
+  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'FixturePlayer',teamFile:'teams/team.txt'}).success,true);
+  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'FixturePlayer',teamFile:'teams/team.txt',remember:true}).success,false);
+  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'FixturePlayer',teamId:id}).success,true);
+  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'FixturePlayer'}).success,false);
+  assert.equal(replaySchema.safeParse({urls:['https://replay.pokemonshowdown.com/example'],username:'FixturePlayer',teamId:id,teamFile:'teams/team.txt'}).success,false);
 });
 
 test('MCP permanent team deletion defaults to preview and requires confirmation before applying',async()=>{
@@ -267,7 +267,7 @@ test('MCP report filters, refresh metadata and CSV export work through real loca
   const workspace=await mkdtemp(join(tmpdir(),'team-metrics-mcp-'));
   t.after(()=>rm(workspace,{recursive:true,force:true}));
   const summary=report(),p=summary.pokemon[0];
-  const base={schemaVersion:1,roomId:'battle-test-1',parentId:'game-bestof3-test-1',teamId:id,username:'TofuRotom',ownSide:'p1',outcome:'win',completed:true,turns:4,players:{p1:'TofuRotom',p2:'Example'},opponentRoster:['Incineroar'],selected:['Golisopod'],selectionKnown:true,leads:['Golisopod'],pokemon:[{...p,key:'golisopod:1',selected:true,lead:true,forms:['Golisopod-Mega']}],quality:{complete:true,operational:false,warnings:[]},team:{name:'Rain team',format:'gen9championsvgc2026regmc',roster:['Golisopod']},metadata:{endedAt:'2026-10-15T00:00:00Z',setResult:{outcome:'win',completed:true}}};
+  const base={schemaVersion:1,roomId:'battle-test-1',parentId:'game-bestof3-test-1',teamId:id,username:'FixturePlayer',ownSide:'p1',outcome:'win',completed:true,turns:4,players:{p1:'FixturePlayer',p2:'Example'},opponentRoster:['Incineroar'],selected:['Golisopod'],selectionKnown:true,leads:['Golisopod'],pokemon:[{...p,key:'golisopod:1',selected:true,lead:true,forms:['Golisopod-Mega']}],quality:{complete:true,operational:false,warnings:[]},team:{name:'Rain team',format:'gen9championsvgc2026regmc',roster:['Golisopod']},metadata:{endedAt:'2026-10-15T00:00:00Z',setResult:{outcome:'win',completed:true}}};
   await saveBattle({workspace,record:base});
   await saveBattle({workspace,record:{...base,roomId:'battle-test-2',outcome:'loss',quality:{complete:true,operational:true,warnings:['Inactivity observed.']}}});
   const registrations=new Map();
@@ -317,21 +317,21 @@ test('replay MCP and CLI routing keep private URL values out of responses and er
   const registrations=new Map();
   registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace:process.cwd(),replayImporter});
   const tool=registrations.get('team_metrics_import_replays');
-  const response=await tool.handler(tool.settings.inputSchema.parse({urls:[secretUrl],username:'TofuRotom',teamFile:'teams/team.txt'}));
+  const response=await tool.handler(tool.settings.inputSchema.parse({urls:[secretUrl],username:'FixturePlayer',teamFile:'teams/team.txt'}));
   assert.equal(observed.urls[0],secretUrl);assert.equal(JSON.stringify(response).includes('secretpw'),false);
-  await tool.handler(tool.settings.inputSchema.parse({urls:[secretUrl],username:'TofuRotom',teamId:id}));
+  await tool.handler(tool.settings.inputSchema.parse({urls:[secretUrl],username:'FixturePlayer',teamId:id}));
   assert.equal(observed.teamId,id);assert.equal(Object.hasOwn(observed,'teamFile'),false);
   const output=[];
-  await runCli(['import','--url',secretUrl,'--username','TofuRotom','--team-file','teams/team.txt'],{write:value=>output.push(value),replayImporter});
+  await runCli(['import','--url',secretUrl,'--username','FixturePlayer','--team-file','teams/team.txt'],{write:value=>output.push(value),replayImporter});
   assert.equal(output.join('').includes('secretpw'),false);
-  await runCli(['import','--url',secretUrl,'--username','TofuRotom','--team',id],{write:value=>output.push(value),replayImporter});
+  await runCli(['import','--url',secretUrl,'--username','FixturePlayer','--team',id],{write:value=>output.push(value),replayImporter});
   assert.equal(observed.teamId,id);assert.equal(Object.hasOwn(observed,'teamFile'),false);
-  await assert.rejects(runCli(['import','--url',secretUrl,'--username','TofuRotom'],{write:()=>{},replayImporter}),/exactly one of --team or --team-file/);
+  await assert.rejects(runCli(['import','--url',secretUrl,'--username','FixturePlayer'],{write:()=>{},replayImporter}),/exactly one of --team or --team-file/);
   const failing=async()=>{throw new Error(`Fetch failed for ${secretUrl}`);};
   registerMetricsTools({registerTool(name,settings,handler){registrations.set(name,{settings,handler});}},{workspace:process.cwd(),replayImporter:failing});
-  const failure=await registrations.get('team_metrics_import_replays').handler({urls:[secretUrl],username:'TofuRotom',teamFile:'teams/team.txt'});
+  const failure=await registrations.get('team_metrics_import_replays').handler({urls:[secretUrl],username:'FixturePlayer',teamFile:'teams/team.txt'});
   assert.equal(failure.isError,true);assert.equal(JSON.stringify(failure).includes('secretpw'),false);
-  await assert.rejects(runCli(['import','--url',secretUrl,'--username','TofuRotom','--team-file','teams/team.txt'],{write:()=>{},replayImporter:failing}),error=>!error.message.includes('secretpw')&&error.message.includes('Replay import failed'));
+  await assert.rejects(runCli(['import','--url',secretUrl,'--username','FixturePlayer','--team-file','teams/team.txt'],{write:()=>{},replayImporter:failing}),error=>!error.message.includes('secretpw')&&error.message.includes('Replay import failed'));
 });
 
 test('dashboard filtering agrees with stored reports for moves, Mega use, lead pairs and contaminated parent sets',async t=>{
@@ -340,7 +340,7 @@ test('dashboard filtering agrees with stored reports for moves, Mega use, lead p
   t.after(()=>rm(workspace,{recursive:true,force:true}));
   const p={key:'golisopod:1',species:'Golisopod',selected:true,lead:true,megaEvolved:true,forms:['Golisopod-Mega'],switchIns:1,faints:0,knockouts:1,indirectKnockouts:0,itemRemovals:1,couldNotAct:0,moves:[{move:'Knock Off',uses:3,calledUses:0,failed:0,missed:0,blocked:1,knockouts:1,itemRemovals:1},{move:'Protect',uses:0,calledUses:0,failed:0,missed:0,blocked:0,knockouts:0,itemRemovals:0}]};
   const partner={key:'politoed:2',species:'Politoed',selected:true,lead:true,megaEvolved:false,forms:[],switchIns:1,faints:0,knockouts:0,indirectKnockouts:0,itemRemovals:0,couldNotAct:0,moves:[{move:'Weather Ball',uses:1,calledUses:0,failed:0,missed:0,blocked:0,knockouts:0,itemRemovals:0}]};
-  const base={schemaVersion:1,roomId:'battle-test-1',parentId:'game-bestof3-test-1',teamId:id,username:'TofuRotom',ownSide:'p1',outcome:'win',completed:true,turns:4,players:{p1:'TofuRotom',p2:'Example'},opponentRoster:['Archaludon'],selected:['Golisopod','Politoed'],selectionKnown:true,leads:['Golisopod','Politoed'],pokemon:[p,partner],quality:{complete:true,operational:false,warnings:[]},team:{name:'Rain team',format:'gen9championsvgc2026regmc',roster:['Golisopod','Politoed']},metadata:{endedAt:'2026-10-15T00:00:00Z',setResult:{outcome:'win',completed:true}}};
+  const base={schemaVersion:1,roomId:'battle-test-1',parentId:'game-bestof3-test-1',teamId:id,username:'FixturePlayer',ownSide:'p1',outcome:'win',completed:true,turns:4,players:{p1:'FixturePlayer',p2:'Example'},opponentRoster:['Archaludon'],selected:['Golisopod','Politoed'],selectionKnown:true,leads:['Golisopod','Politoed'],pokemon:[p,partner],quality:{complete:true,operational:false,warnings:[]},team:{name:'Rain team',format:'gen9championsvgc2026regmc',roster:['Golisopod','Politoed']},metadata:{endedAt:'2026-10-15T00:00:00Z',setResult:{outcome:'win',completed:true}}};
   await saveBattle({workspace,record:base});
   await saveBattle({workspace,record:{...base,roomId:'battle-test-2',parentId:'game-bestof3-test-2',outcome:'loss',opponentRoster:['Charizard'],pokemon:[{...p,megaEvolved:false,itemRemovals:0,moves:[{...p.moves[0],uses:1,itemRemovals:0},p.moves[1]]},partner],metadata:{...base.metadata,setResult:{outcome:'loss',completed:true}}}});
   await saveBattle({workspace,record:{...base,roomId:'battle-test-3',outcome:'loss',quality:{complete:true,operational:true,warnings:['Inactivity observed.']}}});

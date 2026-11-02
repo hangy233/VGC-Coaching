@@ -187,3 +187,12 @@ Keep each approved team version fixed for its bounded evaluation. Separate
 selection, execution, timing and variance before attributing results to the
 roster. Propose evidence-backed changes, obtain approval, validate legality,
 and pin the next team version before a new authorized cycle.
+
+Between evaluation cycles, the root manager follows the matchup cycle's
+[guidance-update checkpoint](../champions-mc-matchups/references/headless-battle-cycle.md#update-validate-and-adopt-before-continuing):
+route supported reusable construction/role/set/coverage lessons here, battle
+strategy/basic mechanics to matchup guidance, and control defects to runner/tooling
+repair with regressions. Keep exact-team plans private; preserve existing approval
+for any roster change. Make only a useful canonical correction, validate its
+applicability and counterexample, and sync/read each changed skill folder. A
+review, tool fix or synchronized skill alone proves no team improvement.

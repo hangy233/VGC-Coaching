@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
+import {Writable} from 'node:stream';
 import {createHash} from 'node:crypto';
 import fileSystem, {mkdir, mkdtemp, readFile, readdir, rm, writeFile} from 'node:fs/promises';
 import {basename, dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {awaitResponse, publishResponse, readResponse, sanitizeResponse} from './operator-response.mjs';
+import {awaitResponse, publishResponse, readResponse, sanitizeResponse, writeResponseOutput} from './operator-response.mjs';
+import {createTimingRecorder} from '../observability/timing.mjs';
 
 const cacheDirectory = fileURLToPath(new URL('../cache/', import.meta.url));
 await mkdir(cacheDirectory, {recursive: true});
@@ -26,6 +28,57 @@ const run = args => new Promise((done, reject) => {
   child.stderr.on('data', chunk => { stderr += chunk; });
   child.on('error', error => { clearTimeout(timer); reject(error); });
   child.on('close', code => { clearTimeout(timer); done({code, stdout, stderr}); });
+});
+
+test('removed conversation packet view is refused while full retained results remain available',async()=>{
+  const target=file('removed-turn-view.json');await publishResponse(target,'retained',{result:{complete:true}});
+  await assert.rejects(readResponse({file:target,id:'retained',view:'turn'}),/view must be full or decision/);
+  assert.deepEqual((await readResponse({file:target,id:'retained'})).payload.result,{complete:true});
+});
+
+test('reader timing separates matched processing and callback-confirmed output while retaining the immutable receipt', async () => {
+  const target = file('reader-phases.json'), id = 'reader-phases';
+  await publishResponse(target, id, {result: {sessionId: 'fixture', actions: [], boards: [], controllerLease: 'fixture-private'}},
+    {timing: {inputReceivedAt: 100}});
+  const before = await readFile(retainedFile(target, id), 'utf8');
+  let tick = 0, finishOutput, written = '';
+  const timingRecorder = createTimingRecorder({component: 'reader-fixture', now: () => 1000 + tick, monotonic: () => tick});
+  const result = await awaitResponse({file: target, id, timeoutMs: 0, view: 'decision', timingRecorder});
+  assert.equal(result.complete, true);
+  const output = new Writable({write(chunk, _encoding, callback) { written += chunk; finishOutput = callback; }});
+  const writing = writeResponseOutput(result.value, {output, timingRecorder, commandId: id});
+  let events = timingRecorder.snapshot();
+  assert.equal(events.find(entry => entry.name === 'response.wait' && entry.event === 'span.end').status, 'ok');
+  assert.equal(events.filter(entry => entry.name === 'response.matched').length, 1);
+  assert.equal(events.filter(entry => entry.name === 'response.process' && entry.event === 'span.end').length, 1);
+  assert.equal(events.filter(entry => entry.name === 'response.project' && entry.event === 'span.end').length, 1);
+  assert.equal(events.filter(entry => entry.name === 'response.output_written').length, 0);
+  tick = 17; finishOutput(); await writing;
+  events = timingRecorder.snapshot();
+  assert.equal(events.find(entry => entry.name === 'response.output' && entry.event === 'span.end').durationMs, 17);
+  assert.equal(events.find(entry => entry.name === 'response.output_written').bytes, Buffer.byteLength(written));
+  assert.equal(written.includes('fixture-private'), false);
+  assert.equal(JSON.stringify(events).includes('fixture-private'), false);
+  assert.equal(await readFile(retainedFile(target, id), 'utf8'), before);
+  assert.equal(Object.hasOwn(result.value.timing, 'modelDeliveredAt'), false);
+});
+
+test('missing response polling records one bounded wait and timeout, then can read the same immutable ID later', async () => {
+  const target = file('reader-poll-phases.json'), id = 'poll-phases';
+  const timingRecorder = createTimingRecorder({component: 'reader-poll-fixture'});
+  const result = await awaitResponse({file: target, id, timeoutMs: 15, intervalMs: 1, timingRecorder});
+  assert.equal(result.complete, false);
+  let events = timingRecorder.snapshot();
+  assert.equal(events.filter(entry => entry.name === 'response.wait' && entry.event === 'span.start').length, 1);
+  assert.equal(events.find(entry => entry.name === 'response.wait' && entry.event === 'span.end').status, 'timeout');
+  assert.equal(events.filter(entry => entry.name === 'response.read').length, 0);
+  assert.equal(events.filter(entry => entry.name === 'response.matched').length, 0);
+  await publishResponse(target, id, {ready: true});
+  const read = await readResponse({file: target, id, timingRecorder});
+  assert.deepEqual(read.payload, {ready: true});
+  events = timingRecorder.snapshot();
+  assert.equal(events.filter(entry => entry.name === 'response.read' && entry.event === 'span.end').length, 1);
+  assert.equal(events.filter(entry => entry.name === 'response.matched').length, 1);
 });
 
 test('publishes an id-bound envelope atomically and preserves the raw in-memory result', async () => {
@@ -402,4 +455,65 @@ test('decision CLI view renders a matched nested board while retaining the compl
   const invalid = await run(['--wait', target, '--id', 'decision-view', '--view', 'send']);
   assert.equal(invalid.code, 1);
   assert.match(invalid.stderr, /view must be full or decision/);
+});
+
+test('file alias CLI matches canonical wait full and decision output with credential and capability-prefix redaction', async () => {
+  const target=file('file-alias-ready.json'),id='same-exact-id',room='battle-gen9championsvgc2026regmcbo3-778';
+  const payload={result:{sessionId:'fixture-session',actions:[{kind:'turn',room,rqid:3,token:'b'.repeat(64)}],
+    boards:[{room,request:{rqid:3}}],controllerLease:'fixture-lease-prefix-private',readReceipt:'fixture-receipt-private',
+    error:'fixture-lease-prefix-private / fixture-receipt-private'}};
+  await publishResponse(target,id,payload);
+  const before=await readFile(retainedFile(target,id),'utf8');
+  for(const view of ['full','decision']) {
+    const canonical=await run(['--wait',target,'--id',id,'--timeout-ms','0','--view',view]);
+    const alias=await run(['--file',target,'--id',id,'--timeout-ms','0','--view',view]);
+    assert.equal(canonical.code,0);assert.equal(alias.code,0);assert.equal(alias.stderr,'');
+    const expected=JSON.parse(canonical.stdout),actual=JSON.parse(alias.stdout);
+    // Reader observation timestamps can differ, but all retained data and the
+    // projection contract must be identical for the two read-only entry flags.
+    if(view==='decision') {
+      assert.equal(actual.decisionView.kind,expected.decisionView.kind);
+      assert.deepEqual(actual.payload,expected.payload);
+    } else assert.deepEqual(actual,expected);
+    assert.equal(alias.stdout.includes('fixture-lease-prefix'),false);assert.equal(alias.stdout.includes('fixture-receipt'),false);
+    assert.equal(alias.stdout.includes('controllerLease'),false);assert.equal(alias.stdout.includes('readReceipt'),false);
+  }
+  assert.equal(await readFile(retainedFile(target,id),'utf8'),before);
+});
+
+test('file alias CLI pending and stale IDs have the same bounded read-only timeout and can drain the exact later result',async()=>{
+  const target=file('file-alias-pending.json'),input=file('file-alias-never-dispatch.json');
+  await writeFile(input,JSON.stringify({tool:'battle_start',confirmed:true}));
+  await publishResponse(target,'older-id',{observed:'older'});
+  const before=await readFile(target,'utf8'),command=await readFile(input,'utf8'),entries=await readdir(directory);
+  for(const flag of ['--wait','--file']) {
+    const result=await run([flag,target,'--id','later-id','--timeout-ms','30','--view','decision']);
+    assert.equal(result.code,2);assert.equal(result.stderr,'');
+    assert.deepEqual(JSON.parse(result.stdout),{id:'later-id',pending:true,reason:'response-file-timeout',resend:false});
+    assert.equal(await readFile(target,'utf8'),before);assert.equal(await readFile(input,'utf8'),command);
+    assert.deepEqual(await readdir(directory),entries);
+  }
+  await publishResponse(target,'later-id',{observed:'later'});
+  const complete=await run(['--file',target,'--id','later-id','--timeout-ms','0']);
+  assert.equal(complete.code,0);assert.deepEqual(JSON.parse(complete.stdout).payload,{observed:'later'});
+});
+
+test('file alias CLI rejects missing duplicate unknown and malformed flags without exposing values or reading as commands',async()=>{
+  const target=file('file-alias-malformed.json');
+  const invalid=[
+    ['--file',target],['--file',target,'--id'],['--file','--id','--id','id','--timeout-ms','0'],
+    ['--file',target,'--id','--view','--timeout-ms','0'],['--wait',target,'--id','--view','--timeout-ms','0'],
+    ['--file',target,'--id','id','--wait',target],
+    ['--file',target,'--id','id','--file',target],['--file',target,'--id','id','--id','id'],
+    ['--file',target,'--id','id','--view','full','--view','decision'],
+    ['--file',target,'--id','id','--timeout-ms','0','--timeout-ms','0'],
+    ['--file',target,'--id','id','--unknown','fixture-private-argument'],
+    ['--file',target,'--id','id','--timeout-ms','-1'],['--file',target,'--id','id','--timeout-ms','60001'],
+    ['--file',target,'--id','id','--view','send'],['--file',target,'--id','../fixture-private-argument','--timeout-ms','0'],
+  ];
+  for(const args of invalid) {
+    const result=await run(args);assert.equal(result.code,1);assert.equal(result.stdout,'');
+    assert.equal(result.stderr.includes('fixture-private-argument'),false);
+  }
+  await assert.rejects(readFile(target),{code:'ENOENT'});
 });

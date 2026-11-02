@@ -15,6 +15,63 @@ function setup() {
   request(); return {c,sent,logs,request,grant,choose,tick:n=>time=n};
 }
 test('paired doubles choice sent exactly once with rqid, without raw logging',()=>{const {c,sent,logs,grant,choose}=setup();grant('choose');choose();assert.equal(sent[0],`${room}|/choose move 1 1 mega, move 1|7`);grant('choose');assert.throws(()=>choose(),/Duplicate/);assert(!JSON.stringify(logs).includes('Leech'));});
+
+function executionFixture(firstMove='Leech Life') {
+  const f=setup(),q=fixture();q.side.id='p1';q.active[0].moves[0].move=firstMove;
+  q.active[1].moves=[{move:'Psychic',pp:10,target:'normal'}];
+  f.request(q);f.grant('choose');f.choose({actions:[{type:'move',slot:1,target:2},{type:'move',slot:1,target:1}]});
+  const observations=[];f.c.on('action-status',event=>observations.push(event));
+  return {...f,observations};
+}
+
+test('Armor Tail holder cant does not deny our Farigiraf and its following Psychic is recorded executed',()=>{
+  const {c,observations}=executionFixture(),line='|cant|p1b: Farigiraf|ability: Armor Tail|Baby-Doll Eyes|[of] p2a: Luxray';
+  c.receive(`>${room}\n|move|p2a: Luxray|Baby-Doll Eyes||[still]\n${line}`);
+  assert.deepEqual(c.state(room).lastAction.evidence,[]);assert.deepEqual(observations,[]);
+  c.receive(`>${room}\n|move|p1b: Farigiraf|Psychic|p2a: Luxray\n|move|p1a: Golisopod|Leech Life|p2b: Spiritomb`);
+  assert.deepEqual(c.state(room).lastAction.evidence.map(({type,slot,executed,move})=>({type,slot,executed,move})),[
+    {type:'move',slot:2,executed:true,move:'Psychic'},{type:'move',slot:1,executed:true,move:'Leech Life'},
+  ]);
+  assert.equal(c.state(room).lastAction.status,'execution-observed');
+  assert(c.state(room).battleLog.includes(line),'The original server protocol is retained unchanged.');
+});
+
+test('confirmed holder-first priority blockers attribute denial to our selected move user',()=>{
+  for(const ability of ['Armor Tail','Dazzling','Queenly Majesty']){
+    const {c,observations}=executionFixture('Baby-Doll Eyes');
+    c.receive(`>${room}\n|move|p1a: Luxray|Baby-Doll Eyes||[still]`);
+    assert.deepEqual(c.state(room).lastAction.evidence,[],'The preceding animation-suppressed announcement is not execution proof.');
+    c.receive(`>${room}\n|cant|p2b: Holder|ability: ${ability}|Baby-Doll Eyes|[of] p1a: Luxray`);
+    assert.deepEqual(c.state(room).lastAction.evidence,[{type:'cant',slot:1,at:1000,executed:false,reason:`ability: ${ability}`}]);
+    assert.equal(observations[0].status,'resolution-observed');
+    c.receive(`>${room}\n|move|p1b: Farigiraf|Psychic|p2a: Foe`);
+    assert.equal(c.state(room).lastAction.evidence[0].executed,false);
+    assert.equal(c.state(room).lastAction.evidence[1].executed,true);
+  }
+});
+
+test('ordinary cant keeps its actor and does not reinterpret an unrelated of tag',()=>{
+  const {c}=executionFixture();
+  c.receive(`>${room}\n|cant|p1a: Golisopod|flinch|Leech Life|[of] p2a: Foe`);
+  assert.deepEqual(c.state(room).lastAction.evidence,[{type:'cant',slot:1,at:1000,executed:false,reason:'flinch'}]);
+});
+
+test('unknown or malformed ability cant and a different blocked move do not invent our action failure',()=>{
+  for(const line of [
+    '|cant|p1b: Farigiraf|ability: Unknown Ability|Psychic|[of] p2a: Foe',
+    '|cant|p1b: Farigiraf|ability: Unknown Ability|Psychic',
+    '|cant|p1b: Farigiraf|ability: Armor Tail|Baby-Doll Eyes',
+    '|cant|p2b: Holder|ability: Armor Tail|Baby-Doll Eyes|[of] invalid',
+    '|cant|p2b: Holder|ability: Armor Tail|Baby-Doll Eyes|[of] p1a: Luxray|[of] p1b: Farigiraf',
+    '|cant|p1b: Farigiraf|ability: Armor Tail|Baby-Doll Eyes|[of] p1a: Luxray',
+    '|cant|p2b: Holder|ability: Armor Tail|Sucker Punch|[of] p1a: Luxray',
+  ]){
+    const {c}=executionFixture('Baby-Doll Eyes');c.receive(`>${room}\n${line}`);
+    assert.deepEqual(c.state(room).lastAction.evidence,[],line);
+    c.receive(`>${room}\n|move|p1b: Farigiraf|Psychic|p2a: Foe`);
+    assert.equal(c.state(room).lastAction.evidence[0].executed,true,line);
+  }
+});
 test('missing grant, stale rqid, revision, deadline and half doubles rejected',()=>{const {grant,choose}=setup();assert.throws(()=>choose(),/confirmation/);grant('choose');assert.throws(()=>choose({rqid:6}),/Stale/);assert.throws(()=>choose({revision:0}),/Stale/);assert.throws(()=>choose({deadlineAt:999}),/deadline/);assert.throws(()=>choose({actions:[{type:'move',slot:1,target:1}]}),/Both/);});
 test('identical request does not reset dedupe; older request ignored',()=>{const {c,request,grant,choose}=setup();grant('choose');choose();request();request({...fixture(),rqid:6});assert.equal(c.state(room).request.rqid,7);grant('choose');assert.throws(()=>choose(),/Duplicate/);});
 test('trusted privacy renames preserve requests, invalidate grants and deduplicate choices in both directions',()=>{

@@ -33,6 +33,139 @@ function fixture(options={}) {
 
 const pair=[{type:'move',slot:1},{type:'move',slot:1}];
 const enable={enabled:true,forfeitIfStuck:true};
+const longerClocks={...enable,planningMs:45000,previewPlanningMs:60000,unknownClockMs:20000};
+
+test('fallback metadata is cloned and carried through revalidation and submit',()=>{
+  const validations=[],sources=[],submissions=[],metadata={source:'emergency-default',turnPlan:{objective:'An explicit recipient hypothesis',recipientReads:[{actorId:'actor'}]}};
+  const f=fixture({validate:(_a,choices,meta,source)=>{sources.push(source);validations.push(structuredClone(meta));if(meta)meta.turnPlan.objective='callback mutation';return choices;},submit:(_a,_p,source,meta)=>submissions.push({source,meta})});
+  f.supervisor.configure(enable);f.supervisor.stage('turn-1',pair,metadata);metadata.turnPlan.objective='caller mutation';f.advance(20000);
+  assert.equal(validations.length,2);assert(validations.every(v=>v.turnPlan.objective==='An explicit recipient hypothesis'));
+  assert.deepEqual(sources,['fallback','fallback']);
+  assert.equal(submissions[0].source,'fallback');assert.equal(submissions[0].meta.turnPlan.objective,'An explicit recipient hypothesis');
+});
+
+test('only selected emergency default supplies its trusted validation source',()=>{
+  const validations=[],submissions=[];
+  const f=fixture({validate:(_a,choices,metadata,source)=>{validations.push({metadata,source});return choices;},selectDefault:()=>pair,submit:(_a,_p,source,metadata)=>submissions.push({source,metadata})});
+  f.supervisor.configure({...enable,emergencyDefaultChoice:true});f.advance(20000);
+  assert.deepEqual(validations,[{metadata:undefined,source:'emergency-default'}]);
+  assert.deepEqual(submissions,[{source:'emergency-default',metadata:undefined}]);
+  assert(f.traces.some(entry=>entry.source==='emergency-default'&&entry.controlFailure===true));
+});
+
+test('invalidated fallback metadata never leaks into a replacement or emergency default',()=>{
+  const calls=[];let reject=false;
+  const f=fixture({validate:(_a,choices,meta)=>{calls.push(structuredClone(meta));if(reject&&meta)throw new Error('stale recipient source');return choices;},selectDefault:()=>pair,submit:(_a,_p,_source,meta)=>calls.push(structuredClone(meta))});
+  f.supervisor.configure({...enable,emergencyDefaultChoice:true});f.supervisor.stage('turn-1',pair,{turnPlan:{objective:'Old read'}});f.supervisor.invalidateStaged();
+  f.supervisor.stage('turn-1',pair);assert.equal(calls.at(-1),undefined);
+  f.supervisor.stage('turn-1',pair,{turnPlan:{objective:'Stale read'}});reject=true;f.advance(20000);
+  assert.equal(calls.at(-1),undefined);assert.equal(f.supervisor.status().pending[0].fallbackSource,'emergency-default');
+});
+
+test('preview policy inherits planningMs unless explicitly configured and validates its own budget',()=>{
+  const f=fixture();f.actions=[];
+  assert.equal(f.supervisor.status().previewPlanningMs,20000);
+  assert.equal(f.supervisor.configure({...enable,planningMs:45000}).previewPlanningMs,45000);
+  assert.equal(f.supervisor.configure({planningMs:30000}).previewPlanningMs,30000);
+  assert.equal(f.supervisor.configure({previewPlanningMs:60000}).previewPlanningMs,60000);
+  assert.equal(f.supervisor.configure({planningMs:45000}).previewPlanningMs,60000);
+  for(const previewPlanningMs of [0,-1,300001,1.5,null,'60000'])assert.throws(()=>f.supervisor.configure({previewPlanningMs}),/previewPlanningMs/);
+});
+
+test('known 55-second turn keeps its early staged pair available until the 45-second local cutoff',()=>{
+  const f=fixture();f.actions[0].clock=serverClock({remainingMs:55000,bankRemainingMs:300000});
+  f.supervisor.configure(longerClocks);f.advance(8000);f.supervisor.stage('turn-1',pair);
+  const pending=f.supervisor.status().pending[0];
+  assert.equal(pending.planningDeadlineAt,46000);assert.equal(pending.cutoffAt,46000);assert.equal(pending.emergencyAt,51000);
+  f.advance(12000);assert.equal(f.sent.length,0);assert.equal(f.supervisor.status().pending[0].hasFallback,true);
+  f.advance(24999);assert.equal(f.sent.length,0);f.advance(1);
+  assert.equal(f.sent.length,1);assert.deepEqual(f.sent[0].pair,pair);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().halted,false);
+});
+
+for(const [kind,budget] of [['preview',60000],['turn',45000],['switch',45000]])test(`${kind}: verified long clock uses its configured phase budget`,()=>{
+  const f=fixture();f.actions[0].kind=kind;f.actions[0].clock=serverClock({remainingMs:90000,bankRemainingMs:300000});
+  f.supervisor.configure(longerClocks);f.supervisor.stage('turn-1',pair);
+  assert.equal(f.supervisor.status().pending[0].planningDeadlineAt,1000+budget);
+  assert.equal(f.supervisor.status().pending[0].cutoffAt,1000+budget);
+  f.advance(budget-1);assert.equal(f.sent.length,0);f.advance(1);assert.equal(f.sent.length,1);assert.equal(f.forfeits.length,0);
+});
+
+for(const kind of ['preview','turn','switch'])test(`${kind}: larger verified-clock policy preserves the twenty-second unknown budget`,()=>{
+  const f=fixture();f.actions[0].kind=kind;f.actions[0].clock={source:'unavailable'};
+  f.supervisor.configure(longerClocks);f.supervisor.stage('turn-1',pair);
+  const pending=f.supervisor.status().pending[0];assert.equal(pending.cutoffAt,21000);assert.equal(pending.hardDeadlineAt,null);
+  f.advance(19999);assert.equal(f.sent.length,0);f.advance(1);assert.equal(f.sent.length,1);assert.equal(f.forfeits.length,0);
+});
+
+test('a late first verified preview clock expands only the provisional cutoff and preserves request age',()=>{
+  const f=fixture();f.actions[0].kind='preview';f.actions[0].clock={source:'unavailable'};
+  f.supervisor.configure(longerClocks);f.supervisor.stage('turn-1',pair);f.advance(15000);
+  f.actions[0].clock=serverClock({remainingMs:90000,bankRemainingMs:300000,rqid:31,revision:1},f.now);f.supervisor.refresh('late-preview-clock');
+  const pending=f.supervisor.status().pending[0];
+  assert.equal(pending.receivedAt,1000);assert.equal(pending.cutoffAt,61000);assert.equal(pending.planningDeadlineAt,61000);
+  assert.equal(pending.unknownCutoffAt,21000);assert.equal(pending.hardDeadlineAt,106000);
+  f.advance(5000);assert.equal(f.sent.length,0);f.advance(39999);assert.equal(f.sent.length,0);f.advance(1);assert.equal(f.sent.length,1);
+});
+
+for(const kind of ['preview','turn'])test(`${kind}: a low observed bank overrides the longer phase budget`,()=>{
+  const f=fixture();f.actions[0].kind=kind;f.actions[0].clock=serverClock({remainingMs:90000,bankRemainingMs:9000});
+  f.supervisor.configure(longerClocks);f.supervisor.stage('turn-1',pair);
+  const pending=f.supervisor.status().pending[0];assert.equal(pending.cutoffAt,5000);assert.equal(pending.emergencyAt,5000);assert.equal(pending.deadlineBasis,'verified-server-bank');
+  f.advance(3999);assert.equal(f.sent.length,0);f.advance(1);assert.equal(f.sent.length,1);assert.equal(f.forfeits.length,0);
+});
+
+test('a newly shorter bank promptly shortens an active preview and longer observations cannot restore time',()=>{
+  const f=fixture();f.actions[0].kind='preview';f.actions[0].clock=serverClock({remainingMs:90000,bankRemainingMs:300000});
+  f.supervisor.configure(longerClocks);f.supervisor.stage('turn-1',pair);f.advance(30000);
+  f.actions[0].clock=serverClock({remainingMs:60000,bankRemainingMs:8000},f.now);f.supervisor.refresh('low-bank');
+  assert.equal(f.supervisor.status().pending[0].cutoffAt,34000);f.advance(1000);
+  f.actions[0].clock=serverClock({remainingMs:90000,bankRemainingMs:300000},f.now);f.supervisor.refresh('longer-clock');
+  assert.equal(f.supervisor.status().pending[0].cutoffAt,34000);f.advance(1999);assert.equal(f.sent.length,0);f.advance(1);assert.equal(f.sent.length,1);assert.equal(f.forfeits.length,0);
+});
+
+for(const age of [10000,25000])test(`timer-off after ${age}ms restores the original unknown cutoff without resetting request age`,()=>{
+  const f=fixture();f.actions[0].kind='preview';f.actions[0].clock=serverClock({remainingMs:90000,bankRemainingMs:300000});
+  f.supervisor.configure(longerClocks);f.supervisor.stage('turn-1',pair);f.advance(age);
+  f.actions[0].clock={source:'server-timer-disabled',observedAt:f.now,rqid:31,revision:1};f.supervisor.refresh('timer-off');
+  const pending=f.supervisor.status().pending[0];assert.equal(pending.cutoffAt,21000);assert.equal(pending.hardDeadlineAt,null);assert.equal(pending.emergencyAt,null);assert.equal(pending.receivedAt,1000);
+  if(age<20000){f.advance(20000-age-1);assert.equal(f.sent.length,0);f.advance(1);}else f.advance(0);
+  assert.equal(f.sent.length,1);assert.equal(f.forfeits.length,0);
+});
+
+for(const clock of [
+  serverClock({remainingMs:90000},999),
+  serverClock({remainingMs:90000,rqid:99}),
+  serverClock({remainingMs:90000,revision:9}),
+  serverClock({remainingMs:90000},2000),
+  {source:'server-timer-on',observedAt:1000,remainingMs:90000},
+  serverClock({}),
+])test(`preview cannot acquire the longer budget from stale, untrusted or nonnumerical evidence: ${JSON.stringify(clock)}`,()=>{
+  const f=fixture();f.actions[0].kind='preview';f.actions[0].clock=clock;
+  f.supervisor.configure(longerClocks);const pending=f.supervisor.status().pending[0];
+  assert.equal(pending.cutoffAt,21000);assert.equal(pending.hardDeadlineAt,null);assert.equal(pending.clockFreshForRequest,false);
+});
+
+test('a handoff clears the old preview pair but preserves its sixty-second cutoff for the replacement owner',()=>{
+  const f=fixture();f.actions[0].kind='preview';f.actions[0].clock=serverClock({remainingMs:90000});
+  f.supervisor.configure(longerClocks);f.supervisor.stage('turn-1',pair);f.advance(50000);
+  f.supervisor.invalidateStaged('takeover');assert.equal(f.supervisor.status().pending[0].hasFallback,false);assert.equal(f.supervisor.status().pending[0].cutoffAt,61000);
+  f.advance(5000);const replacement=[{type:'move',slot:2},{type:'move',slot:2}];f.supervisor.stage('turn-1',replacement);
+  assert.equal(f.supervisor.status().pending[0].receivedAt,1000);f.advance(4999);assert.equal(f.sent.length,0);f.advance(1);
+  assert.deepEqual(f.sent[0].pair,replacement);assert.equal(f.sent.length,1);assert.equal(f.forfeits.length,0);
+});
+
+test('longer policy never arms readiness as a move deadline or reserves an extra ready choice',()=>{
+  const f=fixture();f.actions[0].kind='ready';f.supervisor.configure(longerClocks);f.advance(120000);
+  assert.equal(f.supervisor.status().pending.length,0);assert.equal(f.timers.size,0);assert.equal(f.sent.length,0);assert.equal(f.forfeits.length,0);
+});
+
+test('longer policy preserves an already uncertain send without replacing or forfeiting it',()=>{
+  let attempts=0;
+  const f=fixture({submit:()=>{attempts++;throw new Error('Unknown write');}});f.actions[0].kind='preview';f.actions[0].clock=serverClock({remainingMs:90000});
+  f.supervisor.configure(longerClocks);f.supervisor.stage('turn-1',pair);f.advance(60000);
+  assert.equal(attempts,1);f.supervisor.invalidateStaged('takeover');f.advance(120000);
+  assert.equal(attempts,1);assert.equal(f.forfeits.length,0);assert.equal(f.supervisor.status().pending[0].state,'attention-required');
+});
 
 test('opt-in emergency default fills an unstaged request and preserves send uncertainty',()=>{
   let selections=0;

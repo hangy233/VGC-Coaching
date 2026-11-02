@@ -1,0 +1,26 @@
+{
+  "datasetFile": "paired-dataset.json",
+  "guidance": {
+    "id": "synthetic-example-guidance",
+    "sha256": "f17d167a7538628fcd5e8c78d1b21a41f33a08f4f500625fe2e754074711807e"
+  },
+  "conditions": [
+    {
+      "id": "original",
+      "modelId": null,
+      "reasoningEffort": null,
+      "promptSha256": "ea24fb47a1db5260a7481a021e058c8f39ec6808d96f8f1a684857fd50c3850a",
+      "toolConfigSha256": "0d29620a85f302a573244df4e8312f8c55f80f8f2eda0848c9faf1a8e91e2546"
+    },
+    {
+      "id": "low",
+      "modelId": null,
+      "reasoningEffort": "low",
+      "promptSha256": "ea24fb47a1db5260a7481a021e058c8f39ec6808d96f8f1a684857fd50c3850a",
+      "toolConfigSha256": "0d29620a85f302a573244df4e8312f8c55f80f8f2eda0848c9faf1a8e91e2546"
+    }
+  ],
+  "seed": "saved-example-seed",
+  "repeats": 4,
+  "trialTimeoutMs": 30000
+}

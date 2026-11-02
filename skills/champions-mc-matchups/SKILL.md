@@ -5,400 +5,257 @@ description: Plan previews, leads, reserves and battle decisions, review replays
 
 # Champions M-C matchups
 
-Explain how the user's existing six can reach a favorable position against the
-opposing team. Distinguish playing the team better from changing its composition.
+Explain how the existing six reach a favorable position. Distinguish better play
+from changing the roster.
 
-## Required cycle for live BO3 play
+## Roles and research
 
-Cycle revision: **2026-10-22.42**. Read the bundled
-[BO3 cycle and checkpoint](references/headless-battle-cycle.md) before live play,
-including when resuming another agent's session. Before each new search, verify
-the active installed skill matches this repository's complete skill folder and
-the previous BO3's private review checkpoint is complete. Authorization and an
-idle server alone do not complete this checkpoint. Prefer `battle_skill_status`,
-`battle_skill_sync` and `battle_skill_read` for complete guidance adoption;
-`battle_review_save` and `battle_review_status` for the private checkpoint; and
-`battle_preflight` before the next authorized search. Readiness and content
-delivery do not prove tactical judgment, and neither grants battle authorization.
+This skill owns reusable battle strategy and basic mechanics. The battle model
+applies it, chooses actions and actual MCP research, authors inputs and interprets
+returns. The runner supplies current state/guidance and executes authored commands
+with identity, legality, ownership and deadline guards. It selects no tactics.
+The root manager prepares authorized scopes, reviews between sets, maintains
+guidance and repairs tooling. Route roster/role/set/coverage work to the
+[team-building skill](../champions-mc-teambuilding/SKILL.md); keep exact-team plans
+private and the approved roster fixed.
 
-After **every BO3**, including a win, forfeit, or final set in a batch: verify the
-official parent result; save and verify each completed child's replay within the
-user's sharing authorization; read the exact locked team's `team_metrics_agent_report`
-and the new set's evidence as specified in the cycle; review decisions separately
-from execution and variance; update supported reusable guidance or record why no
-rule change is warranted;
-check relevant regressions; sync changed files and read them into the active
-context. Complete the cycle's durable-evidence and bounded cleanup checkpoint
-before another authorized queue. Report a brief **review complete / lesson or no
-change / sync verified**, plus replay coverage and any retained cleanup blockers.
-Never invent a new rule merely to show activity.
-This is an agent workflow requirement, not a review check enforced by `battle_start`.
+The supported live author is Codex CLI with subscription ChatGPT login, explicit
+model/reasoning/tier and retained per-game session context. It has eight declared
+battle tools and outputs only `actions`, `planUpdate` and `reason`. No API-key
+fallback, host strategy screen, preauthored research branches or separate staging
+tool belongs to this path. See the [CLI cycle](references/headless-battle-cycle.md)
+for genuine saved-position qualification and loaded-source verification.
 
-After each user-defined batch, complete the cycle's
-[batch pattern review](references/headless-battle-cycle.md#synthesize-each-completed-batch).
-Find recurring obstacles and successful forcing sequences across its sets and
-comparable history; develop concrete answers and carry them into the next
-authorized batch. Check actual application when opportunities recur, rather
-than treating written guidance or a winning score as proof of improvement.
-Store roster-specific matchup plans in that team's reports or checkpoints, not
-in this shared skill. Between batches, update shared guidance with supported
-transferable lessons. Repeated failure to apply an existing rule requires
-improving its trigger, ordering or compact decision check; "already covered"
-alone is insufficient. Amend the existing rule rather than adding a duplicate.
-Validate the changed behavior and a counterexample, sync the complete folder,
-and read the updated guidance before the next authorized batch. Record the
-source changes and adoption in the final checkpoint. If no supported improvement
-is available, retain a specific evidence-based no-change reason; per-set
-no-change reviews alone do not complete this batch checkpoint.
+Use actual MCP `calculate_damage` and `calculate_speed` for numerical questions,
+not mental arithmetic or a direct calculator. Live research shares at most
+**three calculator calls and one simulated outcome per battle turn**, including
+frozen waiting-time work. A range request also charges actual nested numerical
+dispatches. Replacements/reissued requests do not reset capacity; a failed or
+uncertain reserved call does not refund it. These are ceilings, not goals.
 
-After every batch, also complete the
-[control repair checkpoint](references/headless-battle-cycle.md#repair-every-batch-control-failure).
-Investigate every observed control failure, repair its controllable causes and
-validate the correction or mitigation before the next batch. Record unresolved
-blockers and actual adoption; a skill edit or eventual win alone proves no runtime
-repair. Keep normal batch-end shutdown and verify loaded changes at the next
-normal authorized startup, without extra battles or authentication for testing.
+Prefer the smallest useful check. Use `simulate_choices` when known facts and
+scalar results leave a consequential paired sequence unresolved. Author one
+complete own/opposing pair; the tool assembles source-bound history and labels
+hidden spreads, reserves, counters and native initialization assumptions. Live
+historical spread inference is cache-only and starts no new automatic numerical
+work. An unchecked profile remains conditional. One outcome proves neither a
+range, probability, guaranteed knockout nor tactical approval. Broader offline
+analysis does not expand the live budget.
 
-Keep the client open between BO3s within an authorized batch. At the batch's
-stopping condition, complete preservation, the final review and bounded retention,
-then explicitly stop and verify the client, unless the user requests otherwise.
-The cycle's [batch-end procedure](references/headless-battle-cycle.md#end-the-batch)
-covers saved-login startup for the next authorized batch and preservation blockers.
+## Required cycle
 
-Read [M-C rules and tool usage](references/mc-rules-and-tools.md) before mechanics
-or calculation work. Read [source notes](references/sources.md) for the expert
-frameworks and the limits of the current M-C report used as an example.
-Read the team specified for the supplied battle or preview. That team takes
-precedence over a newer saved team or the project's `cache/TEAM.txt`; a replay
-may show an older variant. Use the latest paste and cache only to fill gaps that
-do not conflict with the battle evidence. Also check `cache/REG.txt` if present.
-Use `gen9championsvgc2026regmc` for M-C; never substitute another format silently.
+Cycle revision: **2026-11-01.123**. Before live play and after a handoff read the
+complete [BO3 cycle](references/headless-battle-cycle.md), including its
+[search gate](references/headless-battle-cycle.md#before-a-new-search).
+Verify complete-folder status, reviewed sync and content read; previous private
+review; genuine selected-model/MCP qualification of the current interface; loaded
+adoption; and `battle_preflight`. Credentials or unused allowance grant no play.
+
+Every set, including wins, forfeits and the final set, needs the
+[checkpoint](references/headless-battle-cycle.md#conclude-every-bo3) and
+[validation/adoption](references/headless-battle-cycle.md#update-validate-and-adopt-before-continuing).
+Report **review complete / lesson or no change / sync verified**, replay coverage
+and cleanup blockers. Use native save/get/status; never handwrite completion.
+
+Every user-defined batch also needs private
+[pattern synthesis](references/headless-battle-cycle.md#synthesize-each-completed-batch),
+[shared-guidance review](references/headless-battle-cycle.md#update-shared-guidance-before-the-next-batch)
+and [control repair](references/headless-battle-cycle.md#repair-every-batch-control-failure).
+Repeated rule misses require a supported trigger/order/check correction; specific
+evidence-based no-change is valid. Per-set no-change alone is not a batch review.
+Finish durable preservation/review/retention and
+[normal shutdown](references/headless-battle-cycle.md#end-the-batch); pending
+offline repair does not keep an otherwise completed client signed in.
+
+Read [rules/tools](references/mc-rules-and-tools.md) before mechanics/numbers and
+[source notes](references/sources.md) for evidence limits. Use the exact supplied
+team/version and `gen9championsvgc2026regmc`; a newer paste cannot overwrite the
+battle's sets. Fill only nonconflicting gaps, and disclose missing registration.
 
 ## Start from what is known
 
-Identify whether the user supplied a preview, an open team sheet, a live position,
-or a completed replay. Separate revealed facts, justified inferences, and unknown
-sets. List only the uncertainties that could change the decision. If the user
-needs a live-turn answer, lead with an actionable play and its main alternative;
-avoid delaying the answer for a broad metagame survey.
+Separate preview, open sheet, current board and replay. Distinguish facts,
+supported inferences and unknowns; name uncertainties that could change the pair.
+Lead live advice with the actionable pair and key alternative, not a metagame survey.
 
-For a live position, establish active Pokemon, HP, boosts, status, consumed items,
-Mega use, reserves, and weather/terrain/speed-control turns from the supplied
-evidence. Do not infer an item solely from moving first, an ability solely from a
-Seed activating, or a chosen move that never appears because its user fainted.
-A single observed move order can be a speed tie. Missing details are not zeros.
-Maintain a compact opponent Speed evidence note across turns and games of the
-same BO3. Retain the observed actors, moves, order and conditions separately from
-the compatible Speed range or spread hypotheses; unknown investment does not
-erase a useful order constraint. Follow the
-[observed-order inference procedure](references/mc-rules-and-tools.md#infer-speed-from-observed-move-order)
-before reusing that constraint on a changed board or after a handoff.
-Open sheets reveal the registered six and their published moves/items/abilities;
-use nature and level only when supplied. They do not reveal the selected four,
-unrevealed reserves, investments, or the next action. An empty observed-reserves
-list does not establish that only the two active opponents remain.
+Establish actives, HP, boosts/status, consumed items, actual form/Mega use, selected
+reserves and field/control age. Missing details are not zeros. Moving first
+proves no item; Seed consumption alone proves no ability; a pre-action faint
+reveals no selected move. Open sheets reveal registered six/moves/items/abilities
+and nature/level only when supplied, not selected four, investments or next
+actions. Empty observed reserves does not mean only two opponents remain.
 
-For Perish or trapping positions, track each Pokemon's counter, the current trap
-source and ability, switching eligibility, usable reserves, and latest safe
-escape turn. Removing a trapper does not clear existing Perish counters, and a
-switch route needs an available reserve. Do not infer Shadow Tag from Gengar's
-species alone; verify its current form and ability.
+The script tracks observable history. Gaps or hidden counters can require
+explicit conditional native worlds, not a ban on a clickable move. Preserve known
+HP, boosts, items, PP and current identities; never relabel a default as observed.
+No support whitelist decides choice admission. Inspect assumptions and coverage
+before treating a returned sample as material evidence.
 
-## Team preview and a game plan
+Carry observed move order with actors, moves, priority, field/abilities/items and
+possible tie, separate from compatible Speed/spread hypotheses. Follow
+[order inference](references/mc-rules-and-tools.md#infer-speed-from-observed-move-order)
+before reuse on a changed board. Unknown investment does not erase a useful
+constraint. At a later preview also read the actual early denial/pre-action KO
+sequence and failed cover. A terminal plan or order note is not that history;
+if absent, state the limit rather than claim learning or resolution.
 
-Read [proactive win plans](references/proactive-win-plans.md) before preview or
-live play. Choose what our pair will force and how the next board converts that
-progress into a win. Favor purposeful pressure when it advances that route;
-preservation, Protect and switching should earn an attacking window or retain a
-needed answer. A play can be safe this turn yet concede the game over the next
-two. These priorities do not replace paired-response checks or MCP verification,
-and do not justify doubling every target or taking unsupported risks.
+On Perish/trap reveal, annotate counters, current trap holder/form/ability,
+usable reserves and latest eligible escape. Before repeated chip/Protect, name
+the escape or finish left when counters expire. Include pivots and item-triggered
+reentry restoring a trap. Removal does not clear Perish counters; an offered
+switch or `maybeTrapped` is no proof of escape. Check a removal-dependent escape
+sequence before relying on it. Purposeful Perish trades remain valid with a
+concrete remaining finish; species alone proves no trapping ability.
 
-Against screens supporting setup or draining recovery, read
-[break screens and recovery-backed setup](references/proactive-win-plans.md#break-screens-and-recovery-backed-setup).
-Choose whether removing the setter or the attacker opens the finish; turn healing
-denial into useful attacks or positioning, and stall only when their progress is
-contained. Reassess that objective when the board changes.
+## Team preview and game plan
 
-Identify the opponent's likely attacking combinations, speed control, support
-that enables them, and alternate plans. Treat these as hypotheses unless revealed.
-Consider their strongest plausible lead and a materially different opening.
+Read [proactive win plans](references/proactive-win-plans.md). Choose a forcing
+pair and next-board conversion. Protect, preservation and switches should earn
+an attack window or retain an answer, not merely delay defeat. Aggression does
+not waive delivery checks or mean doubling every target.
 
-Choose four with a reason for both the lead and the reserves:
+Choose **front two with a shared opening task and back two with named jobs**
+against a plausible lead and materially different opening. Identify obstacle,
+closer, each reserve's entry/first useful window, forgone role and second-turn
+pair against both foes' responses. Opening damage alone supplies no four-Pokémon
+plan. Mega is optional; its weather partner is not compulsory. Compare immediate
+and delayed evolution when defensive typing or ability changes incoming pressure.
+A named fast reserve supplies no attack window against available opposing control;
+apply the [control-response comparison](references/proactive-win-plans.md#choose-the-route-then-create-pressure).
 
-- State the intended endgame and what must be removed, weakened, or preserved.
-- Check whether the pair can act immediately, needs setup, or can safely switch.
-- Account for the partner's best response: spread damage, a double target,
-  protection, redirection, terrain, weather, or opposing setup.
-- Explain an opening branch and a recovery route. A game plan is an objective
-  with contingencies, not a script assuming the opponent cooperates.
-- Mega Evolution is a battle resource; an eligible Mega need not be among the
-  selected four, and carrying its weather/support partner is not compulsory.
-  Compare immediate and delayed Mega Evolution when defensive typing or ability
-  changes alter the incoming turn; greater offensive power alone does not settle timing.
+Against screens/setup/drain, use the
+[conversion plan](references/proactive-win-plans.md#break-screens-and-recovery-backed-setup):
+commit to setter or attacker removal, turn denial into attacks/entries, and stall
+only while opposing progress is contained. If one foe repeatedly denies the
+route, name what the next pair changes about its attack before spending another
+action on its partner. Reassess after board changes.
 
-A compact matchup entry can use:
-
-| Opposing plan | Lead / back | Win condition | Opening branch | What changes the plan |
-| --- | --- | --- | --- | --- |
-| Verified or explicitly assumed mode | Two / two | Concrete endgame | Action plus opponent response | Reveal, HP, field turn, or speed change |
+Compact preview intent: opposing plan → front-two task → back-two jobs/entry
+windows → next pair/endgame → plausible alternative and change condition.
+Keep this in the authored reason/plan, not an invented tool field or delayed note.
 
 ## Evaluate the turn
 
-### Before committing a turn
+Use [bounded planning and delivery](references/turn-planning.md). Start from fresh
+facts and carried objective. Any selected switch, form/field change or entry
+ability triggers the same scan: **resulting recipients/field/forms → reactive
+effects and priority → each needed actor's delivery → useful delivered progress
+and remaining answer**. A reset alone earns no attack window. Setter entry is not
+necessarily a new field activation; retain observed field age until a setting
+event changes it.
 
-Run these checks before finalizing a live recommendation; report only the checks
-that change the play. Prepare the threat-to-answer map at preview and update it
-after consequential reveals. Use the [battle regression cases](references/battle-regression-cases.md)
-when reviewing these failure modes or testing changes to the skill. Read the
-[live-battle lessons](references/live-battle-lessons.md) when preparing a live
-cycle or reviewing the documented denial, weather, protection, and clock failures.
+When immediate damage spends a resource, leaves the blocker or loses an entry/
+control window, compare an attack-plus-positioning line's next useful pair.
+Positioning must earn progress. Before submission bind each named move to that
+actor's **fresh clickable menu**, slot, target and Mega choice; registered order
+or a previous request is not the runtime command map.
 
-Make the read explicit: **plausible opposing paired action -> our paired response
--> main risk and alternative**. Use the open sheet and observed responses to form
-these branches; use MCP damage and Speed to check their feasibility. A damage
-maximum does not select the plan. Keep the note short, and submit first when the
-clock cannot support optional explanation or additional calculations. When time
-permits, `battle_note_decision` retains this reasoning against the observed action
-token without submitting a move. Use optional calculator `evidenceContext` to
-link actual MCP results; never invent a receipt or turn a prediction into a fact.
+Resolve current recipients and plausible switches, redirection, entry effects and
+Mega forms before crediting an action. An immune target requires revision or an
+explicit expected recipient, stay-in failure and useful partner payoff; a possible
+prediction proves no opposing choice. Missing recipient metadata is no all-clear.
+See [recipient reads](references/turn-planning.md#read-current-recipients).
 
-**Live control comes first:** resolve known legality and recipients, identify a
-useful complete pair, then stage/send before extended branch ranking. A sent-only
-board is a cue to keep the read-only next-request wait active, not to analyze the
-old position or pause before the next read. Drain each dispatched result before
-acknowledgments or handoff messages; a fresh turn inside it still needs its own
-paired choice. Follow the cycle's bounded post-send
-wait; it protects observation continuity, not a pause after a fresh board arrives.
-A known unsent choice from an ended child can precede the next preview while its
-BO3 parent remains live. Follow the cycle's bounded transition observation, then
-protect the returned preview immediately; the earlier terminal result does not
-protect the next game's selection.
+Apply the [required-actor contract](references/turn-planning.md#resolve-required-actor-delivery-and-recovery)
+to setup, required attacks, entries, stopping setters and preserving answers.
+For each necessary actor/resource: if denied or lost, what delivered partner
+progress and remaining answer survive? A risk disclaimer, partner Protect,
+renamed chip or unprovided reserve alone supplies no continuation. Ordinary useful
+chip, purposeful trades and unavoidable finishing gambles remain legitimate with
+their actual payoff and limits.
 
-- **Switch-aware legality:** Evaluate the field when moves resolve, including
-  plausible opposing switch-ins. Recheck priority, target eligibility, terrain,
-  weather, and immunity changes; give a usable alternative if a switch disables
-  the intended move. A selectable move is not necessarily an effective action.
-  Before switching for a resistance or field ability, name both opponents' plausible
-  incoming attacks and whether the entrant must survive them to deliver the plan.
-  Use the entrant's current form on entry: a held Mega Stone does not grant the
-  Mega form's typing before that evolution has occurred.
-  Include pending attacks after a forced entry; immunity to one move does not make
-  the destination safe from its partner. A necessary or purposeful trade remains
-  available, but do not describe an unchecked combined-pressure entry as safe.
-  If an opponent can pivot before our attack, evaluate the replacement occupying
-  the targeted slot, not only the Pokemon present when the move was selected.
-  Check move denial as well as survival: an earlier Throat Chop can disable a
-  selected sound move even when its damage is resisted and Fake Out is blocked.
-  Recovery prevention can also deny an attack: read the
-  [Psychic Noise and draining-move check](references/mc-rules-and-tools.md#psychic-noise-can-deny-a-draining-attack)
-  when a healing or draining move is part of the plan.
-  Apply the same check to forced mid-turn replacements: identify which attacks
-  remain pending and whether they can hit the incoming Pokemon after the trigger.
-  For an escape pivot, check that it can resolve before the deadline: Fake Out,
-  Protect, Encore, a knockout, or an invalid target can defeat the intended route.
-  Verify the resulting switch and counter clearance rather than assuming success.
-- **Preserve the answer:** Map each remaining opposing win condition to a primary
-  answer, a practical backup, and required HP or field conditions. Before trading
-  one away, check whether the remaining team still has a feasible endgame.
-  Before choosing recovery or chip with that answer, check both opponents' revealed
-  coverage at resolution: healing to full does not establish survival of the
-  incoming turn. Compare Protect plus partner progress or a covered field change.
-  A purposeful trade can be correct after removing its remaining obstacle or
-  when a checked backup can finish; preservation is not an absolute prohibition.
-- **Expect contested weather:** When our weather gives us an advantage, treat an
-  available opposing overwrite that restores their advantage as a leading
-  high-likelihood response. Evaluate that branch before relying on the current
-  weather for an attack or move order. Check the setter's actual availability
-  and activation timing; retain an attack/Protect branch rather than assuming
-  the override is certain. Use the [weather-incentive lesson](references/live-battle-lessons.md).
-- **Read their preservation incentives:** A credible knockout threat, a target
-  needed to answer our remaining Pokemon, or an available switch-in that takes
-  the intended attacks better strengthens the Protect/switch branch. Identify
-  the target's role and plausible recipient; registered reserves remain unconfirmed
-  until revealed. Before doubling that slot, compare split pressure or attack plus
-  support, including what their other active Pokemon gains. Retain an attack or
-  sacrifice branch: these incentives do not establish the opponent's choice.
-  A double target can still be justified by necessary removal, useful damage into
-  the switch-in, or limited partner progress; state its payoff and main failure.
-- **Order the damage:** State the required attack order and chip threshold when
-  they matter. Check Protect, misses, redirection, and the first attacker fainting;
-  do not count a second hit without a route to deliver it. If the plan needs a foe
-  removed before it retaliates, name that gating removal and the branch where it
-  survives before crediting support, drain healing or a field change as protection.
-  An unverified removal can remain a necessary gamble; it is not a checked safe
-  route. If delivery relies on the partner denying an attack, resolve that denial
-  after plausible switches, field changes and target eligibility first; compare
-  the uncovered attack branch before counting our attack as delivered.
-  Include speed-control
-  expiration and the next board, not just this turn's damage total.
-  Before setting or reversing speed control, name its beneficiaries among the
-  actual active Pokemon and reserves, and the route through expiration. If a
-  later reversal is essential, check whether the setter can survive and act then.
-  If either side Protects, identify the progress still available to the other
-  active Pokemon: a knockout, setup, recovery, or field control can decide the turn.
-  Before a double target or support-plus-attack, name the active setup threat:
-  if its partner Protects, can it boost or remove our key answer unopposed?
-  Compare a pressure/disruption branch; accept that exposure only with a stated
-  immediate payoff or a checked response to the resulting boosted board.
-- **Check side effects:** Inspect incidental stat drops and other ability/item
-  triggers on every affected target, including spread attacks and switch-ins.
-  Compare the boosted opponent's next turn with the value of the immediate hit.
-- **Adapt from evidence:** Between games, record observed response -> our
-  adjustment -> their plausible counter-adjustment. Carry this into the current
-  branch; one Protect or lead choice does not establish a fixed opponent habit.
-- **Keep a legal fallback:** Before ranking a fresh request's alternatives,
-  identify a useful complete legal pair, resolving known recipient, eligibility
-  and entry constraints that could invalidate it. Protect that pair before
-  extended within-model comparison as well as optional tools. Stage it with
-  `battle_stage_fallback` when comparison remains and
-  the loaded client supports the enabled deadline policy. Hold the exclusive
-  controller lease; a handoff requires an explicit generation-checked takeover.
-  Name the specific material question before using a separate staging step;
-  prepare the complete pair for each decision-changing result before that check.
-  If preparing those branches would delay first protection, send the useful final
-  pair and defer the check.
-  After its result, immediately commit or send the prepared revision, without
-  restarting branch ranking. Vague further comparison does not justify delaying
-  a final pair. If already late, send the useful final pair rather than start a
-  new comparison; never use an unavailable benchmark as permission for arithmetic.
-  With the maintained SDK operator, use `stage-next` before extended comparison,
-  then `commit-next` for that stored pair or `play-next` for an authored revision.
-  When the complete pair is already final, use `play-next` directly: it stages
-  and sends in one dispatch. Avoid an unnecessary separate staging/commit gap.
-  If the research guard requests commitment, commit the stored current pair
-  immediately, preserving any existing send reservation.
-  Budget from request arrival and the loaded cutoff, including read and tool time:
-  a 20-second unknown-clock cap cannot support 20 seconds of model deliberation.
-  Use the cycle's clock-aware first-pair target and prepared handoff procedure.
-  Its current-request research guard and decision reader support this sequence;
-  they cannot supply a tactical choice during a model pause before first staging.
-  Follow the cycle's early-commit procedure and inspect `battle_turn_status`;
-  immediately after preview, extract the current board and legal request in
-  compact form and stage/send the pair before optional watch-URL messages,
-  history reads or full-state output. Read full open sheets at preview; while
-  live, render only the needed current board, legality and short new events.
-  Preserve full observations internally and bound any newly essential mechanics
-  read. Tool/output latency consumes the deadline from request arrival.
-  An unverified numerical benchmark does not require delaying every legal play.
-  Revalidate the pair after state changes. Check both the current-turn deadline
-  and the total game bank: repeated animation reads, calculations, and context restoration consume
-  the latter even when earlier turns were submitted. Keep a compact current-board
-  note and stop optional analysis early enough to submit and verify the fallback.
-  A successful local send can remain acceptance-unknown while the opponent
-  plans: ordinary choices do not normally receive a live acknowledgment.
-  Missing acknowledgment alone warrants neither a resend nor a forfeit.
-  Missing the local planning target triggers attention and recovery; it is not
-  proof that the server deadline expired. A repaired client allows a fresh legal
-  pair during recovery and reserves automatic stuck-forfeit for a verified
-  current server turn or bank emergency. Unknown clocks remain unknown.
-  Reconcile an uncertain write separately and keep fresh requests protected;
-  the cycle distinguishes that attention state from an unsubmitted request.
-  After a context lapse or timeout, repair this workflow before another queue.
-  If authorized to operate the battle UI, verify both
-  selections and submission before the deadline; only claim acceptance when
-  observed. UI submission is an execution responsibility, not something a chat
-  recommendation accomplishes. In advice-only mode, leave submission to the user.
+After denial/pre-action KO, start the next decision with its cause. After Protect
+erases progress or recovery restores the target while spending an answer, ask
+what changes the next heal, boost or attack. A changed target alone is no
+conversion. Compare concrete pressure, disruption, control or entry against both
+replies before repeating the failed sequence.
 
-Compare a few plausible joint actions for both sides. Prefer a line that retains
-useful options across reasonable responses when the position permits it. State
-when a risky prediction is needed because safer lines do not leave a winning
-route. Do not assign numerical probabilities to reads without evidence.
+### Before committing
 
-Verify the relevant moves, abilities, typing, target rules, and Speed. Calculate
-damage on explicit sets before stating survival, a knockout, or a double target's
-combined range. Consider Protect, accuracy, redirection, immunity, spread modifiers,
-and whether the second attacker actually gets to move. Use the reference for
-native Champions points and unsupported MCP field options.
-Use actual MCP damage-tool results for calculated damage, KO probabilities, and
-survival benchmarks. If the MCP cannot model the required state, mark that
-benchmark unverified; do not substitute a direct calculator. Observed replay HP
-changes remain observations, not calculated ranges.
+- **Switch-aware eligibility:** Resolve both actions' targets, entry forms, field,
+  current trap and escape timing. A plausible opposing setter switch precedes
+  field-dependent priority and can change ordinary attack order too. Preserve
+  both stay-in and entry branches as uncertainty; do not infer selection.
+- **Reactions before chip:** Check recipients on both sides, including opposing
+  ally-targeted stat support. Resulting ability/boost and support order precede
+  the actor-delivery check. A damaging secondary drop is possible, not certain;
+  compare the no-drop branch and a useful alternative when the boost breaks the
+  payoff. Retain necessary pressure or a purposeful trade without a blanket ban.
+- **Needed actor after those changes:** Check both foes' eligible hits/denial into
+  each actor and later answer. A simulated action attempt is not successful
+  delivery; acting before fainting is not surviving. If partner disruption covers
+  the attack, verify its eligibility after recipient/field changes.
+- **Preserve the actual answer:** Name primary answer, usable backup and HP/field/
+  entry needs. A setter can remain needed for a later reset despite current
+  weather. Compare Protect or checked replacement before spending it on chip.
+  Prioritize the attacker denying that window over support whose effect already
+  resolved, unless immediate partner threat changes the trade. Preservation is
+  not absolute; a delivered trade or checked backup can justify spending it.
+- **Expect contested fields:** Available beneficial overwrite is a leading
+  plausible reply, not a measured probability. Verify setter availability,
+  actual activation and form before reusing order/weather. Keep attack/Protect
+  alternatives. See [weather lessons](references/live-battle-lessons.md).
+- **Read preservation incentives:** A credible KO, needed answer or better
+  recipient strengthens Protect/switch plausibility. Compare double versus split/
+  support and the partner's progress, while retaining attack/sacrifice. Double
+  remains useful for required removal, recipient pressure or limited partner
+  progress; state payoff/failure rather than intent.
+- **Order the damage:** Scalar checks establish benchmarks; an unresolved required
+  removal before retaliation needs the one actual paired outcome. Name the
+  target and action/deadline it must prevent. Inspect ordered damage/denial,
+  surviving foes and next board, not summed ranges. Choose the most consequential
+  plausible opposing pair; other responses stay untested. Include control expiry,
+  actual beneficiaries and any required later reset. Support or Protect can allow
+  opposing setup/recovery; compare its payoff with pressure and a checked answer.
+- **Adapt from evidence:** Carry observed response → adjustment → plausible
+  counter-adjustment. One lead/Protect proves no fixed habit, and a win alone
+  justifies no automatic repetition.
+- **Protect the clock:** No routine acknowledgment or optional explanation should
+  delay a useful final pair. Respect source/deadline/reservations and actual
+  tool limits. When a needed check is unavailable, prefer a viable nondependent
+  plan; otherwise name the necessary gamble. Never invent numerical evidence or
+  another outcome after capacity is spent.
 
-Separate weather from terrain, physical Defense from special survival, and
-single-target redirection from spread protection. Read a move's full mechanics
-when the line depends on an exception; a short description is not sufficient.
-Check both Pokemon when priority, an immunity, or a screen is involved. Removing
-a field setter does not automatically remove an already established field.
-For move order, compare priority brackets first, then Speed and applicable Trick
-Room effects within the bracket. Recheck whether ability-based protection is
-actually on the field when the move resolves; pivoting out Armor Tail removes
-that protection. Do not treat a priority move as faster than every other priority
-move or assume that a field effect and a holder-dependent ability persist alike.
+Read full mechanics for consequential exceptions: contact, typing, targeting,
+ability, field and order. Priority brackets precede Speed; Trick Room reverses
+Speed within a bracket, not priority. Protection follows the holder at resolution:
+withdrawing Armor Tail differs from a persistent field. Weather and terrain,
+physical and special survival, redirection and spread protection are separate.
+Use [live lessons](references/live-battle-lessons.md) and
+[regression cases](references/battle-regression-cases.md) for affected failures and
+counterexamples.
 
-In open sheets, use revealed sets without inventing their unrevealed investments.
-In closed sheets, offer branches for consequential coverage or items. Between
-games, update those branches using new information rather than repeating a lead
-solely because the previous game was won.
+## Review without hindsight
 
-## Review a replay without hindsight
+Follow the cycle's [exact-team metrics procedure](references/headless-battle-cycle.md#read-the-exact-teams-metrics).
+Inspect actual sheet/version, games, cutoff, warnings, filters and child coverage,
+including exclusions. Counts, health and annotations cannot invent evidence or
+causes. Team/roster advice needs actual opportunities, not bench rate alone.
 
-For a saved team's history, use `team_metrics_agent_report` with its exact team
-ID before drawing cross-game conclusions. The compact report includes the cached
-team sheet, sample sizes, exclusions, descriptive observations and evidence links;
-the cycle explains its freshness checks and private saved-file fallback. Use
-`includeGames: true` or `team_metrics_report` when the relevant game evidence is
-needed. Use `team_metrics_health` for missing replay/evidence/source diagnostics,
-`team_metrics_game_annotations` for the append-only review audit, and
-`team_metrics_compare` for descriptive comparisons of exact immutable versions.
-Manual exclusions need a reason; disclose the resulting filters and sample sizes,
-and inspect excluded games before drawing conclusions. Do not combine changed
-team versions or treat review questions as findings.
+Reconstruct decisive changes and opening knowledge. Each correction needs a
+feasible exact-position alternative and limitation. A switch entrant cannot attack
+that turn; an earlier setup requires a labeled whole counterfactual sequence.
+Compare item/set plans from preview through control, preservation, entry and first
+attack, including moves, locks, reset costs and lost coverage. Transplanting an
+item onto a failed final board proves no superior plan.
 
-Reconstruct decisive changes first, then assess selection and the opening. For
-each important turn, record what was knowable before the action, the observed
-result, and a feasible alternative from that exact position. A Pokemon switching
-in cannot also use its move that turn. If changing an earlier turn enables a
-later action, label the entire sequence as a counterfactual branch.
-
-For an item or set comparison, also compare complete plausible plans from preview
-through the finish: selected four, opening, control window, answer preservation,
-entry and first attack. Do not freeze the failed sequence and transplant only the
-item onto its final board. Compare the complete sets, including changed moves,
-damage, choice locks and reset costs. Bench counts, useful Protect turns, attacks
-already delivered and exposure under Room describe the actual plan; alone they
-establish neither item's superiority. Separate operational failures and missed
-available lines from a structural gap, and distinguish a better opportunity from
-a demonstrated win. Use the [mixed-speed handoff](references/proactive-win-plans.md#hand-off-from-room-to-a-fast-cleaner)
-when assessing a slow front with a fast reserve.
-
-Do not infer poor decision-making solely from a loss, or sound decision-making
-solely from a favorable roll. Distinguish execution, team structure, information
-gaps, and unavoidable variance. Check whether an unused teammate provided a
-practical answer before recommending a roster change. Include one concrete
-adjustment to test rather than a list of speculative misplays.
-
-For Encore, priority, weather changes, or a speed-control reversal, verify the
-timing and what move or field state exists when the action resolves. Do not
-promise a salvage line wins without checking the next board and remaining threats.
-For a terminal Perish sequence, verify residual faint order, relevant Speed,
-reserves, and win resolution in the actual format. Do not substitute Trick Room's
-attack order for end-of-turn order or assume that the slowest Pokemon always wins.
+Separate tactical judgment, execution, structure and variance. A win, loss or
+favorable roll establishes none alone. Check an unused teammate's practical
+answer before recommending a revision. Give one concrete next test, not a
+speculative misplay list. For terminal Perish use actual-format residual faint
+order, Speed/reserves and win resolution; Room attack order is not residual order,
+and slowest does not automatically win.
 
 ## Deliver and keep scope
 
-For preview: give the preferred four, lead, game plan, and the main alternative.
-For a turn: give the recommended pair of actions, reason, and key risk.
-For a replay: lead with the most consequential lesson, then a few supported
-turn corrections and one next-game adjustment. Label hypothetical damage targets
-and quote actual validation/calculation results only when they were obtained.
+Preview: four, lead, plan and alternative. Turn: pair, reason and key risk.
+Replay: supported lesson, positive choice, correction and next test. Label
+hypotheses and quote only actual calculations/validation. Keep roster unchanged
+without explicit approval. Shared guidance and simulation guarantee no victory
+against unknown actions/sets.
 
-Keep the user's roster unchanged during analysis. If a repeated structural gap
-warrants a change, explain the smallest useful revision and its opportunity cost;
-do not update saved teams merely because advice was requested. Preserve prior
-authorization when the user explicitly accepts a change. Never claim the skills
-or the simulator establish a guaranteed win against unknown opposing sets.
-
-## Play → conclude → update
-
-Follow the bundled [BO3 cycle and checkpoint](references/headless-battle-cycle.md).
-Locate the active VGC project's `showdown/AGENT-WORKFLOW.md` for its client API;
-that project file is not relative to a globally installed skill. The agent supplies
-strategy; an explicitly enabled watchdog prioritizes the agent's staged legal pair.
-The cycle documents the separately authorized `emergencyDefaultChoice` option for
-missing input; its deterministic legal choices are operational fallbacks, not
-agent predictions or calculated tactical judgments. Review does not authorize
-another set, a roster change, replay publication, or a new authentication attempt.
-Honor an existing user request to save replays and clean completed BO3 artifacts;
-do not ask again for that already authorized scope. Preserve room privacy and
-keep private replay access URLs in ignored reports and checkpoints.
+After every set and batch complete the required cycle, replay coverage, private
+review, supported shared update or specific no-change, control repair, retention
+and normal shutdown. Guidance work grants no extra sets, publication, roster
+change, authentication or Git operations. Keep private room access and detailed
+team evidence out of shared sources.

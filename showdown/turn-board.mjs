@@ -26,7 +26,8 @@ function pokemonView(pokemon) {
     status: pokemon.status, fainted: pokemon.fainted, boosts: clone(pokemon.boosts),
     ability: pokemon.ability, abilitySuppressed: pokemon.abilitySuppressed,
     item: pokemon.item, itemKnown: pokemon.itemKnown, itemHistory: clone(pokemon.itemHistory),
-    mega: clone(pokemon.mega), moves: clone(pokemon.moves), volatiles: clone(pokemon.volatiles), selection: pokemon.selection};
+    mega: clone(pokemon.mega), moves: clone(pokemon.moves), volatiles: clone(pokemon.volatiles), selection: pokemon.selection,
+    ...(pokemon.ownPpSnapshot ? {ownPpSnapshot:clone(pokemon.ownPpSnapshot)} : {})};
 }
 
 export function compactTurnBoard(snapshot, {request, events = []} = {}) {
@@ -34,6 +35,7 @@ export function compactTurnBoard(snapshot, {request, events = []} = {}) {
   const currentParty = !request?.teamPreview && Array.isArray(request?.side?.pokemon);
   return {turn: snapshot.turn, ownSide: snapshot.ownSide, observedAt: snapshot.observedAt,
     updatedAt: snapshot.updatedAt, field: clone(snapshot.field), request: clone(snapshot.request),
+    ...(snapshot.ownPpObservation ? {ownPpObservation:clone(snapshot.ownPpObservation)} : {}),
     sides: (snapshot.sides || []).map(side => {
       const own = side.id === snapshot.ownSide;
       const pokemon = side.pokemon.filter(p => !own || !currentParty ||

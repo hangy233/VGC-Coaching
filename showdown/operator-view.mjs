@@ -1,10 +1,17 @@
 // Reader-only rendering of a retained, sanitized operator response. This module
 // never calls MCP, selects actions, changes a deadline, or rewrites the receipt.
 import {isDeepStrictEqual} from 'node:util';
+import {isNativeSimulation, isNativeSimulationBatch, isSimulationDecisionView, projectSimulationDecisionView,
+  projectSimulationBatchDecisionView} from './simulation-decision-view.mjs';
 
 const timestamp = value => Number.isSafeInteger(value) && value >= 0 && value <= 8640000000000000;
 const reserved = value => ['sent', 'uncertain', 'accepted', 'execution-observed'].includes(value);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const pick = (value, keys) => Object.fromEntries(keys.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]]));
+// Property ordering is a presentation aid only. Keep every other source field,
+// including unknown future fields, and never mutate the retained observation.
+const first = (value, keys) => ({...pick(value, keys), ...Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)))});
 
 function requestView(request, actions, checkedAt) {
   const action = actions.find(value => value.token === request.token && value.room === request.room && value.rqid === request.rqid);
@@ -20,7 +27,7 @@ function requestView(request, actions, checkedAt) {
     planningRemainingMs: remaining('planningDeadlineAt'), cutoffRemainingMs: cutoff,
     hardRemainingMs: remaining('hardDeadlineAt'), actionableAtObservation, protectedAtObservation,
     commitNow, attention: commitNow ? 'stage-or-submit-current-choice-now' : actionableAtObservation && !protectedAtObservation ? 'plan-current-choice' : 'preserve-existing-reservation',
-    limitation: 'Age is recomputed from this retained observation. Local planning/cutoff budgets are not server deadlines; current live state may have advanced.'}};
+    limitation: 'Retained-observation age; local budgets are not server deadlines. Live state may have advanced.'}};
 }
 
 function eventView(events) {
@@ -41,6 +48,30 @@ function eventView(events) {
     ...(omitted ? {decisionViewNote: 'Earlier plain HP updates omitted from this rendering only; current HP, consequential events and the full retained response remain available.'} : {})};
 }
 
+function roomHistoryView(state) {
+  if (!Array.isArray(state.rooms)) return {};
+  // Only trim known, completed summaries from *other* sets. Establish the exact
+  // current parent from matching action/board request identities, never from an
+  // alias guess, array order or the last historical room. Ambiguous/terminal
+  // observations and unknown room fields stay complete.
+  const parents = new Set(), currentRooms = new Set();
+  for (const action of state.actions) {
+    if (typeof action.room !== 'string' || action.actionable === false || reserved(action.submissionStatus)) continue;
+    const board = state.boards.find(value => value.room === action.room && value.request?.rqid === action.rqid);
+    if (!board || typeof board.parentId !== 'string' || action.parentId !== board.parentId) return {};
+    parents.add(board.parentId); currentRooms.add(action.room);
+  }
+  if (parents.size !== 1) return {};
+  const parent = [...parents][0];
+  const rooms = state.rooms.filter(room => !object(room) || room.ended !== true ||
+    typeof room.id !== 'string' || typeof room.parentId !== 'string' ||
+    room.parentId === parent || room.id === parent || currentRooms.has(room.id) ||
+    Object.keys(room).some(key => !['id', 'parentId', 'ended', 'result'].includes(key)));
+  const omitted = state.rooms.length - rooms.length;
+  return omitted ? {rooms, decisionViewHistoricalRooms: {omitted, currentParentId: parent,
+    retained: 'Complete prior-set room summaries remain in the immutable matching response; all current-set, live and unknown-schema rooms remain here.'}} : {};
+}
+
 function stateView(state, checkedAt, {preserveSheets = false} = {}) {
   const previewRooms = new Set(state.actions.filter(action => action.kind === 'preview').map(action => action.room));
   const boards = state.boards.map(board => {
@@ -51,8 +82,64 @@ function stateView(state, checkedAt, {preserveSheets = false} = {}) {
     }
     return projected;
   });
-  return {...state, boards, ...(object(state.timing) ? {timing: {...state.timing,
-    ...(Array.isArray(state.timing.requests) ? {requests: state.timing.requests.map(request => requestView(request, state.actions, checkedAt))} : {})}} : {})};
+  return first({...state, ...roomHistoryView(state), boards, ...(object(state.timing) ? {timing: {...state.timing,
+    ...(Array.isArray(state.timing.requests) ? {requests: state.timing.requests.map(request => requestView(request, state.actions, checkedAt))} : {})}} : {})},
+  ['actions', 'timing', 'boards', 'controlPolicy', 'choices', 'controller']);
+}
+
+/** Small source-bound index before transport/history metadata. The complete
+ * legality, board and safety objects stay at their exact paths below. An index
+ * lists every distinct observation; it never chooses one as the live state.
+ */
+function readyIndex({value: state, path}, checkedAt) {
+  const timings = Array.isArray(state.timing?.requests) ? state.timing.requests : [];
+  const entries = state.actions.map((action, index) => ({action, actionPath: `${path}.actions[${index}]`}));
+  // Native compact actions omits sent requests. Keep their explicit timing
+  // reservations visible without turning them back into actionable requests.
+  timings.forEach((timing, index) => {
+    if (reserved(timing.submissionStatus) && !state.actions.some(action => action.token === timing.token &&
+        action.room === timing.room && action.rqid === timing.rqid)) {
+      entries.push({action: {...pick(timing, ['room', 'token', 'rqid', 'submissionStatus']), actionable: false},
+        timing, timingPath: `${path}.timing.requests[${index}]`});
+    }
+  });
+  const requests = entries.map(({action, actionPath, timing: reservationTiming, timingPath}) => {
+    const matches = item => item.token === action.token && item.room === action.room && item.rqid === action.rqid;
+    const timing = reservationTiming ?? timings.find(matches);
+    const pendingIndex = Array.isArray(state.controlPolicy?.pending) ? state.controlPolicy.pending.findIndex(matches) : -1;
+    const pending = pendingIndex < 0 ? undefined : state.controlPolicy.pending[pendingIndex];
+    const submissionReserved = reserved(action.submissionStatus) || reserved(timing?.submissionStatus) || pending?.attempted === true;
+    const fallbackObserved = timing?.hasFallback === true || pending?.hasFallback === true;
+    const authoredFallbackObserved = pending?.hasFallback === true && pending.fallbackSource === 'fallback' && pending.attempted === false;
+    const attention = submissionReserved ? 'preserve-existing-reservation' : action.actionable === false ? 'preserve-existing-status' :
+      fallbackObserved ? 'existing-fallback-observed' : 'unprotected-request-observed';
+    const nextActionFocus = submissionReserved ? 'Preserve the send reservation and observe; missing acknowledgment does not authorize a resend.' :
+      action.actionable === false ? 'Observe the existing status; do not invent an actionable request.' :
+      action.kind === 'ready' ? 'Handle this current readiness before extended ranking, reports or handoff.' :
+      authoredFallbackObserved ? 'Commit or revise the stored authored choice within the original deadline. Staging is not a send or acceptance.' :
+      fallbackObserved ? 'Inspect the existing fallback provenance; an agent-authored stored pair is not established by this observation alone.' :
+      action.kind === 'preview' ? 'Author the complete legal preview order with stage-next or play-next as the next tool, before extended ranking, reports or handoff.' :
+      'Author the first useful complete legal pair with stage-next or play-next as the next tool, before extended ranking, reports or handoff.';
+    return {...pick(action, ['kind', 'room', 'token', 'rqid', 'actionable', 'submissionStatus']),
+      attention, nextActionFocus,
+      ...(timingPath ? {reservationPath: timingPath, requestSource: 'timing-reservation-only'} : {}),
+      reader: timing ? pick(requestView(timing, state.actions, checkedAt).reader,
+        ['checkedAt', 'requestAgeMs', 'planningRemainingMs', 'cutoffRemainingMs', 'hardRemainingMs']) : null,
+      ...(Object.hasOwn(action, 'clock') ? {clockPath: `${actionPath}.clock`} : {}),
+      ...(Object.hasOwn(action, 'legalActions') ? {legalActionsPath: `${actionPath}.legalActions`} : {}),
+      boardPaths: state.boards.flatMap((board, boardIndex) => board.room === action.room ? [`${path}.boards[${boardIndex}]`] : []),
+      ...(pending ? {pendingSafety: pick(pending, ['state', 'hasFallback', 'fallbackSource', 'attempted', 'submissionStatus']),
+        pendingSafetyPath: `${path}.controlPolicy.pending[${pendingIndex}]`} : {}),
+    };
+  });
+  return {statePath: path, ...pick(state, ['sessionId', 'revision', 'observedAt', 'connected', 'authenticated', 'stopped', 'autoReady']),
+    ...(object(state.controller) ? {controllerPath: `${path}.controller`} : {}),
+    ...(object(state.controlPolicy) ? {policy: pick(state.controlPolicy, ['enabled', 'halted', 'haltReason', 'observationFault', 'disposed']),
+      safetyPath: `${path}.controlPolicy`,
+      ...(state.controlPolicy.halted === true ? {haltScope: 'Observed halt blocks future search; continue only already user-authorized CURRENT SET recovery. It grants no new permission, policy reset or search.'} : {})} : {}),
+    requests,
+    ...(requests.length ? {} : {attention: 'no-action-in-this-observation'}),
+  };
 }
 
 /** Opt-in decision rendering, preserving the response's ID and error/recovery
@@ -83,6 +170,9 @@ export function projectDecisionView(envelope, {now = Date.now()} = {}) {
   function visit(value, path = '$') {
     if (Array.isArray(value)) return value.map((child, index) => visit(child, `${path}[${index}]`));
     if (!object(value)) return value;
+    if (isSimulationDecisionView(value)) return value;
+    if (isNativeSimulationBatch(value)) return projectSimulationBatchDecisionView(value);
+    if (isNativeSimulation(value)) return projectSimulationDecisionView(value);
     if (statePaths.has(path)) {
       const originalPath = statePaths.get(path);
       if (originalPath !== path) return {decisionViewStateRef: originalPath, exactObservationDuplicate: true};
@@ -94,8 +184,13 @@ export function projectDecisionView(envelope, {now = Date.now()} = {}) {
       visit(child, childPath(path, key))]));
   }
   const projected = visit(envelope);
-  return states && object(projected) ? {...projected, decisionView: {kind: 'retained-response-decision-view', readerCheckedAt: now,
+  return states && object(projected) ? {decisionReady: {kind: 'retained-observation-index', readerCheckedAt: now,
+    focusContract: 'Use each exact observed request below. This is presentation guidance, not a new choice gate, action selection or proof of acceptance.',
+    distinctObservations: observations.length,
+    observations: observations.map(observation => readyIndex(observation, now)),
+    limitation: 'Lists every distinct observation without selecting a current variant or actions. Inspect exact paths and errors below; freshness/model delivery unknown.'},
+  ...projected, decisionView: {kind: 'retained-response-decision-view', readerCheckedAt: now,
     fullResponseRetained: true, compactStates: states, uniqueCompactStates: observations.length,
     compactStateReferences: states - observations.length,
-    limitation: 'Rendering only. Exact duplicate observations use decisionViewStateRef JSON paths to the complete first rendering. Legal actions, safety/clock fields and uncertainty are preserved; no action is selected or sent.'}} : projected;
+    limitation: 'Rendering only; duplicate states reference their complete first rendering. Legality, safety, clocks and uncertainty preserved; no action selected/sent.'}} : projected;
 }

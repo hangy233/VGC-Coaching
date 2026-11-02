@@ -45,3 +45,49 @@ test('cached ID collision cannot shut down the bridge without actually stopping 
 test('missing session fails without connecting or exposing authentication',async()=>{
   await assert.rejects(callLocalSession(join(tmpdir(),'nonexistent-vgc-'+Date.now()+'.json'),{id:'x',op:'status'}),/sign in in your terminal/);
 });
+
+for(const kind of ['abort','timeout'])test(`bounded local read ${kind} closes its socket, cancels the server read and never replays`,async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'vgc-bounded-bridge-')),descriptorPath=join(directory,'session.json');
+  const commands=[];let dispatched,closed;
+  const started=new Promise(resolve=>{dispatched=resolve;}),socketClosed=new Promise(resolve=>{closed=resolve;});
+  const session={id:'bounded-'+kind,execute:async(command,{signal})=>{
+    commands.push(command.id);
+    if(command.op==='status')return {ok:true,result:{read:'normal'}};
+    dispatched();
+    return await new Promise(resolve=>signal.addEventListener('abort',()=>{closed();resolve({ok:false,error:'Read cancelled after socket close'});},{once:true}));
+  }};
+  const bridge=await serveLocalSession(session,{descriptorPath});
+  const controller=new AbortController();
+  try {
+    const pending=callLocalSession(descriptorPath,{id:kind,op:'turn-status'},{timeoutMs:kind==='timeout'?100:1000,signal:controller.signal});
+    const rejected=assert.rejects(pending,error=>{
+      assert.equal(error.name,kind==='timeout'?'TimeoutError':'AbortError');assert.match(error.message,/Do not replay an uncertain action/);return true;
+    });
+    await started;if(kind==='abort')controller.abort();await rejected;
+    let timer;
+    try {await Promise.race([socketClosed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Cancelled read left a connected server socket')),1000);})]);}
+    finally {clearTimeout(timer);}
+    assert.deepEqual(commands,[kind],'Cancellation never retries or replaces an uncertain operation');
+    assert.equal((await callLocalSession(descriptorPath,{id:'normal',op:'status'},{timeoutMs:1000})).result.read,'normal');
+    assert.deepEqual(commands,[kind,'normal']);
+  }finally{controller.abort();await bridge.close();await rm(directory,{recursive:true,force:true});}
+});
+
+test('pre-abort and descriptor-read abort preserve cancellation rather than suggesting authentication',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'vgc-read-abort-')),descriptorPath=join(directory,'session.json');
+  let commands=0;const bridge=await serveLocalSession({id:'read-abort',execute:async()=>{commands++;return {ok:true};}},{descriptorPath});
+  try {
+    const before=new AbortController();before.abort();
+    await assert.rejects(callLocalSession(descriptorPath,{id:'before',op:'status'},{signal:before.signal}),{name:'AbortError'});
+    const during=new AbortController(),pending=callLocalSession(descriptorPath,{id:'during',op:'status'},{signal:during.signal});during.abort();
+    await assert.rejects(pending,error=>{assert.equal(error.name,'AbortError');assert.doesNotMatch(error.message,/sign in/);return true;});
+    assert.equal(commands,0,'An abort before descriptor read completion cannot send a command');
+    assert.equal((await callLocalSession(descriptorPath,{id:'normal',op:'status'},{timeoutMs:1000})).ok,true);
+  }finally{await bridge.close();await rm(directory,{recursive:true,force:true});}
+});
+
+test('optional call bounds are validated before descriptor reads and retain the default normal path',async()=>{
+  const missing=join(tmpdir(),'bounded-nonexistent-'+Date.now()+'.json');
+  for(const timeoutMs of [0,-1,35001,Infinity,NaN,'100'])await assert.rejects(callLocalSession(missing,{op:'status'},{timeoutMs}),/timeoutMs must be positive/);
+  await assert.rejects(callLocalSession(missing,{op:'status'},{signal:{aborted:false}}),/must be an AbortSignal/);
+});

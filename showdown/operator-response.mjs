@@ -4,6 +4,7 @@ import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {performance} from 'node:perf_hooks';
 import {projectDecisionView} from './operator-view.mjs';
+import {timingSpan, timingEvent, withTimingSpan, currentTimingContext} from '../observability/timing.mjs';
 
 const FORMAT = 'vgc-operator-response-v1';
 const MAX_WAIT_MS = 60000;
@@ -14,6 +15,10 @@ const transientFileErrors = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const publicationErrorCodes = new Set(['EPERM', 'EACCES', 'EBUSY', 'EISDIR', 'ENOTDIR', 'ENOENT', 'EEXIST', 'EINVAL', 'EXDEV', 'ENOSPC', 'EMFILE', 'ENFILE', 'EIO', 'EROFS']);
 const CALLER_TIMING_FIELDS = ['inputReceivedAt', 'mcpDispatchedAt', 'mcpSettledAt', 'boardCapturedAt'];
 const PERSISTED_TIMING_FIELDS = [...CALLER_TIMING_FIELDS, 'preparedAt'];
+const recorded = (recorder, context, fn) => {
+  if (recorder !== undefined && typeof recorder?.run !== 'function') throw new TypeError('Timing recorder requires run(context, fn)');
+  return recorder ? recorder.run({...currentTimingContext(), ...context}, fn) : fn();
+};
 const sensitiveKey = /^(?:password|passwd|passphrase|controllerlease|lease|readreceipt|assertion|challstr|credential|credentials|secret|clientsecret|accesstoken|refreshtoken|authorization|cookie|setcookie|capability)$/;
 
 const plainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
@@ -241,19 +246,22 @@ export async function publishResponse(file, id, payload, options = {}) {
   if (retention.existing) { text = retention.text; value = JSON.parse(text); }
   if (!retention.existing) await atomicWrite(retention.exact, text, join(retention.area, 'pending-response.tmp'));
   const idAvailableAt = Date.now();
+  timingEvent('response.id_available', {commandId: id, phase: 'publication', idAvailableAt,
+    preparedAt: value.timing?.preparedAt, source: retention.existing ? 'existing_id' : 'new_id', outcomeCertainty: 'observed'});
   const returned = publication => ({...value, ...(value.timing ? {timing: {...value.timing, idAvailableAt, publicationReturnedAt: Date.now()}} : {}), ...(publication ? {publication} : {})});
   try {
     await atomicWrite(target, text, join(retention.area, 'latest-response.tmp'));
   } catch (error) {
     return returned({idRetained: true, latestUpdated: false, warning: 'latest-response-not-updated', code: publicationErrorCodes.has(error.code) ? error.code : 'PUBLISH_ERROR'});
   }
+  timingEvent('response.published', {commandId: id, phase: 'publication', outcomeCertainty: 'observed'});
   return returned();
 }
 
 /** Read only a complete, matching output envelope. Missing, partial, stale or
  * incompatible files are pending observations, never permission to resend.
  */
-export async function readResponse({file, id, redactValues = [], view = 'full'}) {
+async function readResponseValue({file, id, redactValues = [], view = 'full', onMatch}) {
   validId(id);
   if (!['full', 'decision'].includes(view)) throw new TypeError('view must be full or decision');
   const target = outputPath(file);
@@ -265,11 +273,12 @@ export async function readResponse({file, id, redactValues = [], view = 'full'})
     retained = true;
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   for (const path of retained ? [retainedPath(target, id), target] : [target]) {
-    let value, info;
+    let value, info, storedText;
     try {
       info = await lstat(path);
       if (!info.isFile() || info.isSymbolicLink()) throw new Error('Response output must be a regular file');
-      value = JSON.parse(await readFile(path, 'utf8'));
+      storedText = await readFile(path, 'utf8');
+      value = JSON.parse(storedText);
     } catch (error) {
       if (error.code === 'ENOENT' || error instanceof SyntaxError || transientFileErrors.has(error.code)) continue;
       throw error;
@@ -277,19 +286,28 @@ export async function readResponse({file, id, redactValues = [], view = 'full'})
     if (value?.format !== FORMAT || value.id !== id || !Object.hasOwn(value, 'payload')) continue;
     const timing = storedTiming(value.timing);
     const readerMatchedAt = Date.now();
+    onMatch?.();
+    timingEvent('response.matched', {commandId: id, phase: 'reader', source: path === target ? 'latest' : 'retained_id', outcomeCertainty: 'observed'});
+    return timingSpan('response.process', {commandId: id, phase: 'reader_processing'}).run(() => {
     // These are observations by this file reader, not tool/model delivery. A
     // filesystem mtime is labelled separately from the publisher's preparation.
     const readerTiming = timing ? {...timing, readerMatchedAt,
       ...(timestamp(timing.preparedAt) ? {preparedAgeMs: readerMatchedAt >= timing.preparedAt ? readerMatchedAt - timing.preparedAt : null} : {}),
       ...(Number.isFinite(info.mtimeMs) && info.mtimeMs >= 0 ? {fileModifiedAt: Math.floor(info.mtimeMs), fileAgeMs: readerMatchedAt >= info.mtimeMs ? Math.floor(readerMatchedAt - info.mtimeMs) : null} : {})} : null;
-    const payload = timing ? sanitizeResponse({payload: value.payload, timing: boundedTimingMetadata(value.timing)}, {redactValues}).payload : sanitizeResponse(value.payload, {redactValues});
-    const envelope = {format: FORMAT, id, payload, ...(readerTiming ? {timing: readerTiming} : {})};
-    return view === 'decision' ? projectDecisionView(envelope, {now: readerMatchedAt}) : envelope;
+      const payload = timing ? sanitizeResponse({payload: value.payload, timing: boundedTimingMetadata(value.timing)}, {redactValues}).payload : sanitizeResponse(value.payload, {redactValues});
+      const envelope = {format: FORMAT, id, payload, ...(readerTiming ? {timing: readerTiming} : {})};
+      return view === 'decision' ? timingSpan('response.project', {phase: 'decision_projection'}).run(() => projectDecisionView(envelope, {now: readerMatchedAt})) : envelope;
+    });
   }
   return null;
 }
 
-export async function awaitResponse({file, id, timeoutMs = DEFAULT_WAIT_MS, intervalMs = 50, redactValues = [], view = 'full'}) {
+export async function readResponse({file, id, redactValues = [], view = 'full', timingRecorder}) {
+  return recorded(timingRecorder, {commandId: id}, () => withTimingSpan('response.read', {phase: 'reader'},
+    () => readResponseValue({file, id, redactValues, view})));
+}
+
+export async function awaitResponse({file, id, timeoutMs = DEFAULT_WAIT_MS, intervalMs = 50, redactValues = [], view = 'full', timingRecorder}) {
   validId(id);
   if (!['full', 'decision'].includes(view)) throw new TypeError('view must be full or decision');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_WAIT_MS) {
@@ -298,34 +316,68 @@ export async function awaitResponse({file, id, timeoutMs = DEFAULT_WAIT_MS, inte
   if (!Number.isInteger(intervalMs) || intervalMs < 1 || intervalMs > 1000) {
     throw new TypeError('intervalMs must be an integer from 1 to 1000');
   }
+  return recorded(timingRecorder, {commandId: id}, async () => {
+  const waiting = timingSpan('response.wait', {phase: 'response_wait', timeoutMs});
   const started = performance.now();
+  try {
   for (;;) {
-    const value = await readResponse({file, id, redactValues, view});
+    // Repeated missing-file polls are one wait span; they never flood telemetry.
+    const value = await readResponseValue({file, id, redactValues, view, onMatch: () => waiting.end('ok')});
     const elapsedMs = Math.round(performance.now() - started);
     if (value) return {complete: true, value, elapsedMs};
     const remaining = timeoutMs - (performance.now() - started);
     if (remaining <= 0) {
+      waiting.end('timeout', {outcomeCertainty: 'pending'});
       return {complete: false, value: {id, pending: true, reason: 'response-file-timeout', resend: false}, elapsedMs};
     }
     await new Promise(done => setTimeout(done, Math.min(intervalMs, remaining)));
   }
+  } catch (error) { waiting.end('error'); throw error; }
+  });
+}
+
+/** Observe completion of this output stream's write callback, not model delivery. */
+export async function writeResponseOutput(value, {output = process.stdout, timingRecorder, commandId} = {}) {
+  return recorded(timingRecorder, {commandId}, () => withTimingSpan('response.output', {phase: 'output'}, async () => {
+    const text = `${JSON.stringify(value)}\n`;
+    await new Promise((done, reject) => output.write(text, error => error ? reject(error) : done()));
+    timingEvent('response.output_written', {commandId, phase: 'output', bytes: Buffer.byteLength(text), outcomeCertainty: 'observed'});
+  }));
 }
 
 async function main(args) {
-  const usage = 'Usage: node showdown/operator-response.mjs --wait FILE --id ID [--timeout-ms 0..60000] [--view full|decision]';
-  if (args.length < 4 || args.length > 8 || args.length % 2 || args[0] !== '--wait' || args[2] !== '--id') throw new TypeError(usage);
-  let timeoutMs = DEFAULT_WAIT_MS, view = 'full';
+  const usage = 'Usage: node showdown/operator-response.mjs --wait FILE --id ID [--timeout-ms 0..60000] [--view full|decision] [--timing-team HASH]';
+  // --file is a compatibility spelling for this same bounded read-only wait.
+  // Keep --wait canonical and reject duplicate or misplaced entry flags below.
+  if (args.length < 4 || args.length > 10 || args.length % 2 || !['--wait','--file'].includes(args[0]) || args[2] !== '--id' ||
+      args[1].startsWith('--') || args[3].startsWith('--')) throw new TypeError(usage);
+  let timeoutMs = DEFAULT_WAIT_MS, view = 'full', timingTeam;
   const seen = new Set();
   for (let index = 4; index < args.length; index += 2) {
     const flag = args[index], value = args[index + 1];
-    if (!['--timeout-ms', '--view'].includes(flag) || seen.has(flag)) throw new TypeError(usage);
+    if (!['--timeout-ms', '--view', '--timing-team'].includes(flag) || seen.has(flag)) throw new TypeError(usage);
     seen.add(flag);
     if (flag === '--timeout-ms') timeoutMs = Number(value);
+    else if (flag === '--timing-team') {
+      if (!/^[a-f0-9]{64}$/.test(value)) throw new TypeError('--timing-team requires an exact team fingerprint');
+      timingTeam = value;
+    }
     else view = value;
   }
-  const result = await awaitResponse({file: args[1], id: args[3], timeoutMs, view});
-  process.stdout.write(`${JSON.stringify(result.value)}\n`);
-  process.exitCode = result.complete ? 0 : 2;
+  let sink;
+  try {
+    if (timingTeam) {
+      try {
+        const {createTeamTiming} = await import('../observability/store.mjs');
+        sink = await createTeamTiming({workspace: fileURLToPath(new URL('../', import.meta.url)), teamId: timingTeam, component: 'response-reader'});
+      } catch { process.stderr.write('operator-response: TIMING_UNAVAILABLE\n'); }
+    }
+    await recorded(sink?.recorder, {commandId: args[3]}, async () => {
+      const result = await awaitResponse({file: args[1], id: args[3], timeoutMs, view, timingRecorder: sink?.recorder});
+      await writeResponseOutput(result.value, {commandId: args[3], timingRecorder: sink?.recorder});
+      process.exitCode = result.complete ? 0 : 2;
+    });
+  } finally { if (sink) { try { await sink.close(); } catch {} } }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

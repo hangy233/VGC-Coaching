@@ -1,0 +1,1 @@
+Synthetic paired-plan example prompt; no model run.

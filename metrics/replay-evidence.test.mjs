@@ -9,8 +9,8 @@ import { getTeamReport, listBattles, listTeams, saveBattle, updateBattleMetadata
 
 const TEAM = 'a'.repeat(64), ROOM = 'battle-gen9championsvgc2026regmc-123';
 const URL = 'https://replay.pokemonshowdown.com/gen9championsvgc2026regmc-123';
-const LOG = '|gametype|doubles\n|tier|[Gen 9] Champions VGC 2026 Reg M-C\n|player|p1|TofuRotom\n|player|p2|Opponent\n|start\n|turn|1\n|move|p1a: Golisopod|Protect|p1a: Golisopod\n|win|TofuRotom\n';
-const record = overrides => ({ schemaVersion: 1, roomId: ROOM, parentId: 'bestof3-gen9championsvgc2026regmc-22', teamId: TEAM, username: 'TofuRotom', ownSide: 'p1', outcome: 'win', completed: true, turns: 1, players: { p1: 'TofuRotom', p2: 'Opponent' }, opponentRoster: ['Archaludon'], selected: ['Golisopod', 'Farigiraf', 'Rillaboom', 'Sylveon'], selectionKnown: true, leads: ['Golisopod', 'Farigiraf'], pokemon: [{ key: 'golisopod', species: 'Golisopod', forms: [], selected: true, lead: true, moves: [{ move: 'Protect', uses: 1 }] }], quality: { complete: true, operational: false, warnings: [] }, team: { name: 'Rain team', format: 'gen9championsvgc2026regmc', roster: ['Golisopod', 'Farigiraf', 'Rillaboom', 'Sylveon'] }, metadata: { sources: ['cache/events.jsonl'] }, ...overrides });
+const LOG = '|gametype|doubles\n|tier|[Gen 9] Champions VGC 2026 Reg M-C\n|player|p1|FixturePlayer\n|player|p2|Opponent\n|start\n|turn|1\n|move|p1a: Golisopod|Protect|p1a: Golisopod\n|win|FixturePlayer\n';
+const record = overrides => ({ schemaVersion: 1, roomId: ROOM, parentId: 'bestof3-gen9championsvgc2026regmc-22', teamId: TEAM, username: 'FixturePlayer', ownSide: 'p1', outcome: 'win', completed: true, turns: 1, players: { p1: 'FixturePlayer', p2: 'Opponent' }, opponentRoster: ['Archaludon'], selected: ['Golisopod', 'Farigiraf', 'Rillaboom', 'Sylveon'], selectionKnown: true, leads: ['Golisopod', 'Farigiraf'], pokemon: [{ key: 'golisopod', species: 'Golisopod', forms: [], selected: true, lead: true, moves: [{ move: 'Protect', uses: 1 }] }], quality: { complete: true, operational: false, warnings: [] }, team: { name: 'Rain team', format: 'gen9championsvgc2026regmc', roster: ['Golisopod', 'Farigiraf', 'Rillaboom', 'Sylveon'] }, metadata: { sources: ['cache/events.jsonl'] }, ...overrides });
 async function workspace(t) { const dir = await mkdtemp(join(tmpdir(), 'vgc-replay-evidence-')); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
 function fetcher(payload = { id: ROOM.slice(7), formatid: 'gen9championsvgc2026regmc', log: LOG }, inspect) {
   return async (url, options) => { inspect?.(url, options); return new Response(JSON.stringify(payload), { status: 200 }); };
@@ -25,7 +25,7 @@ test('canonical replay validation accepts official saved links and keeps private
 });
 
 test('fetch checks owner, exact game, completion, result and format without exposing private errors', async () => {
-  const replay = await fetchVerifiedReplay({ url: `${URL}-secretpw`, roomId: ROOM, username: 'TofuRotom', ownSide: 'p1', outcome: 'win', fetchImpl: fetcher({ id: `${ROOM.slice(7)}-secretpw`, log: `${LOG}|c|Opponent|hidden chat\n|request|{"password":"secret"}\n|-message|secretpw\n` }, (url, options) => {
+  const replay = await fetchVerifiedReplay({ url: `${URL}-secretpw`, roomId: ROOM, username: 'FixturePlayer', ownSide: 'p1', outcome: 'win', fetchImpl: fetcher({ id: `${ROOM.slice(7)}-secretpw`, log: `${LOG}|c|Opponent|hidden chat\n|request|{"password":"secret"}\n|-message|secretpw\n` }, (url, options) => {
     assert.equal(url, `${URL}-secretpw.json`); assert.equal(options.credentials, 'omit'); assert.equal(options.redirect, 'error');
   }) });
   assert.equal(replay.metadata.url, `${URL}-secretpw`);
@@ -34,22 +34,22 @@ test('fetch checks owner, exact game, completion, result and format without expo
   const invalid = [
     { id: `${ROOM.slice(7)}4`, log: LOG },
     { id: ROOM.slice(7), log: LOG.replace('|start\n', '') },
-    { id: ROOM.slice(7), log: LOG.replace('|win|TofuRotom', '|upkeep') },
-    { id: ROOM.slice(7), log: LOG.replace('|player|p1|TofuRotom', '|player|p1|Other') },
+    { id: ROOM.slice(7), log: LOG.replace('|win|FixturePlayer', '|upkeep') },
+    { id: ROOM.slice(7), log: LOG.replace('|player|p1|FixturePlayer', '|player|p1|Other') },
     { id: ROOM.slice(7), log: LOG, formatid: 'gen9ou' },
-    { id: ROOM.slice(7), log: LOG.replace('|win|TofuRotom', '|win|Opponent') },
-    { id: ROOM.slice(7), log: `${LOG}|win|TofuRotom\n` },
+    { id: ROOM.slice(7), log: LOG.replace('|win|FixturePlayer', '|win|Opponent') },
+    { id: ROOM.slice(7), log: `${LOG}|win|FixturePlayer\n` },
   ];
-  for (const payload of invalid) await assert.rejects(fetchVerifiedReplay({ url: URL, roomId: ROOM, username: 'TofuRotom', ownSide: 'p1', outcome: 'win', fetchImpl: fetcher(payload) }), /could not be verified/);
-  await assert.rejects(fetchVerifiedReplay({ url: `${URL}-secretpw`, roomId: ROOM, username: 'TofuRotom', fetchImpl: async () => { throw new Error(`${URL}-secretpw`); } }), error => !error.message.includes('secretpw'));
+  for (const payload of invalid) await assert.rejects(fetchVerifiedReplay({ url: URL, roomId: ROOM, username: 'FixturePlayer', ownSide: 'p1', outcome: 'win', fetchImpl: fetcher(payload) }), /could not be verified/);
+  await assert.rejects(fetchVerifiedReplay({ url: `${URL}-secretpw`, roomId: ROOM, username: 'FixturePlayer', fetchImpl: async () => { throw new Error(`${URL}-secretpw`); } }), error => !error.message.includes('secretpw'));
 });
 
 test('verified replay retains historical owner and opponent identities after empty player departure lines', async () => {
   for (const side of ['p1', 'p2']) {
-    const replay = await fetchVerifiedReplay({ url: URL, roomId: ROOM, username: 'TofuRotom', ownSide: 'p1', outcome: 'win', fetchImpl: fetcher({ id: ROOM.slice(7), log: `${LOG}|player|${side}|\n` }) });
+    const replay = await fetchVerifiedReplay({ url: URL, roomId: ROOM, username: 'FixturePlayer', ownSide: 'p1', outcome: 'win', fetchImpl: fetcher({ id: ROOM.slice(7), log: `${LOG}|player|${side}|\n` }) });
     assert.equal(replay.outcome, 'win'); assert.ok(replay.log.endsWith(`|player|${side}|\n`));
   }
-  await assert.rejects(fetchVerifiedReplay({ url: URL, roomId: ROOM, username: 'TofuRotom', ownSide: 'p1', outcome: 'win', fetchImpl: fetcher({ id: ROOM.slice(7), log: `${LOG}|player|p1|OtherNamedPlayer\n` }) }), /could not be verified/);
+  await assert.rejects(fetchVerifiedReplay({ url: URL, roomId: ROOM, username: 'FixturePlayer', ownSide: 'p1', outcome: 'win', fetchImpl: fetcher({ id: ROOM.slice(7), log: `${LOG}|player|p1|OtherNamedPlayer\n` }) }), /could not be verified/);
 });
 
 test('verified replay evidence survives reimport and appears in a game drilldown without LRU changes', async t => {

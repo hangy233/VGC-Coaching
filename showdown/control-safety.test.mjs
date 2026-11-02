@@ -15,7 +15,7 @@ async function fixture({forfeitIfStuck=true,enabled=true,emergencyDefaultChoice=
   const timer=clock(),packed='Species|item|ability|move',sent=[],client=new ShowdownClient({expectedTeamHash:createHash('sha256').update(packed).digest('hex'),now:timer.now});
   client.connected=true;client.authenticated=true;client.epoch=1;client.formats='[Gen 9] Champions VGC 2026 Reg M-C (Bo3),e';client.searchState={searching:[],games:{}};
   client.ws={send:line=>sent.push(line),close:()=>{client.connected=false;client.authenticated=false;client.emit('disconnected');}};
-  const session=new AgentSession(client,{username:'TofuRotom',packed,authorizedSets:2,now:timer.now,monotonicNow:timer.now,controlTimers:{setTimer:timer.setTimer,clearTimer:timer.clearTimer}});
+  const session=new AgentSession(client,{username:'FixturePlayer',packed,authorizedSets:2,now:timer.now,monotonicNow:timer.now,controlTimers:{setTimer:timer.setTimer,clearTimer:timer.clearTimer}});
   let id=0;
   const raw=command=>session.execute({id:`cmd-${++id}`,confirmed:true,...command});
   const claimed=await raw({op:'control-claim',controllerId:'operator'});assert.equal(claimed.ok,true);
@@ -23,8 +23,8 @@ async function fixture({forfeitIfStuck=true,enabled=true,emergencyDefaultChoice=
   const execute=command=>raw({controllerLease:lease,...command});
   const configured=await execute({op:'set-control-policy',enabled,forfeitIfStuck,emergencyDefaultChoice});assert.equal(configured.ok,true,configured.error);
   const start=()=>execute({op:'start'});
-  const own=()=>{client.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[parent]:'TofuRotom vs Opponent'}})}`);client.receive(`>${parent}\n|uhtml|game|<a href="/${room}">Game 1</a>`);};
-  const request=(extra={})=>client.receive(`>${room}\n|request|${JSON.stringify({rqid:31,active:[{moves:[{move:'Protect',pp:10,target:'self'}]},{moves:[{move:'Protect',pp:10,target:'self'}]}],side:{id:'p2',name:'TofuRotom',pokemon:[{ident:'p2: Farigiraf',details:'Farigiraf, L50',active:true,condition:'17/227'},{ident:'p2: Golisopod',details:'Golisopod-Mega, L50',active:true,condition:'83/182'},{ident:'p2: Rillaboom',details:'Rillaboom, L50',active:false,condition:'0 fnt'},{ident:'p2: Hydreigon',details:'Hydreigon, L50',active:false,condition:'88/168'}]},...extra})}`);
+  const own=()=>{client.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[parent]:'FixturePlayer vs Opponent'}})}`);client.receive(`>${parent}\n|uhtml|game|<a href="/${room}">Game 1</a>`);};
+  const request=(extra={})=>client.receive(`>${room}\n|request|${JSON.stringify({rqid:31,active:[{moves:[{move:'Protect',pp:10,target:'self'}]},{moves:[{move:'Protect',pp:10,target:'self'}]}],side:{id:'p2',name:'FixturePlayer',pokemon:[{ident:'p2: Farigiraf',details:'Farigiraf, L50',active:true,condition:'17/227'},{ident:'p2: Golisopod',details:'Golisopod-Mega, L50',active:true,condition:'83/182'},{ident:'p2: Rillaboom',details:'Rillaboom, L50',active:false,condition:'0 fnt'},{ident:'p2: Hydreigon',details:'Hydreigon, L50',active:false,condition:'88/168'}]},...extra})}`);
   return {timer,client,session,sent,lease,raw,execute,start,own,request};
 }
 test('production requires a lease and enabled policy before any search; status never leaks lease',async()=>{
@@ -132,7 +132,7 @@ test('uncertain socket write halts future search without forfeiting a possibly d
 });
 test('ordinary Showdown preview send can wait for the opponent without a live acknowledgment',async()=>{
   const f=await fixture();try{
-    await f.start();f.own();const side={id:'p2',name:'TofuRotom',pokemon:['Farigiraf','Golisopod','Rillaboom','Hydreigon'].map(name=>({ident:`p2: ${name}`,details:`${name}, L50`,condition:'100/100',active:false}))};
+    await f.start();f.own();const side={id:'p2',name:'FixturePlayer',pokemon:['Farigiraf','Golisopod','Rillaboom','Hydreigon'].map(name=>({ident:`p2: ${name}`,details:`${name}, L50`,condition:'100/100',active:false}))};
     f.request({rqid:3,active:undefined,teamPreview:true,maxChosenTeamSize:4,side});
     const action=f.session.actions()[0],choice=[{type:'team',order:[4,1,2,3]}];f.timer.advance(12000);
     await f.execute({op:'stage-fallback',token:action.token,actions:choice});assert.equal((await f.execute({op:'choose',token:action.token,actions:choice})).ok,true);

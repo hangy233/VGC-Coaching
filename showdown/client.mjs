@@ -1,8 +1,9 @@
 import {EventEmitter} from 'node:events';
 import {createHash} from 'node:crypto';
 import {stripVTControlCharacters} from 'node:util';
-import {createBattleState,reduceBattleLine,reduceBattleRequest,battleStateSnapshot} from './battle-state.mjs';
+import {createBattleState,reduceBattleLine,reduceBattleRequest,battleStateSnapshot,invalidateOwnPpObservation} from './battle-state.mjs';
 import {validateChoice as compileChoice} from './choice-validation.mjs';
+import {cantActionAttribution,ordinaryMoveExecution} from './protocol-action.mjs';
 export const FORMAT = 'gen9championsvgc2026regmcbo3';
 export const FIXED_TEAM_SHA256 = 'e80b1aaaf56dff7456904ca7fe54ff5e8048fe541031b76ad50cbe96e34f68b2';
 export const SOCKET = 'wss://sim3.psim.us/showdown/websocket';
@@ -58,6 +59,41 @@ async function replayJSON(response, signal) {
 const battleRoomIdentity = value => /^(game-bestof3-gen9championsvgc2026regmcbo3-\d+|battle-gen9championsvgc2026regmcbo3-\d+)(?:-[a-z0-9]+pw)?$/.exec(value)?.[1] || null;
 const readyContent = value => value.replace(/(?:game-bestof3-|battle-)gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?/g, id => battleRoomIdentity(id));
 const gameplayLine = line => /^\|(?:start(?:\||$)|turn\||upkeep(?:\||$)|switch\||drag\||replace\||detailschange\||move\||cant\||faint\||swap\||-(?!message\|))/.test(line);
+const TRAPPED_CHOICE_ERROR = "[Unavailable choice] Can't switch: The active Pokémon is trapped";
+const requestShape = request => JSON.stringify({...request,rqid:null,update:null,active:request.active.map(value=>{if(!value)return value;const {trapped,maybeTrapped,...active}=value;return active;})},(_,value)=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.keys(value).sort().map(key=>[key,value[key]])):value);
+function correctedTrappedRequest(previous,next,actions) {
+  // Showdown marks corrected requests update:true and does not advance its
+  // timer for that flag (room-battle.ts); ordinary requests cannot carry clocks.
+  if(!previous||!next||next.update!==true||previous.wait||next.wait||previous.teamPreview||next.teamPreview||previous.forceSwitch||next.forceSwitch||!Array.isArray(previous.active)||!Array.isArray(next.active)||!previous.active.length||previous.active.length!==next.active.length||!Number.isSafeInteger(next.rqid)||next.rqid<=previous.rqid)return false;
+  if(requestShape(previous)!==requestShape(next))return false;
+  let corrected=false;
+  for(let i=0;i<previous.active.length;i++){
+    const before=previous.active[i],after=next.active[i];
+    if(!before||!after){if(before!==after)return false;continue;}
+    if(before.trapped===after.trapped&&before.maybeTrapped===after.maybeTrapped)continue;
+    if(actions[i]?.type!=='switch'||before.trapped===true||after.trapped!==true||after.maybeTrapped!==undefined)return false;
+    corrected=true;
+  }
+  return corrected;
+}
+function rejectedClockWindow(client,room) {
+  const action=room.lastAction,prior=room.rejectedClockWindow;
+  if(!client.connected||!client.authenticated||room.epoch!==client.epoch||room.ended||room.confirmedChoice||action?.status!=='sent'||action.boundary||action.acceptedAt!==null||!Array.isArray(action.evidence)||action.evidence.length||!Array.isArray(action.actions)||!Number.isFinite(action.sentAt)||action.sentAt<room.receivedAt||action.rqid!==room.request?.rqid||!Number.isSafeInteger(room.battle.turn)||room.battle.turn<1||!Array.isArray(room.request?.active))return null;
+  const receivedAt=prior?.receivedAt??room.receivedAt,sequence=prior?.sequence??room.requestSequence;
+  if(!Number.isFinite(receivedAt)||!Number.isSafeInteger(sequence))return null;
+  const timers=room.timers.filter(entry=>entry.epoch===client.epoch&&compareTimerObservations(entry,{at:receivedAt,epoch:client.epoch,sequence})>=0);
+  // If the bounded history may have lost an earlier deadline, do not guess its
+  // minimum. This narrow route supports private Time-left observations only.
+  if((!prior&&room.timers.length>=20&&timers.length===room.timers.length)||timers.some(entry=>/ has \d+ seconds left\.$/.test(entry.text)))return null;
+  if(timers.some(entry=>entry.type==='inactiveoff'))return null;
+  const clocks=timers.filter(entry=>entry.type==='inactive'&&/^Time left: \d+ sec this turn(?: \||$)/.test(entry.text));
+  if(!clocks.length)return null;
+  const deadlineAt=Math.min(prior?.deadlineAt??Infinity,...clocks.map(entry=>entry.at+Number(entry.text.match(/^Time left: (\d+) sec this turn/)[1])*1000));
+  const banks=clocks.flatMap(entry=>{const match=entry.text.match(/\| (\d+) sec total(?: \||$)/);return match?[entry.at+Number(match[1])*1000]:[];});
+  const bankDeadlineAt=Math.min(prior?.bankDeadlineAt??Infinity,...banks);
+  if(Math.min(deadlineAt,bankDeadlineAt)<=client.now())return null;
+  return {epoch:client.epoch,room:room.id,turn:room.battle.turn,receivedAt,sequence,originRqid:prior?.originRqid??action.rqid,rejectedRqid:action.rqid,rejectedAt:client.now(),deadlineAt,bankDeadlineAt:Number.isFinite(bankDeadlineAt)?bankDeadlineAt:null,request:structuredClone(room.request),actions:structuredClone(action.actions)};
+}
 function mergeHistory(source, target) {
   if(!target.length)return {lines:source,tail:[],reconciled:true};
   if(!source.length)return {lines:target,tail:target,reconciled:true};
@@ -74,7 +110,7 @@ export class ShowdownClient extends EventEmitter {
     super(); check(typeof expectedTeamHash === 'string' && /^[a-f0-9]{64}$/.test(expectedTeamHash), 'Expected an approved SHA-256 team hash'); this.WebSocketImpl = WebSocketImpl; this.now = now; this.log = log; this.broker = broker;
     this.expectedTeamHash = expectedTeamHash; this.rooms = new Map(); this.roomAliases = new Map(); this.observationSequence = 0; this.connected = false; this.authenticated = false; this.epoch = 0;
     this.sent = new Set(); this.grants = new Map(); this.pendingReplay = null; this.replayRequests = new Map(); this.replays = []; this.formats = ''; this.searchGeneration = 0; this.searchPending = false; this.searchObservedActive = false;
-    this.transport = emptyTransport();
+    this.transport = emptyTransport();this.localCloseRequested=false;
   }
   audit(event, data = {}) { this.log({time: this.now(), event, ...data}); }
   resolveRoom(id) { return this.roomAliases.get(id) || id; }
@@ -104,10 +140,11 @@ export class ShowdownClient extends EventEmitter {
     const history=mergeHistory(source.battleLog,target?.battleLog || []);
     const battle=structuredClone(!source.battleLog.length && target?.battleLog.length ? target.battle : source.battle);
     if(source.battleLog.length && target?.battleLog.length) {
-      if(history.reconciled)for(const line of history.tail)reduceBattleLine(battle,line,{now:this.now});
+      if(history.reconciled)for(const line of history.tail)reduceBattleLine(battle,line,{now:this.now,epoch:this.epoch,connected:this.connected});
       else battle.warnings.push('Room rename histories could not be reconciled; previously observed battle state was retained. Inspect fresh server state.');
     }
-    if(requestRecord)reduceBattleRequest(battle,requestRecord.request,{now:this.now});
+    invalidateOwnPpObservation(battle,'Room history merged or renamed');
+    if(requestRecord)reduceBattleRequest(battle,requestRecord.request,{now:this.now,epoch:this.epoch,connected:this.connected});
     const merged = {...current, id:room, revision:Math.max(...records.map(record => record.revision))+1,
       battle,
       sheets:Object.assign({}, ...records.map(record => record.sheets)),
@@ -124,6 +161,7 @@ export class ShowdownClient extends EventEmitter {
       readyRevision:Math.max(...records.map(record=>record.readyRevision)),
       forfeitPending:records.find(record=>record.forfeitPending)?.forfeitPending || null,
       readyPrompt:current.readyPrompt || records.find(record=>record.readyPrompt)?.readyPrompt || null};
+    merged.pendingRejectedRequest=null;merged.rejectedClockWindow=null;
     if(requestRecord) {
       for(const key of ['request','epoch','receivedAt','requestSequence','confirmedChoice'])merged[key]=requestRecord[key];
       merged.confirmedChoice ||= records.find(record=>record.confirmedChoice && JSON.stringify(record.request)===JSON.stringify(requestRecord.request))?.confirmedChoice || null;
@@ -159,19 +197,26 @@ export class ShowdownClient extends EventEmitter {
   async connect({timeoutMs = 15000} = {}) {
     check(!this.ws || this.ws.readyState > 1, 'Socket already open or connecting');
     this.epoch++; this.authenticated = false; this.challenge = null; this.expectedUser = null;
-    this.transport = emptyTransport();
+    this.transport = emptyTransport();this.localCloseRequested=false;
     this.grants.clear(); this.teamHash = null; this.pendingReplay = null; this.searchState = null; this.searchPending = false; this.searchObservedActive = false;
-    for (const r of this.rooms.values()) { r.epoch = -1; r.readyPrompt = null; }
+    for (const r of this.rooms.values()) { r.epoch = -1; r.readyPrompt = null;r.pendingRejectedRequest=null;r.rejectedClockWindow=null; invalidateOwnPpObservation(r.battle,'Connection changed'); }
     const ws = this.ws = new this.WebSocketImpl(SOCKET);
-    ws.addEventListener('message', e => { try { this.receive(String(e.data)); } catch { this.audit('protocol-error'); this.emit('protocol-error'); } });
-    ws.addEventListener('close', () => { this.connected = false; this.authenticated = false; this.grants.clear(); this.audit('disconnected'); this.emit('disconnected'); });
+    ws.addEventListener('message', e => { try { this.receive(String(e.data)); } catch { for(const r of this.rooms.values())invalidateOwnPpObservation(r.battle,'Protocol error'); this.audit('protocol-error'); this.emit('protocol-error'); } });
+    ws.addEventListener('close', event => {
+      const closeCode=Number.isInteger(event?.code)&&event.code>=1000&&event.code<=4999?event.code:null;
+      const reasonCode=closeCode===1000?'ws-close-normal':closeCode===1001?'ws-close-going-away':closeCode===1006?'ws-close-abnormal':closeCode===1008?'ws-close-policy':closeCode===1011?'ws-close-server-error':'ws-close-unclassified';
+      const observation={at:this.now(),closeCode,closeWasClean:typeof event?.wasClean==='boolean'?event.wasClean:null,localCloseRequested:this.localCloseRequested,reasonCode,reasonTextRetained:false};
+      this.transport.lastDisconnect=observation;
+      this.connected = false; this.authenticated = false; this.grants.clear(); for(const r of this.rooms.values()){r.pendingRejectedRequest=null;r.rejectedClockWindow=null;invalidateOwnPpObservation(r.battle,'Disconnected');}
+      this.audit('disconnected',observation);this.emit('disconnected',observation);
+    });
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => { ws.close(); reject(new Error('Connection timed out; no retry attempted')); }, timeoutMs);
       ws.addEventListener('open', () => { clearTimeout(timer); this.connected = true; this.audit('connected', {epoch:this.epoch}); resolve(); }, {once:true});
-      ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('WebSocket connection failed; no alternate route attempted')); }, {once:true});
+      ws.addEventListener('error', () => { for(const r of this.rooms.values())invalidateOwnPpObservation(r.battle,'Transport error'); clearTimeout(timer); reject(new Error('WebSocket connection failed; no alternate route attempted')); }, {once:true});
     });
   }
-  close() { this.ws?.close(); }
+  close() { this.localCloseRequested=true;for(const r of this.rooms.values()){r.pendingRejectedRequest=null;r.rejectedClockWindow=null;invalidateOwnPpObservation(r.battle,'Connection closing');} this.ws?.close(); }
   // An externally approved secure broker must perform login. Never read browser cookies,
   // tokens, environment passwords, command-line secrets, or chat credentials here.
   async authenticate(username, {approved = false} = {}) {
@@ -207,9 +252,9 @@ export class ShowdownClient extends EventEmitter {
       const r = room ? this.state(room) : null;
       if(r)r.observedSequence=++this.observationSequence;
       if(r && type==='teampreview')r.previewObserved=true;
-      if(r && gameplayLine(line)){r.startedObserved=true;r.startedObservedEpoch=this.epoch;}
+      if(r && gameplayLine(line)){r.startedObserved=true;r.startedObservedEpoch=this.epoch;r.pendingRejectedRequest=null;r.rejectedClockWindow=null;}
       if(r && type !== 'request') {
-        reduceBattleLine(r.battle,line,{now:this.now});
+        reduceBattleLine(r.battle,line,{now:this.now,epoch:this.epoch,connected:this.connected});
         this.observeAction(r,type,parts);
       }
       if (type === 'challstr') { this.challenge = value; this.emit('challenge'); continue; }
@@ -260,30 +305,41 @@ export class ShowdownClient extends EventEmitter {
         }
       }
       if (type === 'request' && r) {
-        const request = value ? JSON.parse(value) : null;
+        let request;
+        try { request = value ? JSON.parse(value) : null; }
+        catch(error) { for(const record of this.rooms.values())invalidateOwnPpObservation(record.battle,'Malformed private request'); throw error; }
         if (request && request.rqid !== undefined) check(Number.isSafeInteger(request.rqid), 'Invalid rqid');
-        if (request && r.request && request.rqid < r.request.rqid) { this.audit('old-request-ignored',{room}); continue; }
+        if (request && r.request && request.rqid < r.request.rqid) { invalidateOwnPpObservation(r.battle,'Replayed older private request'); this.audit('old-request-ignored',{room}); continue; }
         if (JSON.stringify(r.request) !== JSON.stringify(request)) { r.revision++; r.confirmedChoice = null; }
+        const continuation=r.pendingRejectedRequest;
+        r.pendingRejectedRequest=null;
+        const carriesClock=continuation&&continuation.epoch===this.epoch&&continuation.room===r.id&&continuation.turn===r.battle.turn&&r.lastAction?.status==='rejected'&&r.lastAction.rqid===continuation.rejectedRqid&&correctedTrappedRequest(continuation.request,request,continuation.actions);
+        r.rejectedClockWindow=carriesClock?{...continuation,request:undefined,actions:undefined,rqid:request.rqid}:null;
         r.request = request; r.epoch = this.epoch; r.receivedAt = this.now(); r.requestSequence=this.observationSequence;
         if(request?.teamPreview)r.previewObserved=true;
         else if(request && (Array.isArray(request.active) || Array.isArray(request.forceSwitch) || request.side?.pokemon?.some(p=>p.active))){r.startedObserved=true;r.startedObservedEpoch=this.epoch;}
         if(request && !request.wait)for(const parent of this.rooms.values())if(parent.children.includes(room))parent.readyPrompt=null;
-        reduceBattleRequest(r.battle,request,{now:this.now});
+        reduceBattleRequest(r.battle,request,{now:this.now,epoch:this.epoch,connected:this.connected});
         if(r.lastAction && request?.rqid !== r.lastAction.rqid)r.lastAction.boundary='next-request';
         this.emit('request', {room, revision:r.revision, request});
       }
       if (type === 'sentchoice' && r) {
+        if(value){r.pendingRejectedRequest=null;r.rejectedClockWindow=null;}
         r.confirmedChoice = value || null;
         if(value && r.lastAction){r.lastAction.acceptedAt=this.now();if(!r.lastAction.evidence.length)r.lastAction.status='accepted';this.emit('action-status',{room,status:'accepted'});}
         this.emit('choice-status',{room,submitted:!!value});
       }
       if (type === 'showteam' && r) { r.sheets[parts[0]] = parts.slice(1).join('|'); this.emit('sheet',{room, side:parts[0], packed:r.sheets[parts[0]]}); }
       if (['inactive','inactiveoff'].includes(type) && r) {
+        if(type==='inactiveoff'){r.pendingRejectedRequest=null;r.rejectedClockWindow=null;}
         r.timers.push({at:this.now(), type, text:value,epoch:this.epoch,sequence:this.observationSequence}); r.timers = r.timers.slice(-20);
         this.emit('timer',{room,type,text:value});
       }
-      if (['win','tie'].includes(type) && r) { r.ended = true; r.request = null; r.result = {type, winner:value}; if(r.lastAction){r.lastAction.boundary='battle-ended';r.lastAction.endedAt=this.now();}this.emit('result',{room,...r.result}); }
+      if (['win','tie'].includes(type) && r) { r.pendingRejectedRequest=null;r.rejectedClockWindow=null;r.ended = true; r.request = null; r.result = {type, winner:value}; if(r.lastAction){r.lastAction.boundary='battle-ended';r.lastAction.endedAt=this.now();}this.emit('result',{room,...r.result}); }
       if (type === 'error' && r) {
+        r.pendingRejectedRequest=value===TRAPPED_CHOICE_ERROR?rejectedClockWindow(this,r):null;
+        if(!r.pendingRejectedRequest)r.rejectedClockWindow=null;
+        invalidateOwnPpObservation(r.battle,'Server protocol error');
         r.lastError = value;
         if (/^\[(Invalid|Unavailable) choice\]/.test(value)) {
           r.revision++;
@@ -311,7 +367,7 @@ export class ShowdownClient extends EventEmitter {
         if (ready) {
           r.readyParent = this.resolveRoom(ready[1]); const s = this.state(r.readyParent);
           const content=digest(readyContent(value));
-          if(!s.readyPrompt || s.readyPrompt.content!==content){s.readyRevision++;s.readyPrompt={epoch:this.epoch,content,token:digest(`${s.readyRevision}:${content}`)};}
+          if(!s.readyPrompt || s.readyPrompt.content!==content){s.readyRevision++;s.readyPrompt={epoch:this.epoch,at:this.now(),sequence:this.observationSequence,content,token:digest(`${s.readyRevision}:${content}`)};}
           this.emit('ready',{room:s.id});
         }
       }
@@ -335,17 +391,26 @@ export class ShowdownClient extends EventEmitter {
         this.pendingReplay.error='Replay server uses an unsupported legacy save response; local evidence must be retained';
         this.emit('replay-failed',{room:this.pendingReplay.room});
       }
+      // Uncapped, ordered structural feed for the owned simulation-state
+      // tracker. This is local data, never terminal text or an agent command.
+      // Emit after reduction so the matching private request is authoritative.
+      if(r && /^battle-gen9championsvgc2026regmc(?:bo3)?-\d+(?:-[a-z0-9]+pw)?$/u.test(r.id))
+        this.emit('simulation-line',{room:r.id,type,line,epoch:this.epoch,connected:this.connected,observedAt:type==='request'?r.receivedAt:this.now(),
+          ...(type==='request'?{request:r.request}:{})});
     }
   }
   observeAction(r,type,parts) {
     const action=r.lastAction;
     if(!action || action.boundary || !['move','cant','switch'].includes(type) || !action.side)return;
-    const match=String(parts[0]).match(/^(p[1-4])([ab]):/);
+    const attribution=type==='cant'?cantActionAttribution(parts):null;
+    const match=String(attribution?attribution.actor:parts[0]).match(/^(p[1-4])([ab]):/);
     if(!match || match[1]!==action.side)return;
     const index=match[2]==='a'?0:1, selected=action.actions[index];
     if(!selected || !(selected.type==='move' && ['move','cant'].includes(type) || selected.type==='switch' && type==='switch'))return;
     // Called/forced actions can occur before the submitted choice (Dancer/Instruct).
-    if(type==='move' && (!action.expectedMoves[index] || digestMove(parts[1])!==action.expectedMoves[index] || parts.slice(2).some(part=>part.startsWith('[from]'))))return;
+    // A [still] move announcement may precede a denial; it alone is no execution proof.
+    if(type==='move' && (!action.expectedMoves[index] || digestMove(parts[1])!==action.expectedMoves[index] || !ordinaryMoveExecution(parts)))return;
+    if(attribution?.kind==='blocked-user'&&(!action.expectedMoves[index]||digestMove(attribution.move)!==action.expectedMoves[index]))return;
     if(action.evidence.some(entry=>entry.slot===index+1))return;
     const evidence={type,slot:index+1,at:this.now(),executed:type!=='cant',...(type==='move'?{move:parts[1]}:{}),...(type==='cant'?{reason:parts[1]}:{})};
     action.evidence.push(evidence);action.status=type==='cant' && !action.evidence.some(entry=>entry.executed)?'resolution-observed':'execution-observed';

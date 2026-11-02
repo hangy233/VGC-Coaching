@@ -12,12 +12,12 @@ async function fixture(){
   let time=1000;
   const packed='Species|item|ability|move',sent=[],client=new ShowdownClient({expectedTeamHash:createHash('sha256').update(packed).digest('hex'),now:()=>time});
   client.connected=true;client.authenticated=true;client.epoch=1;client.formats='[Gen 9] Champions VGC 2026 Reg M-C (Bo3),e';client.ws={send:line=>sent.push(line)};
-  const session=new AgentSession(client,{username:'TofuRotom',packed,now:()=>time,controllerRequired:false});
+  const session=new AgentSession(client,{username:'FixturePlayer',packed,now:()=>time,controllerRequired:false});
   await session.execute({id:'start',op:'start',confirmed:true});
   client.receive(`|updatesearch|${JSON.stringify({searching:[],games:{[parent]:'Fixture'}})}`);
   client.receive(`>${parent}\n|uhtml|game|<a href="/${room}">Game 1</a>`);
   const receive=lines=>client.receive(`>${room}\n${lines}`);
-  const request=(rqid,pokemon,extra={})=>receive(`|request|${JSON.stringify({rqid,side:{id:'p2',name:'TofuRotom',pokemon},...extra})}`);
+  const request=(rqid,pokemon,extra={})=>receive(`|request|${JSON.stringify({rqid,side:{id:'p2',name:'FixturePlayer',pokemon},...extra})}`);
   const preview=()=>{receive('|gen|9\n|gametype|doubles\n|teamsize|p1|4\n|teamsize|p2|4');request(1,six,{teamPreview:true,maxChosenTeamSize:4});};
   const party=()=>[own('Golisopod',true,'156/182 brn'),own('Farigiraf',true,'17/227'),own('Rillaboom',false,'70/200'),own('Politoed',false,'57/197')];
   const turn=()=>{receive('|start\n|switch|p1a: Rotom|Rotom-Wash, L50|60/100\n|switch|p1b: Incineroar|Incineroar, L50|44/100\n|switch|p2a: Golisopod|Golisopod, L50|156/182 brn\n|switch|p2b: Farigiraf|Farigiraf, L50|17/227\n|turn|1');request(2,party(),{active:[{moves,canMegaEvo:'Golisopod-Mega'},{moves,trapped:false}]});};

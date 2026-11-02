@@ -11,8 +11,8 @@ const OTHER_TEAM = 'b'.repeat(64);
 function record(overrides = {}) {
   return {
     schemaVersion: 1, roomId: 'battle-gen9championsvgc2026regmc-123', parentId: 'bestof3-gen9championsvgc2026regmc-20',
-    teamId: TEAM, username: 'TofuRotom', ownSide: 'p1', outcome: 'win', completed: true, turns: 7,
-    players: { p1: 'TofuRotom', p2: 'Opponent' },
+    teamId: TEAM, username: 'FixturePlayer', ownSide: 'p1', outcome: 'win', completed: true, turns: 7,
+    players: { p1: 'FixturePlayer', p2: 'Opponent' },
     opponentRoster: ['Archaludon', 'Charizard'], selected: ['Golisopod', 'Farigiraf'], selectionKnown: true, leads: ['Farigiraf'],
     pokemon: [{
       key: 'golisopod', species: 'Golisopod', forms: ['Golisopod-Mega'], selected: true, lead: false,
@@ -60,6 +60,29 @@ test('idempotent reimport preserves per-Pokémon move, knockout and item-removal
   assert.equal(golisopod.moves[0].usagePercent, 2 / 3 * 100);
   assert.equal(report.pokemon.find(pokemon => pokemon.species === 'Rillaboom').selectedGames, 0);
   assert.deepEqual(golisopod.forms, ['Golisopod-Mega']);
+});
+
+test('a completed known selection resolves transient warnings without clearing gaps or acceptance uncertainty',async t=>{
+  const dir=await workspace(t),incomplete='No official result was observed; this battle is incomplete.',unknown='Full selected team is unknown; only observed Pokémon are counted as selected.',gap='A source gap remains explicit.',acceptance='A preview choice was sent, but its server acceptance is unknown.';
+  await saveBattle({workspace:dir,record:record({completed:false,outcome:'unknown',selectionKnown:false,turns:1,quality:{complete:false,operational:false,warnings:[incomplete,unknown,gap,acceptance]}})});
+  const result=await saveBattle({workspace:dir,record:record()});
+  assert.equal(result.record.completed,true);assert.equal(result.record.selectionKnown,true);
+  assert.deepEqual(result.record.quality.warnings,[gap,acceptance]);
+  // A late partial source must not resurrect warnings contradicted by the
+  // retained complete game or erase a genuine operational observation.
+  const partial=await saveBattle({workspace:dir,record:record({completed:false,outcome:'unknown',selectionKnown:false,turns:1,quality:{complete:false,operational:true,warnings:[incomplete,unknown,'An actual default occurred.']}})});
+  assert.equal(partial.status,'preserved');assert.equal(partial.record.quality.operational,true);
+  assert.deepEqual(partial.record.quality.warnings,[gap,acceptance,'An actual default occurred.']);
+});
+
+test('unresolved result/selection warnings remain until each actual fact becomes known',async t=>{
+  const dir=await workspace(t),incomplete='No official result was observed; this battle is incomplete.',unknown='Full selected team is unknown; only observed Pokémon are counted as selected.';
+  const first=await saveBattle({workspace:dir,record:record({completed:false,outcome:'unknown',selectionKnown:false,quality:{complete:false,operational:false,warnings:[incomplete,unknown]}})});
+  assert.deepEqual(first.record.quality.warnings,[incomplete,unknown]);
+  const complete=await saveBattle({workspace:dir,record:record({selectionKnown:false,quality:{complete:true,operational:false,warnings:[unknown]}})});
+  assert.deepEqual(complete.record.quality.warnings,[unknown]);
+  const metadata=await saveBattle({workspace:dir,record:complete.record,metadataOnly:true});
+  assert.deepEqual(metadata.record.quality.warnings,[unknown]);
 });
 
 test('a partial reimport cannot erase a complete record but can add ledger attribution', async t => {
@@ -454,14 +477,14 @@ test('an unknown report fingerprint cannot register a phantom team or evict a kn
 
 test('a recovered preview identity survives a later blank identity observation from an older recorder', async t => {
   const dir = await workspace(t);
-  const stale = record({turns: 0, players: {p1: 'TofuRotom', p2: ''}, selected: [], selectionKnown: false,
+  const stale = record({turns: 0, players: {p1: 'FixturePlayer', p2: ''}, selected: [], selectionKnown: false,
     leads: [], pokemon: [], quality: {complete: false, operational: true, warnings: []}});
   await saveBattle({workspace: dir, record: stale});
   assert.equal((await listBattles({workspace: dir}))[0].players.p2, '');
-  await saveBattle({workspace: dir, record: {...stale, players: {p1: 'TofuRotom', p2: 'Opponent'}}});
+  await saveBattle({workspace: dir, record: {...stale, players: {p1: 'FixturePlayer', p2: 'Opponent'}}});
   await saveBattle({workspace: dir, record: stale});
   const rows = await listBattles({workspace: dir});
-  assert.equal(rows.length, 1); assert.deepEqual(rows[0].players, {p1: 'TofuRotom', p2: 'Opponent'});
+  assert.equal(rows.length, 1); assert.deepEqual(rows[0].players, {p1: 'FixturePlayer', p2: 'Opponent'});
   assert.equal(rows[0].turns, 0); assert.equal(rows[0].outcome, 'win');
   assert.equal(rows[0].selectionKnown, false); assert.deepEqual(rows[0].selected, []);
   assert.equal(rows[0].quality.operational, true); assert.equal(rows[0].quality.complete, false);

@@ -66,15 +66,21 @@ test('disabled policy never enables a timer after an otherwise successful choice
   const f=fixture();try{f.open();f.request();assert.equal((await f.choose()).ok,true);assert.equal(f.timers().length,0);assert.equal(f.wire.filter(line=>line.includes('|/choose ')).length,1);}finally{f.close();}
 });
 
-test('each child gets its timer immediately after its own sent preview, never before the next unprotected request',async()=>{
+test('each owned preview gets its timer after publication without waiting for a choice, once per child',async()=>{
   const f=fixture({timerPolicy:true});
   try{
+    assert.equal(f.session.capabilities().features.ownedBattlePreviewTimer,true);
     for(const room of [first,second]){
       if(room===second)f.client.receive(`>${first}\n|win|Fixture`);
       f.open(room);f.request(room,{teamPreview:true,maxChosenTeamSize:4});
       assert.equal(f.timers().length,room===first?0:1);
+      assert(f.session.actions().some(action=>action.room===room&&action.kind==='preview'));
+      await Promise.resolve();
+      assert.equal(f.timers().length,room===first?1:2);
+      assert.equal(f.wire.at(-1),`${room}|/timer on`);
+      assert.equal(f.wire.filter(line=>line.includes('|/choose ')).length,room===first?0:2);
       assert.equal((await f.choose(room,[{type:'team',order:[1,2,3,4]}])).ok,true);
-      assert(f.wire.at(-2).startsWith(`${room}|/choose team `));assert.equal(f.wire.at(-1),`${room}|/timer on`);
+      assert(f.wire.at(-1).startsWith(`${room}|/choose team `));
       f.request(room,{rqid:2});
       assert.equal(f.session.actions().find(a=>a.room===room).rqid,2);
       assert.equal(f.timers().length,room===first?1:2);
@@ -82,7 +88,93 @@ test('each child gets its timer immediately after its own sent preview, never be
     }
     assert.equal(f.session.turnSnapshot().timerPolicy.requestAttempts,2);
     assert.equal(f.session.snapshot().timerPolicy.children.length,2);
+    assert(f.session.snapshot().timerPolicy.children.every(entry=>entry.trigger==='owned-preview-observed'));
+    assert(f.session.controlTrace.filter(entry=>entry.type==='timer-policy-sent').every(entry=>entry.kind==='preview'));
     assert(!f.wire.some(line=>/\/search |\/trn |\/forfeit/.test(line)));
+  }finally{f.close();}
+});
+
+test('a real preview countdown replaces the provisional unknown cutoff before a late-by-old-policy authored choice',async()=>{
+  const f=fixture({timerPolicy:true});
+  try{
+    f.session.supervisor.configure({enabled:true,forfeitIfStuck:false,emergencyDefaultChoice:true,planningMs:45000,previewPlanningMs:45000,unknownClockMs:20000,safetyMarginMs:5000});
+    f.open();let publishedBeforeTimer=false;
+    f.session.on('change',({event})=>{if(event==='request')publishedBeforeTimer=f.session.actions()[0]?.kind==='preview'&&f.timers().length===0;});
+    f.request(first,{teamPreview:true,maxChosenTeamSize:4});
+    assert.equal(publishedBeforeTimer,true);assert.equal(f.session.supervisor.status().pending[0].cutoffAt,21000);
+    const send=f.client.ws.send;f.client.ws.send=line=>{send(line);if(line.endsWith('|/timer on'))f.client.receive(`>${first}\n|inactive|Battle timer is ON.\n|inactive|Time left: 90 sec this turn | 420 sec total`);};
+    await Promise.resolve();
+    const pending=f.session.supervisor.status().pending[0];
+    assert.equal(pending.clockSource,'observed-server-clock');assert.equal(pending.clockFreshForRequest,true);assert.equal(pending.cutoffAt,46000);
+    f.tick(26767);f.session.supervisor.onTimer();
+    assert.equal(f.session.supervisor.status().halted,false);assert.equal(f.wire.filter(line=>line.includes('|/choose ')).length,0);
+    assert.equal((await f.choose(first,[{type:'team',order:[4,3,2,1]}])).ok,true);
+    assert.equal(f.wire.filter(line=>line.includes('|/choose ')).length,1);assert(f.wire.at(-1).includes('/choose team 4321'));
+    assert.equal(f.timers().length,1);assert.equal(f.session.controlTrace.some(entry=>entry.type==='emergency-default-sent'),false);
+  }finally{f.close();}
+});
+
+test('preview timer-on without a numerical server countdown does not relax the unknown budget',async()=>{
+  const f=fixture({timerPolicy:true});
+  try{
+    f.session.supervisor.configure({enabled:true,forfeitIfStuck:false,emergencyDefaultChoice:true,planningMs:45000,previewPlanningMs:45000,unknownClockMs:20000,safetyMarginMs:5000});
+    f.open();f.request(first,{teamPreview:true,maxChosenTeamSize:4});await Promise.resolve();
+    f.client.receive(`>${first}\n|inactive|Battle timer is ON.`);
+    const pending=f.session.supervisor.status().pending[0];assert.equal(pending.clockSource,'local-unknown-clock-budget');assert.equal(pending.cutoffAt,21000);
+    f.tick(21001);f.session.supervisor.onTimer();
+    assert.equal(f.session.controlTrace.filter(entry=>entry.type==='emergency-default-sent').length,1);
+    assert.equal(f.timers().length,1);assert.equal(f.wire.filter(line=>line.includes('|/choose ')).length,1);
+  }finally{f.close();}
+});
+
+test('preview acquisition respects a shorter real turn or bank instead of always granting the configured cap',async()=>{
+  for(const [clock,cutoff]of [['Time left: 90 sec this turn | 12 sec total',8000],['Time left: 10 sec this turn | 420 sec total',6000]]){
+    const f=fixture({timerPolicy:true});
+    try{
+      f.session.supervisor.configure({enabled:true,forfeitIfStuck:false,emergencyDefaultChoice:true,planningMs:45000,previewPlanningMs:45000,unknownClockMs:20000,safetyMarginMs:5000});
+      f.open();f.request(first,{teamPreview:true,maxChosenTeamSize:4});await Promise.resolve();
+      f.client.receive(`>${first}\n|inactive|${clock}`);
+      const pending=f.session.supervisor.status().pending[0];assert.equal(pending.clockSource,'observed-server-clock');assert.equal(pending.cutoffAt,cutoff);
+      f.tick(cutoff+1);f.session.supervisor.onTimer();assert.equal(f.session.controlTrace.filter(entry=>entry.type==='emergency-default-sent').length,1);assert.equal(f.timers().length,1);
+    }finally{f.close();}
+  }
+});
+
+test('queued preview acquisition rechecks the controller, current child and unsent request before I/O',async()=>{
+  for(const invalidation of ['turn','ended','disconnected','disposed','other-player']){
+    const f=fixture({timerPolicy:true});
+    try{
+      f.open();f.request(first,{teamPreview:true,maxChosenTeamSize:4});
+      if(invalidation==='turn')f.request(first,{rqid:2});
+      if(invalidation==='ended')f.client.receive(`>${first}\n|win|Fixture`);
+      if(invalidation==='disconnected')f.client.close();
+      if(invalidation==='disposed')f.session.dispose();
+      if(invalidation==='other-player')f.client.rooms.get(first).request.side.name='OtherPlayer';
+      await Promise.resolve();assert.equal(f.timers().length,0,invalidation);
+    }finally{f.close();}
+  }
+  const f=fixture({timerPolicy:true,controllerRequired:true});
+  try{
+    f.open();f.request(first,{teamPreview:true,maxChosenTeamSize:4});await Promise.resolve();
+    assert.equal(f.timers().length,0);assert.equal(f.session.snapshot().timerPolicy.lastDeferred.reason,'no-current-controller');
+    const claimed=await f.call({op:'control-claim',controllerId:'preview-owner'});assert.equal(claimed.ok,true);
+    await Promise.resolve();assert.equal(f.timers().length,1);
+  }finally{f.close();}
+});
+
+test('uncertain preview timer send stays reserved through choice, alias and takeover without tainting choice',async()=>{
+  const f=fixture({timerPolicy:true,controllerRequired:true});
+  try{
+    const claimed=await f.call({op:'control-claim',controllerId:'preview-first'}),lease=claimed.result.controllerLease;
+    f.open();const send=f.client.ws.send;
+    f.client.ws.send=line=>{send(line);if(line.endsWith('|/timer on'))throw Error('Synthetic uncertain preview timer write');};
+    f.request(first,{teamPreview:true,maxChosenTeamSize:4});await Promise.resolve();
+    assert.equal(f.timers().length,1);assert.equal(f.client.timerStatus(first).request.status,'send-uncertain');
+    assert.equal((await f.choose(first,[{type:'team',order:[1,2,3,4]}],{controllerLease:lease})).ok,true);
+    const alias=first+'-previewtimerpw';f.client.receive(`>${first}\n|noinit|rename|${alias}|Private battle`);
+    const successor=await f.call({op:'control-claim',controllerId:'preview-next',takeover:true,expectedGeneration:1});
+    f.request(alias,{rqid:2});assert.equal((await f.choose(alias,protect,{controllerLease:successor.result.controllerLease})).ok,true);
+    assert.equal(f.timers().length,1);assert.equal(f.session.snapshot().timerPolicy.requestAttempts,1);
   }finally{f.close();}
 });
 

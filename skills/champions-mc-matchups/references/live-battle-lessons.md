@@ -73,9 +73,11 @@ stores that effect on the recipient. Before trading an endgame answer for a
 support knockout, still check the helped attack against both our slots. Our own
 Helping Hand can also deliver value before its user faints, provided its ally
 can attack successfully. A protected target, a recipient fainting first, or
-other action denial can prevent that payoff. The current MCP cannot model
-Helping Hand damage numerically; keep that benchmark unverified instead of
-applying a manual multiplier.
+other action denial can prevent that payoff. The MCP available for the reviewed October 15, 2026 batch could not model
+Helping Hand damage numerically, so those benchmarks remained unverified.
+For current work, inspect the connected schema under the
+[October 24 calculation extension](mc-rules-and-tools.md#native-champions-calculations);
+supported Helping Hand inputs must use actual MCP results, never a manual multiplier.
 
 **Treat Sucker Punch as a read with an escape branch.** Include revealed
 King's Shield, Protect, Rage Powder and other nonattacks when testing its value,
@@ -99,14 +101,19 @@ attack, and rain can benefit opposing threats too. Check current forms and
 abilities: base Golisopod's Emergency Exit caused replacement requests in this
 batch; carrying a stone did not make it already Mega Evolved.
 
-Track weather activations and expiry separately from setter entries. In this
+When a plan credits a setter entry with refreshing or resetting a field, first
+compare the field before entry with the actual new activation or expiry. Retain
+the observed start and age until a supported setting event changes them; a
+proposed entry is not evidence of a fresh duration. In this
 Gen 9 format, Drizzle reentry during existing rain does not refresh its duration;
 the [pinned weather handler](https://github.com/smogon/pokemon-showdown/blob/a5df8274e85b0889bf2a9b3422a08b39732374fc/sim/field.ts#L39-L52)
 rejects the same-weather ability activation. A later controlled game confirmed
 no new rain activation on that entry, followed by rain expiring that turn.
 Reentry after expiry did establish new rain while the partner delivered Trick
-Room, so this is not a reason to discard weather pivots. Check the actual new
-activation and opposing responses before relying on the next weather window.
+Room, so this is not a reason to discard weather pivots. An entry can still earn
+useful partner pressure or a purposeful trade without renewing the field. Check
+the actual new activation after expiry or overwrite, and opposing responses,
+before relying on a new weather window.
 
 The same duration check applies to terrain. The pinned `sim/field.ts`
 `setTerrain` returns before reinitializing an already identical terrain.

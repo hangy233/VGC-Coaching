@@ -2,6 +2,7 @@ import { z } from 'zod';
 // The pinned Showdown dependency supplies Champions stat and action-Speed mechanics.
 // @ts-ignore pokemon-showdown's published entry has no declaration file.
 import PS from 'pokemon-showdown';
+const {timingSpan}=await import(new URL('../../observability/timing.mjs',import.meta.url).href);
 
 const { Battle, Dex } = (PS as any).default || PS;
 const FORMAT = 'gen9championsvgc2026regmc';
@@ -104,7 +105,7 @@ function canonicalEntry(entry: SpeedPokemon) {
 }
 
 function calculateEntry(entry: SpeedPokemon, field: SpeedField, index: number) {
-  const { species, nature, ability, item } = canonicalEntry(entry);
+  const { species, nature, ability, item } = timingSpan('calculator.validation',{tool:'calculate_speed',stage:'canonical-entry'}).run(()=>canonicalEntry(entry));
   const points = Object.fromEntries(statNames.map(name => [name, entry.statPoints[name] ?? 0]));
   const boosts = Object.fromEntries(boostNames.map(name => [name, entry.boosts[name] ?? 0]));
   const neutral = (suppressWeather = false) => ({
@@ -112,7 +113,7 @@ function calculateEntry(entry: SpeedPokemon, field: SpeedField, index: number) {
     ability: suppressWeather ? 'Cloud Nine' : 'No Ability', moves: ['Protect'],
     evs: {}, ivs: Object.fromEntries(statNames.map(name => [name, 31])),
   });
-  const battle = new Battle({
+  const battle = timingSpan('calculator.reconstruction',{tool:'calculate_speed',stage:'battle-construction'}).run(()=>new Battle({
     formatid: FORMAT, seed: [1, 2, 3, 4],
     p1: { name: 'Speed snapshot', team: [{
       species: species.name, level: 50, nature: nature.name,
@@ -120,8 +121,9 @@ function calculateEntry(entry: SpeedPokemon, field: SpeedField, index: number) {
       ivs: Object.fromEntries(statNames.map(name => [name, 31])), moves: ['Protect'],
     }, neutral()] },
     p2: { name: 'Neutral context', team: [neutral(field.weatherSuppressed), neutral()] },
-  });
+  }));
   try {
+    const pokemon=timingSpan('calculator.reconstruction',{tool:'calculate_speed',stage:'snapshot-hydration'}).run(()=>{
     // Activate snapshot occupants without simulating switch-in effects. Stat points,
     // stat stages, modifier rounding and Trick Room ordering remain engine-owned.
     for (const side of battle.sides) {
@@ -155,6 +157,8 @@ function calculateEntry(entry: SpeedPokemon, field: SpeedField, index: number) {
         battle.singleEvent('Start', ability, pokemon.abilityState, pokemon);
       }
     }
+    return pokemon;
+    });
     const orderingWarnings = [];
     if (item && orderItems.has(item.id) && !pokemon.ignoringItem()) {
       orderingWarnings.push(`${item.name} can change actual move order independently of Speed`);
@@ -163,6 +167,13 @@ function calculateEntry(entry: SpeedPokemon, field: SpeedField, index: number) {
       orderingWarnings.push(`${ability.name} can change actual move order independently of Speed`);
     }
     const activation = pokemon.volatiles.protosynthesis || pokemon.volatiles.quarkdrive;
+    const native=timingSpan('calculator.engine',{tool:'calculate_speed'}).run(()=>({
+      effectiveSpeed:pokemon.getStat('spe',false,false) as number,
+      actionSpeed:pokemon.getActionSpeed() as number,
+      effectiveWeather:battle.field.effectiveWeather(),
+      abilitySuppressed:pokemon.ignoringAbility() as boolean,
+      itemSuppressed:Boolean(item&&pokemon.ignoringItem()),
+    }));
     return {
       index, label: entry.label ?? `${species.name} (${index + 1})`, species: species.name,
       nature: nature.name, ability: ability.name, item: item?.name ?? '',
@@ -170,11 +181,11 @@ function calculateEntry(entry: SpeedPokemon, field: SpeedField, index: number) {
       boosts, status: entry.status, tailwind: entry.tailwind,
       rawStats: { hp: pokemon.maxhp, ...pokemon.storedStats },
       rawSpeed: pokemon.storedStats.spe as number,
-      effectiveSpeed: pokemon.getStat('spe', false, false) as number,
-      actionSpeed: pokemon.getActionSpeed() as number,
-      effectiveWeather: battle.field.effectiveWeather(),
-      abilitySuppressed: pokemon.ignoringAbility() as boolean,
-      itemSuppressed: Boolean(item && pokemon.ignoringItem()),
+      effectiveSpeed: native.effectiveSpeed,
+      actionSpeed: native.actionSpeed,
+      effectiveWeather: native.effectiveWeather,
+      abilitySuppressed: native.abilitySuppressed,
+      itemSuppressed: native.itemSuppressed,
       abilityState: {
         ...(ability.id === 'unburden' ? { unburdenActive: Boolean(pokemon.volatiles.unburden) } : {}),
         ...(ability.id === 'slowstart' ? { slowStartActive: Boolean(pokemon.abilityState.counter) } : {}),
@@ -188,9 +199,12 @@ function calculateEntry(entry: SpeedPokemon, field: SpeedField, index: number) {
 }
 
 export function calculateSpeed(input: unknown) {
-  const parsed: SpeedInput = speedInputSchema.parse(input);
+  const parsed: SpeedInput = timingSpan('calculator.validation',{tool:'calculate_speed',stage:'request'}).run(()=>{
+  const parsed=speedInputSchema.parse(input);
   const labels = parsed.pokemon.map((entry, index) => entry.label ?? `${entry.species} (${index + 1})`);
   if (new Set(labels).size !== labels.length) throw new Error('Comparison labels must be unique');
+  return parsed;
+  });
   const results = parsed.pokemon.map((entry, index) => calculateEntry(entry, parsed.field, index));
   const sorted = [...results].sort((a, b) => b.actionSpeed - a.actionSpeed);
   const order: Array<{ rank: number; effectiveSpeed: number; labels: string[]; tie: boolean }> = [];

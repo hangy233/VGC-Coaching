@@ -3,25 +3,72 @@
 Use this with the actual selected four and open sheet, before preview and live
 play. It supplies attacking objectives, not an extra live-turn checklist. Keep
 the working plan to **next obstacle -> forcing pair -> next-board payoff** and
-stage/send promptly under the [BO3 cycle](headless-battle-cycle.md). Numerical
+submit promptly under the [BO3 cycle](headless-battle-cycle.md). Numerical
 damage, survival and Speed claims still require actual MCP results; unknown
 investments and unsupported states remain explicit.
 
 ## Choose the route, then create pressure
 
-At preview, name the attacker or combination that can close the game, the
-opposing obstacle that stops it, and how our other members create its entry.
-Choose a lead that can threaten relevant progress against plausible opposing
-openings, rather than four individually favorable matchups. A reserve's value
-includes the board it enters into: do not plan a fast cleaner's entry into our
-own active Trick Room without a workable transition.
+Select four as a connected plan, not four favorable individual matchups:
 
-Make the opponent answer a useful threat. This can be removal pressure, spread
-damage that puts both slots into later reach, disabling their control or support,
-or taking field control while our partner attacks. Prefer pressure on the
-obstacle to scattered chip that leaves their plan intact. Compare immediate
-attacks with setup or switching by what each makes possible on the next board,
-including whether the intended attacker actually gets to act.
+- **Front two:** Against a plausible opposing lead, name their shared first-turn
+  task: pressure the obstacle, deny an enabling action, establish useful control,
+  or force a defense that creates position. Give a materially different opposing
+  opening and how the pair changes its response; neither lead is revealed intent.
+- **Back two:** Give each reserve its job, entry condition and first useful
+  action window. A checked pivot, a threatened foe's defense or a purposeful
+  support trade can create that window; none grants a switch-turn attack or
+  assumes the other foe cooperates. Reserves enter when their jobs are needed.
+- **Selection cost:** Compare one meaningful alternative four. Name the important
+  role or answer left out and why this four's route is still preferable. When
+  fast and Trick Room modes coexist, assign the opening mode, beneficiary and
+  transition condition; do not set Room or expose a fast reserve by habit.
+
+Before crediting a fast opening against an available opposing control setter,
+name its first useful attack if that control resolves: the actual beneficiary,
+cover or contained expiration window. Protecting the fast user or replacing it
+with another fast reserve does not itself answer the setter. Compare pressure,
+eligible denial or reversal with accepting control and its concrete conversion;
+reversal still needs delivery and can be reversed again. Keeping pressure or
+trading through control can be best when it earns the remaining route. Neither
+the setter's selection nor its action is certain, and no fixed lead is required.
+
+Keep the compact route as **opposing opening -> front-two forcing task ->
+back-two jobs/entry windows -> next pair and finish -> condition changing it**.
+The selected four must contain a credible closing attacker or pair and a route through its obstacle;
+the bench supplies neither an answer nor an entry in this game.
+
+**Compare the second-turn position before taking convenient damage.** Trigger
+this when chip leaves the blocking plan intact, a needed actor/reset may be spent,
+a reserve can gain a useful entry, or a speed/field window changes. Compare the
+immediate attack pair with one available attack-plus-positioning line: our pair -> plausible
+opposing pair -> remaining front/back and control -> next useful pair. Include
+their attacking/punishing branch as well as the defense we hope to force. Name
+what the setup, pivot or Protect buys; surviving or switching alone is no payoff.
+Keep this within the current bounded choice, not an extra research/model round.
+Use the existing actual MCP checks for material delivery or removal dependencies.
+
+Removal pressure, useful spread damage or denying control can force a defense
+and earn the partner's setup or reserve entry. Immediate attacks remain best when
+they remove the obstacle, deliver a worthwhile trade or finish before a positional
+line pays off. Do not switch merely to follow a preview script or protect an
+unneeded resource while giving away setup. Revise the route after the actual reply.
+
+**Recheck repeated pressure before spending another support turn.** When the
+same surviving foe keeps damaging or denying our required actors, identify what
+the next pair changes about its next attack: delivered disruption, reduced
+pressure, removal, or a useful entry that can answer the surviving board.
+If Protect already erased our pair or a drain restored the target while removing
+a contributor, start from that failed conversion before ranking another hit.
+Changing one target, adding support or naming a reserve is not the lasting change;
+identify the useful progress through the compatible defense-plus-partner reply.
+Damage, a stat drop or healing denial into its partner alone establishes no such
+change. Resolve the required actor's delivery and any removal deadline with the
+existing MCP checks; do not assume the dangerous hit becomes harmless. If the
+pair leaves that pressure intact, compare an attack or disruption into its source,
+protection of the required actor, or an explicit necessary trade before repeating
+it. Support removal remains useful when it actually opens that route or its
+partner cannot exploit the turn; do not make targeting the attacker compulsory.
 
 **Exploit the defensive response.** If a threatened target is likely to Protect
 or switch, ask what that response lets our other action accomplish. Attack its
@@ -32,53 +79,44 @@ progress. A sole remaining foe has no active partner to exploit a protected
 double; that is a different cost from ignoring an active setup threat. Keep the
 attack/sacrifice branch as well as the defensive read.
 
+Retain the route's dependency in the compact plan: finisher -> resource needed
+until its window -> obstacle to remove -> useful entry or attack. Revisit that
+dependency before sacrificing a weather/control resource or choosing support
+removal over the attacker currently denying the route. A support action that
+already resolved is not cancelled by knocking its user out afterward. Preserve
+a needed reset while the opposing overwrite remains available; allow a purposeful
+trade when a checked remaining route no longer needs that reset. These are
+priorities within the existing paired plan, not a separate live checklist.
+
+Refresh the obstacle after observed offensive drops, item loss or a changed
+field. Rank what each foe can now deliver into our actual remaining pair and
+resources, rather than retaining its earlier threat label. A weakened attacker
+may fall below its still-dangerous partner; compare partner removal or disruption
+before spending another attack finishing the weakened slot. Reduced offense is
+not harmlessness: it may still finish a damaged ally, support its partner, or
+reset by switching. Check material damage/order through MCP and retain that
+counterbranch; no numerical safety or winning continuation follows from a drop alone.
+
 ### Resolve delivery before committing
 
-Use the existing forcing-pair plan to resolve the few checks that could invalidate
-it; this is not an additional live research or reporting step:
-
-- **Recipient:** After a plausible switch, pivot or redirection, who receives
-  each action? Use its actual current form and ability, including a copied form.
-  Check both actions against that recipient, including immunity,
-  move denial and relevant stat-drop triggers. A possible secondary drop is a
-  branch, not a certainty; a switch read does not establish their actual choice.
-- **Entry:** Before proposing our switch, establish the current trap holder,
-  form/ability, reserve and escape eligibility. Then check both opponents'
-  plausible actions and their combined pressure into the incoming Pokemon.
-  Use its current form on entry; a stone holder that has not evolved enters in
-  its base form. An already evolved reserve keeps its actual form.
-  An uncertain request flag does not establish that the switch can execute.
-  Covering one hit does not establish a usable entry. An absent trapper or an
-  actually legal escape changes that branch; do not impose a blanket pivot ban.
-- **Payoff:** Can the required attacker act in the required order, through both
-  foes' damage or denial, while the control/denial window still applies? Name
-  the surviving pair and next useful attack. A switching reserve cannot attack
-  on its entry turn, and an applied support effect does not deliver its partner's
-  attack if that partner faints first.
-  If removal must precede retaliation, make that removal the gating assumption:
-  compare the surviving-foe branch before treating drain healing, support or a
-  field change as protection. A useful trade that removes the obstacle and leaves
-  a finish remains available; an unverified removal is a gamble, not safe delivery.
-  If partner disruption is the delivery condition, resolve its eligibility after
-  plausible switch, field or recipient changes before crediting the protected
-  attack. A target still eligible for that disruption is a different branch;
-  do not turn a field-dependent failure into a blanket ban on the support move.
-  When a conditional attack is paired with support or Protect, check its actual
-  eligibility against the leading defense/withdrawal branch and what the other
-  foe gains. Retain a necessary finishing gamble with its failure branch; do not
-  turn an uncertain removal into a guaranteed payoff.
-  If the needed field setter and closing attacker are separated, name a feasible
-  route to their shared attacking board and when renewal can resolve. A setter
-  on the roster does not protect an attacker before that renewal or after the
-  useful control window has expired.
-
-Resolve these against the current board before crediting a damage total or a
-safe entry. Reuse matching actual MCP evidence and leave unavailable numerical
-benchmarks unverified. Once the pair is final, submit promptly; optional notes
-and extra calculations must not delay its first protection. A justified double
-or intentional trade remains available when it leaves the better remaining route.
+Apply the canonical [required-actor delivery and recovery contract](turn-planning.md#resolve-required-actor-delivery-and-recovery)
+to this forcing pair: [recipient/entry](turn-planning.md#resolve-recipients-and-entry),
+[delivery/removal deadline](turn-planning.md#check-required-delivery),
+[failed-action payoff](turn-planning.md#recover-failed-delivery) and
+[later renewal](turn-planning.md#preserve-the-later-window). Resolve material
+dependencies before crediting damage or safe entry; final useful pairs go direct.
+This uses the existing plan, without an extra live checklist or research round.
 
 ## Spend temporary advantages
+
+Before a weather-dependent immediate attack, include an available opposing
+weather entry in the opening pair. Weather loss can introduce a charging turn
+and commit a Choice holder to a later release, rather than merely changing
+damage. Name the useful charge/release/reset continuation or choose pressure
+that still works after the overwrite. Available weather change is a leading
+branch, not certainty; a covered charge or an unavailable opposing setter can
+still justify the attack. Use current weather again after every overwrite or
+expiration, including the actual type of Weather Ball.
 
 After gaining Room, Tailwind, favorable weather, a damaging boost, or a useful
 Fake Out window, identify the useful attack or entry it buys. Repeated passive
@@ -92,6 +130,16 @@ the advantage applies and arrange a surviving pair for expiration. Do not revers
 Room or use a Speed drop merely because the move is available: name who benefits
 now and after expiration. A move chosen for chip can have an adverse Speed
 consequence.
+
+Before setting or renewing Room, identify the next required attacker, including
+a fast reserve likely to enter after the current trade. Compare that attack's
+eligible order with and without Room using actual MCP Speed when material;
+naming a slow current ally alone does not establish a useful continuation. Check
+what that first attack accomplishes against both foes and their defense, rather
+than treating favorable order as a finish. Contrast a slow attacker delivering
+needed progress on the last control turn or a purposeful sacrifice that earns
+its entry: retain those useful control lines instead of banning Room beside a
+fast reserve.
 
 In a retained clean game, Psychic removed one foe while its partner Protected;
 later Hyper Voice removed the replacement through another Protect. Sylveon then

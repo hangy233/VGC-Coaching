@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import {invalidatePlanningTeamCaches} from '../planning/numeric-cache.mjs';
 
 export const MAX_ACTIVE_TEAMS = 10;
 const CATALOG_FILENAME = 'catalog.sqlite';
@@ -354,7 +355,7 @@ export async function beginMetricsTeamDeletion({ workspace, teamId, requireCapac
   try {
     return transaction(database, () => {
       const existing = deletionStatus(database, teamId);
-      if (existing) return existing;
+      if (existing) {invalidatePlanningTeamCaches({workspace,teamId});return existing;}
       if (requireCapacityEviction) {
         const team = selectOne(database, teamId);
         if (!team || team.active || team.archiveReason !== 'capacity') return null;
@@ -367,6 +368,7 @@ export async function beginMetricsTeamDeletion({ workspace, teamId, requireCapac
       }
       for (const owner of owners) database.prepare('DELETE FROM battle_write_locks WHERE room_id=? AND team_id=? AND owner_nonce=?').run(owner.room_id, teamId, owner.owner_nonce);
       database.prepare("INSERT INTO deleted_teams(team_id,state,started_at,completed_at) VALUES(?,'deleting',?,NULL)").run(teamId, new Date().toISOString());
+      invalidatePlanningTeamCaches({workspace,teamId});
       return deletionStatus(database, teamId);
     });
   } finally { database.close(); }

@@ -15,6 +15,56 @@ const identity = value => {
 };
 const speciesOf = details => String(details || '').split(',')[0].trim() || null;
 
+// PP continuity is deliberately narrower than battle-history reconstruction.
+// Only an actual private active request can supply values; no initial/full PP
+// or lifecycle counter is inferred. Any uncertain stream loses this evidence.
+export function invalidateOwnPpObservation(state, reason) {
+  if (!state?.sides) return;
+  if (state.ownPpObservation) Object.assign(state.ownPpObservation, {continuous:false, reason});
+  for (const side of Object.values(state.sides)) for (const p of side.pokemon) {
+    p.ownPpSnapshot = null;
+  }
+}
+function ppEpoch(state, epoch, connected) {
+  if (!Number.isSafeInteger(epoch) || epoch < 0 || connected !== true) {
+    invalidateOwnPpObservation(state, 'No verified connection epoch'); return null;
+  }
+  if (state.ownPpObservation?.epoch !== epoch) {
+    invalidateOwnPpObservation(state, 'Connection epoch changed');
+    state.ownPpObservation = {version:1, epoch, connected:true, continuous:false, startObserved:false,
+      sequence:0, lastRequestRqid:null, reason:'Battle start prefix not observed on this connection'};
+  }
+  const observation = state.ownPpObservation;
+  observation.sequence++;
+  return observation;
+}
+function invalidateActivePp(state) {
+  for (const side of Object.values(state.sides)) for (const p of side.pokemon) if (p.activeSlot) p.ownPpSnapshot = null;
+}
+function sameMoves(a, b) { return Array.isArray(a) && Array.isArray(b) && a.length === 4 && b.length === 4 && Array.from(a).every((move,index) => typeof move === 'string' && typeof b[index] === 'string' && id(move) === id(b[index])); }
+
+/** Shared pure consumer guard. An absent/unavailable observation remains an
+ * explicit-hypothesis case; a claimed retained fact with conflicting bindings
+ * is refused rather than silently replacing the authored/current identity. */
+export function validateOwnReservePpSnapshot({pokemon, requestEntry, observation, rqid, authoredPp}) {
+  const value = pokemon?.ownPpSnapshot;
+  if (!value || value.status !== 'bench-retained') return null;
+  const require = (ok, message) => { if (!ok) throw new Error('Observed reserve PP: '+message); };
+  require(observation?.version === 1 && observation.connected === true && observation.continuous === true && observation.startObserved === true, 'connection continuity unavailable');
+  require(value.version === 1 && Number.isSafeInteger(observation.epoch) && observation.epoch >= 0 && value.epoch === observation.epoch, 'connection epoch differs');
+  require(value.actorId === pokemon.id && !pokemon.activeSlot && requestEntry?.active === false, 'actor/bench identity differs');
+  require(value.ident === requestEntry.ident && value.details === requestEntry.details && speciesOf(value.details) === pokemon.species && identity(value.ident)?.nickname === pokemon.nickname, 'private request identity/details differ');
+  require(sameMoves(value.moves, requestEntry.moves), 'private request move order differs');
+  require(['item','ability','condition'].every(key => typeof value.requestState?.[key] === 'string' && value.requestState[key] === requestEntry[key]), 'private request item/ability/condition changed without usable PP evidence');
+  require(Number.isSafeInteger(rqid) && observation.lastRequestRqid === rqid && Number.isSafeInteger(value.rqid) && value.rqid >= 0 && value.rqid < rqid && value.benchVerifiedRqid === rqid &&
+    [value.requestSequence,value.exitSequence,value.benchVerifiedSequence,observation.sequence].every(n => Number.isSafeInteger(n) && n >= 1) && value.requestSequence < value.exitSequence && value.exitSequence < value.benchVerifiedSequence && value.benchVerifiedSequence <= observation.sequence,
+  'request/exit/bench observation order differs');
+  require(value.exitKind === 'observed-hard-switch' && value.continuous === true, 'mutation-free hard exit was not observed');
+  require(Array.isArray(value.pp) && value.pp.length === 4 && Array.from(value.pp).every(pp => Number.isInteger(pp) && pp >= 0 && pp <= 64), 'invalid private PP values');
+  if(authoredPp !== undefined) require(JSON.stringify(authoredPp) === JSON.stringify(value.pp), 'PP hypothesis conflicts with retained private request');
+  return {pp:[...value.pp], provenance:clone(value)};
+}
+
 export function createBattleState() {
   return {turn: 0, gen: null, gameType: null, tier: null, ownSide: null, ended: false, result: null,
     updatedAt: null, nextPokemon: 1, lastUpkeepTurn: null, sides: {}, field: {weather: null, terrain: null, conditions: {}},
@@ -134,13 +184,29 @@ function eachCondition(state, callback) {
 }
 
 /** Fold a single trusted battle-protocol line. Opponent chat is ignored. */
-export function reduceBattleLine(state, line, {now} = {}) {
+export function reduceBattleLine(state, line, {now, epoch, connected} = {}) {
   if (typeof line !== 'string' || !line.startsWith('|')) return state;
   const [, type, ...parts] = line.split('|');
   // Deliberately do not parse request/login/chat data from a raw string here.
-  if (!['player', 'teamsize', 'poke', 'gen', 'gametype', 'tier', 'turn', 'upkeep', 'switch', 'drag',
+  if (!['player', 'teamsize', 'poke', 'gen', 'gametype', 'tier', 'start', 'turn', 'upkeep', 'switch', 'drag',
     'replace', 'detailschange', 'swap', 'faint', 'move', 'cant', 'win', 'tie'].includes(type) && !type.startsWith('-')) return state;
   state.updatedAt = stamp(now);
+  const ppObservation = ppEpoch(state, epoch, connected);
+  if (ppObservation && type === 'start') {
+    if (ppObservation.startObserved || state.turn !== 0) invalidateOwnPpObservation(state, 'Repeated or late battle start');
+    else Object.assign(ppObservation, {startObserved:true, continuous:true, reason:null});
+  }
+  if (ppObservation && type === 'turn') {
+    const turn = Number(parts[0]);
+    if (turn !== state.turn + 1 || state.turn > 0 && state.lastUpkeepTurn !== state.turn) invalidateOwnPpObservation(state, 'Missing/replayed turn or upkeep');
+  }
+  if (ppObservation && type === 'upkeep' && state.lastUpkeepTurn === state.turn) invalidateOwnPpObservation(state, 'Repeated upkeep');
+  // A public move is not a PP delta: Pressure, callers, denials and PP effects
+  // require the next private request. Conservatively discard all active caches.
+  if (type === 'move' || type === 'cant' || type.startsWith('-')) invalidateActivePp(state);
+  if (type.startsWith('-') || ['replace','detailschange','drag'].includes(type)) {
+    for (const text of parts) { const affected = getPokemon(state, text); if (affected) affected.ownPpSnapshot = null; }
+  }
   const p = getPokemon(state, parts[0]);
   if (type === 'player' && /^p[1-4]$/.test(parts[0])) sideFor(state, parts[0]).name = parts[1] || null;
   else if (type === 'teamsize' && /^p[1-4]$/.test(parts[0])) sideFor(state, parts[0]).teamSize = Number(parts[1]);
@@ -162,8 +228,21 @@ export function reduceBattleLine(state, line, {now} = {}) {
     eachCondition(state, c => { if (Number.isInteger(c.elapsedUpkeeps)) c.elapsedUpkeeps++; });
     state.lastUpkeepTurn = state.turn;
   }
-  else if (['switch', 'drag', 'replace'].includes(type)) switchPokemon(state, parts[0], parts[1], parts[2], type === 'replace');
-  else if (['detailschange', '-formechange'].includes(type) && p) { p.species = speciesOf(parts[1]); p.details = parts[1]; if (parts[2] && /^\d/.test(parts[2])) health(state, p, parts[2]); }
+  else if (['switch', 'drag', 'replace'].includes(type)) {
+    const outgoing = getPokemon(state, parts[0]), cached = outgoing?.ownPpSnapshot;
+    const clean = type === 'switch' && parts.length === 3 && ppObservation?.continuous === true && cached?.status === 'active-request' && cached.continuous === true && cached.epoch === ppObservation.epoch;
+    const incoming = switchPokemon(state, parts[0], parts[1], parts[2], type === 'replace');
+    if (outgoing) outgoing.ownPpSnapshot = clean && incoming !== outgoing ? {...cached, status:'bench-retained', exitKind:'observed-hard-switch', exitSequence:ppObservation.sequence, exitTurn:state.turn} : null;
+    if (incoming) incoming.ownPpSnapshot = null;
+  }
+  else if (['detailschange', '-formechange'].includes(type) && p) {
+    const species = speciesOf(parts[1]);
+    // A base-form reveal cannot establish the evolved form's current ability.
+    // Later explicit ability/suppression events or own requests remain authoritative.
+    if (species !== p.species) { p.ability = null; p.abilitySuppressed = null; }
+    p.species = species; p.details = parts[1];
+    if (parts[2] && /^\d/.test(parts[2])) health(state, p, parts[2]);
+  }
   else if (type === 'swap' && p) {
     const ref = identity(parts[0]), side = sideFor(state, ref.side);
     const newSlot = /^[0-5]$/.test(parts[1]) ? String.fromCharCode(97 + Number(parts[1])) : identity(parts[1])?.slot;
@@ -175,7 +254,7 @@ export function reduceBattleLine(state, line, {now} = {}) {
   } else if (['-damage', '-heal', '-sethp'].includes(type)) {
     health(state, p, parts[1]);
     if (type === '-sethp' && parts[2] && !parts[2].startsWith('[')) health(state, getPokemon(state, parts[2]), parts[3]);
-  } else if (type === 'faint' && p) { p.fainted = true; p.status = null; p.hp = {...(p.hp || {max: null, precision: 'server-display', source: 'protocol'}), current: 0, raw: '0 fnt'}; }
+  } else if (type === 'faint' && p) { p.fainted = true; p.status = null; p.volatiles = {}; p.hp = {...(p.hp || {max: null, precision: 'server-display', source: 'protocol'}), current: 0, raw: '0 fnt'}; }
   else if (type === '-status' && p) p.status = parts[1];
   else if (type === '-curestatus' && p) p.status = null;
   else if (type === '-cureteam') { const ref = identity(parts[0]); if (ref) for (const mon of sideFor(state, ref.side).pokemon) mon.status = null; }
@@ -204,7 +283,7 @@ export function reduceBattleLine(state, line, {now} = {}) {
   else if (type === '-enditem' && p) {
     p.itemHistory.push({item: parts[1], event: parts.includes('[eat]') ? 'consumed' : parts.some(s => s.startsWith('[from]')) ? 'removed' : 'ended', turn: state.turn});
     p.item = null; p.itemKnown = true;
-  } else if (type === '-mega' && p) { p.mega = true; const stone = parts.at(-1); if (stone && !stone.startsWith('[')) { p.item = stone; p.itemKnown = true; } }
+  } else if (type === '-mega' && p) { p.mega = true; p.ability = null; p.abilitySuppressed = null; const stone = parts.at(-1); if (stone && !stone.startsWith('[')) { p.item = stone; p.itemKnown = true; } }
   else if (type === 'move' && p) {
     if (!p.moves.includes(parts[1])) p.moves.push(parts[1]);
     state.lastMove = {pokemon: p.id, move: parts[1], target: parts[2] || null, turn: state.turn, source: 'executed-server-event'};
@@ -223,8 +302,17 @@ export function reduceBattleLine(state, line, {now} = {}) {
     const sideID = /^(p[1-4])/.exec(parts[0])?.[1];
     if (sideID) {
       const side = sideFor(state, sideID), key = id(effectName(parts[1]));
-      if (type === '-sidestart') side.conditions[key] = condition(state, parts[1], parts);
-      else delete side.conditions[key];
+      if (type === '-sidestart') {
+        const previous=side.conditions[key], next=condition(state,parts[1],parts);
+        if(key==='toxicspikes'){
+          const completePrefix=state.ownPpObservation?.startObserved===true&&state.ownPpObservation.continuous===true;
+          next.layers=Number.isInteger(previous?.layers)?Math.min(2,previous.layers+1):!previous&&(completePrefix||side.toxicSpikesCleared===true)?1:null;
+        }
+        side.conditions[key]=next;
+      }else {
+        delete side.conditions[key];
+        if(key==='toxicspikes')side.toxicSpikesCleared=true;
+      }
     }
   } else if (type === '-swapsideconditions') {
     if (state.sides.p1 && state.sides.p2) [state.sides.p1.conditions, state.sides.p2.conditions] = [state.sides.p2.conditions, state.sides.p1.conditions];
@@ -234,19 +322,28 @@ export function reduceBattleLine(state, line, {now} = {}) {
 }
 
 /** Copy private server-owned stats; do not calculate or infer Speed here. */
-export function reduceBattleRequest(state, request, {now} = {}) {
+export function reduceBattleRequest(state, request, {now, epoch, connected} = {}) {
   state.updatedAt = stamp(now);
-  if (!request || typeof request !== 'object') { state.request = null; return state; }
+  const ppObservation = ppEpoch(state, epoch, connected);
+  if (!request || typeof request !== 'object') { invalidateOwnPpObservation(state, 'Missing private request'); state.request = null; return state; }
+  if (ppObservation) {
+    if (!Number.isSafeInteger(request.rqid) || ppObservation.lastRequestRqid !== null && request.rqid !== ppObservation.lastRequestRqid + 1) invalidateOwnPpObservation(state, 'Missing/replayed private request');
+    ppObservation.lastRequestRqid = request.rqid;
+  }
   state.request = {rqid: request.rqid ?? null, wait: !!request.wait, teamPreview: !!request.teamPreview,
     forceSwitch: request.forceSwitch || null, source: 'server-request'};
   const sideID = request.side?.id;
-  if (!/^p[1-4]$/.test(sideID || '') || !Array.isArray(request.side.pokemon)) return state;
+  if (!/^p[1-4]$/.test(sideID || '') || !Array.isArray(request.side.pokemon)) { invalidateOwnPpObservation(state, 'Incomplete private party request'); return state; }
+  if (state.ownSide && state.ownSide !== sideID) invalidateOwnPpObservation(state, 'Private request own-side identity changed');
   state.ownSide = sideID;
-  const side = sideFor(state, sideID), used = new Set(), nextActive = {};
+  const side = sideFor(state, sideID), used = new Set(), nextActive = {}, priorActive = {...side.active}, priorSelected = side.pokemon.filter(p => p.selection === 'selected').map(p => p.id);
   let activeIndex = 0;
   for (const [index, entry] of request.side.pokemon.entries()) {
     const ref = identity(entry.ident) || {side: sideID, slot: null, nickname: null};
-    const slot = entry.active ? String.fromCharCode(97 + activeIndex++) : null;
+    // Preview requests mark the default first members active before selection.
+    // Those flags are not observed battle positions and must not strand a lead
+    // in the wrong slot when the chosen party is reordered.
+    const slot = !request.teamPreview && entry.active ? String.fromCharCode(97 + activeIndex++) : null;
     const species = speciesOf(entry.details);
     let p = slot ? side.pokemon.find(mon => mon.id === side.active[slot] && (!ref.nickname || mon.nickname === ref.nickname) && (!species || mon.species === species)) : null;
     if (!p) {
@@ -266,8 +363,28 @@ export function reduceBattleRequest(state, request, {now} = {}) {
     if (Array.isArray(entry.moves)) for (const move of entry.moves) if (!p.moves.includes(move)) p.moves.push(move);
   }
   // An absent preview member may simply be unselected; do not mark it fainted.
-  for (const p of side.pokemon) if (!used.has(p.id)) { p.activeSlot = null; p.requestIndex = null; p.selection = request.teamPreview ? 'unknown' : 'not-in-current-request'; }
+  for (const p of side.pokemon) if (!used.has(p.id)) { p.activeSlot = null; p.requestIndex = null; p.ownPpSnapshot = null; p.selection = request.teamPreview ? 'unknown' : 'not-in-current-request'; }
   side.active = nextActive;
+  if (!request.teamPreview) {
+    if (priorSelected.length && (priorSelected.length !== used.size || priorSelected.some(value => !used.has(value)))) invalidateOwnPpObservation(state, 'Unexplained private selected-party identity change');
+    if (JSON.stringify(priorActive) !== JSON.stringify(nextActive) || side.pokemon.some(p => p.identityConfidence === 'ambiguous-duplicate')) invalidateOwnPpObservation(state, 'Unexplained request-only or ambiguous active identity');
+    let slot = 0;
+    for (const [index,entry] of request.side.pokemon.entries()) {
+      const p = side.pokemon.find(mon => mon.requestIndex === index + 1);
+      if (!p) continue;
+      if (entry.active) {
+        const moves = request.active?.[slot++]?.moves;
+        p.ownPpSnapshot = ppObservation && sameMoves(moves?.map(move => move.id ?? move.move),entry.moves) && moves.every(move => Number.isInteger(move.pp) && move.pp >= 0 && move.pp <= 64) ?
+          {version:1,status:'active-request',actorId:p.id,ident:entry.ident,details:entry.details,moves:entry.moves.map(id),pp:moves.map(move => move.pp),requestState:{item:entry.item,ability:entry.ability,condition:entry.condition},
+            rqid:request.rqid,epoch:ppObservation.epoch,requestSequence:ppObservation.sequence,observedAt:stamp(now),continuous:ppObservation.continuous === true} : null;
+      } else if (p.ownPpSnapshot?.status === 'bench-retained') {
+        const value = {...p.ownPpSnapshot,benchVerifiedRqid:request.rqid,benchVerifiedSequence:ppObservation?.sequence};
+        p.ownPpSnapshot = value;
+        try { validateOwnReservePpSnapshot({pokemon:p,requestEntry:entry,observation:ppObservation,rqid:request.rqid}); }
+        catch { p.ownPpSnapshot = null; }
+      }
+    }
+  }
   return state;
 }
 
@@ -275,7 +392,7 @@ export function reduceBattleRequest(state, request, {now} = {}) {
 export function battleStateSnapshot(state, {now} = {}) {
   const result = clone({turn: state.turn, gen: state.gen, gameType: state.gameType, tier: state.tier,
     ownSide: state.ownSide, ended: state.ended, result: state.result, updatedAt: state.updatedAt,
-    field: state.field, sides: Object.values(state.sides).map(side => ({id: side.id, name: side.name,
+    field: state.field, ...(state.ownPpObservation ? {ownPpObservation:state.ownPpObservation} : {}), sides: Object.values(state.sides).map(side => ({id: side.id, name: side.name,
       teamSize: side.teamSize, preview: side.preview, active: Object.entries(side.active).map(([slot, pokemon]) => ({slot, pokemon})),
       reserves: side.pokemon.filter(p => !p.activeSlot && p.selection !== 'not-in-current-request').map(p => p.id), pokemon: side.pokemon, conditions: side.conditions})),
     lastMove: state.lastMove, request: state.request,

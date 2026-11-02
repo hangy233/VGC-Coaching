@@ -8,6 +8,30 @@ const board=(a,extra={})=>({connected:true,authenticated:true,revision:a?.rqid??
 const choice={id:'authored-9',room,rqid:9,token:'token-9',actions:[{type:'move',slot:4},{type:'move',slot:3,target:2}]};
 const replacement=board({...action(11,'switch'),legalActions:{forceSwitch:[true,false],replacementPairs:[[{type:'switch',pokemonId:'stable-reserve'},{type:'pass'}]]}});
 
+test('trusted post-send handoff uses the existing first read and releases actual opponent waiting time without another call',async()=>{
+  const calls=[],current=board(null,{stopped:false,rooms:[{id:room,parentId:parent,ended:false}],choices:[{room,rqid:9,status:'sent',evidence:[]}]});
+  const result=await playNext({q:choice,observed:board(action()),returnAfterSend:true,call:async(name,args)=>{
+    calls.push(name);
+    if(name==='battle_stage_fallback')return {pending:[{token:choice.token,hasFallback:true,fallbackSource:'fallback',attempted:false}]};
+    if(name==='battle_choose')return {status:'sent-not-acknowledged'};
+    assert.equal(name,'battle_turn_status');return current;
+  }});
+  assert.deepEqual(calls,['battle_stage_fallback','battle_choose','battle_turn_status']);
+  assert.equal(result.next.reason,'committed-opponent-wait');assert.equal(result.next.serverAcceptance,false);assert.equal(result.next.choiceAuthority,false);
+});
+
+test('post-send handoff never mistakes execution, uncertainty, missing identity or ordinary legacy waiting for committed idle',async()=>{
+  const original=()=>board(null,{stopped:false,rooms:[{id:room,parentId:parent,ended:false}],choices:[{room,rqid:9,status:'sent',evidence:[]}]});
+  for(const mutate of [s=>s.choices[0].status='uncertain',s=>s.choices[0].uncertain=true,s=>s.choices[0].executionObserved=true,s=>s.choices[0].boundary='next-turn',s=>s.choices[0].evidence.push({type:'move'}),s=>delete s.choices[0].evidence,s=>s.choices[0].rqid++,s=>s.choices[0].room+='0',s=>s.choices.push({...s.choices[0]}),s=>s.connected=false,s=>s.rooms[0].ended=true]){
+    const current=original();mutate(current);let reads=0;
+    const result=await waitForNext({origin:action(),parentId:parent,initial:current,returnOnCommitted:true,call:async name=>{reads++;assert.equal(name,'battle_wait');return board(action(10),{stopped:false});}});
+    if(current.connected===false){assert.equal(result.reason,'disconnected-or-stopped');assert.equal(reads,0);}
+    else{assert.equal(result.reason,'fresh-action');assert.equal(reads,1);}
+  }
+  let reads=0;const legacy=await waitForNext({origin:action(),parentId:parent,initial:original(),call:async()=>{reads++;return board(action(10),{stopped:false});}});
+  assert.equal(legacy.reason,'fresh-action');assert.equal(reads,1);
+});
+
 const betweenChildren=()=>board(null,{boards:[],autoReady:true,rooms:[
   {id:parent,parentId:parent,ended:false,result:null},
   {id:room,parentId:parent,ended:true,result:{type:'win',winner:'opponent'}},
@@ -331,6 +355,134 @@ test('official parent plus server idle remains visible in compact output',async(
   assert.equal(result.reason,'official-parent-ended-and-idle');assert.equal(result.parentId,parent);
 });
 
+// Anonymized shape of a retained terminal wait: several owned completed BO3s
+// and children remain in the same compact session snapshot between searches.
+const historyParent='game-bestof3-gen9championsvgc2026regmcbo3-084';
+const historyChild='battle-gen9championsvgc2026regmcbo3-085';
+const endedHistory=()=>board(null,{revision:411,autoReady:true,boards:[],awaitingSet:false,searchPending:false,switchingTeam:false,
+  controlPolicy:{pending:[]},search:{searching:[],games:null},rooms:[
+    {id:historyParent,parentId:historyParent,ended:true,result:{type:'win',winner:'Fixture A'}},
+    {id:historyChild,parentId:historyParent,ended:true,result:{type:'win',winner:'Fixture A'}},
+    {id:parent,parentId:parent,ended:true,result:{type:'win',winner:'Fixture B'}},
+    {id:room,parentId:parent,ended:true,result:{type:'win',winner:'Fixture B'}},
+  ]});
+
+test('terminal scope leaves multiple completed owned parents ambiguous instead of selecting historical array order',async()=>{
+  for(const reverse of [false,true]) {
+    const state=endedHistory();if(reverse)state.rooms.reverse();
+    const result=await waitForNext({initial:state,call:async()=>{throw Error('No query needed');}});
+    assert.equal(result.reason,'server-idle');assert.equal(result.officialParentEnded,false);assert.equal(result.parentId,undefined);
+  }
+});
+
+test('terminal scope resolves the exact authored origin through parent, child metadata and readiness room',async()=>{
+  for(const origin of [action(),{room,rqid:9,token:'previous-token'},{room:parent,kind:'ready',rqid:0}]) {
+    const result=await waitForNext({initial:endedHistory(),origin,call:async()=>{throw Error('No query needed');}});
+    assert.equal(result.reason,'official-parent-ended-and-idle');assert.equal(result.parentId,parent);
+  }
+});
+
+test('terminal scope preserves explicit and single-parent results while an unmatched scope never selects another parent',async()=>{
+  const state=endedHistory(),noCall=async()=>{throw Error('No query needed');};
+  for(const selected of [historyParent,parent]) {
+    const result=await waitForNext({initial:state,parentId:selected,call:noCall});
+    assert.equal(result.reason,'official-parent-ended-and-idle');assert.equal(result.parentId,selected);
+  }
+  const unmatched=await waitForNext({initial:state,parentId:parent+'9',call:noCall});
+  assert.equal(unmatched.reason,'server-idle');assert.equal(unmatched.officialParentEnded,false);assert.equal(unmatched.parentId,undefined);
+  const single={...state,rooms:state.rooms.filter(value=>value.id===parent||value.parentId===parent)};
+  assert.equal((await waitForNext({initial:single,call:noCall})).parentId,parent);
+  single.rooms[0]={...single.rooms[0],result:null};
+  assert.equal((await waitForNext({initial:single,call:noCall})).officialParentEnded,false);
+});
+
+test('terminal scope gives live owned parents priority over ended history during transient server idle',async()=>{
+  for(const options of [{},{origin:{room:historyChild,parentId:historyParent,rqid:1}},{parentId:historyParent}]) {
+    let time=1000,calls=0;const state=endedHistory();
+    Object.assign(state.rooms.find(value=>value.id===parent),{ended:false,result:null});
+    const result=await waitForNext({initial:state,...options,budgetMs:10,now:()=>time,call:async name=>{
+      assert.equal(name,'battle_wait');calls++;time+=10;return state;
+    }});
+    assert.equal(result.reason,'bounded-wait-ended');assert.equal(result.parentId,undefined);assert.equal(calls,1);
+  }
+});
+
+test('terminal scope never chooses an arbitrary parent from multiple live owned sets',async()=>{
+  const state=endedHistory();state.rooms=state.rooms.map(value=>({...value,ended:false,result:null}));
+  const calls=[];
+  const result=await waitForNext({initial:state,call:async name=>{calls.push(name);return state;}});
+  assert.deepEqual(calls,['battle_wait']);assert.equal(result.reason,'bounded-wait-ended');assert.equal(result.parentId,undefined);
+});
+
+test('terminal scope explicit parent returns only a matching fresh request and preserves canonical private aliases',async()=>{
+  for(const mode of ['different-parent','unknown-parent','matching-private-alias']) {
+    let time=1000;const calls=[],state=endedHistory(),privateParent=parent+'-fixturepw';
+    Object.assign(state.rooms.find(value=>value.id===parent),{ended:false,result:null});
+    const current=mode==='matching-private-alias'?{...action(12),parentId:privateParent}:
+      mode==='different-parent'?{...action(12),room:historyChild,parentId:historyParent}:
+      {...action(12),room:'battle-unmapped-fixture',parentId:undefined};
+    if(mode==='matching-private-alias') {
+      state.rooms=state.rooms.map(value=>({...value,...(value.id===parent?{id:privateParent}:{}),
+        ...(value.parentId===parent?{parentId:privateParent}:{})}));
+    } else if(mode==='different-parent')Object.assign(state.rooms.find(value=>value.id===historyParent),{ended:false,result:null});
+    state.actions=[current];state.boards=[{room:current.room,parentId:current.parentId,request:{rqid:12}}];
+    const result=await waitForNext({initial:state,parentId:parent,budgetMs:10,now:()=>time,call:async name=>{
+      calls.push(name);time+=10;return state;
+    }});
+    assert.equal(result.reason,mode==='matching-private-alias'?'fresh-action':'bounded-wait-ended',mode);
+    assert.deepEqual(calls,mode==='matching-private-alias'?[]:['battle_wait'],mode);
+  }
+});
+
+test('terminal scope remembers a uniquely observed live parent when its official ending arrives',async()=>{
+  const state=endedHistory();Object.assign(state.rooms.find(value=>value.id===parent),{ended:false,result:null});
+  const ended=endedHistory();ended.revision++;
+  const calls=[];
+  const result=await waitForNext({initial:state,call:async name=>{calls.push(name);return ended;}});
+  assert.deepEqual(calls,['battle_wait']);assert.equal(result.reason,'official-parent-ended-and-idle');assert.equal(result.parentId,parent);
+});
+
+test('terminal scope respects prior search exclusions across a known canonical private-room alias',async()=>{
+  const state=endedHistory(),privateParent=historyParent+'-fixturepw';
+  state.rooms[0]={...state.rooms[0],id:privateParent,parentId:privateParent};
+  state.rooms[1]={...state.rooms[1],parentId:privateParent};
+  const noCall=async()=>{throw Error('No query needed');};
+  const result=await waitForNext({initial:state,priorParentIds:[historyParent],call:noCall});
+  assert.equal(result.reason,'official-parent-ended-and-idle');assert.equal(result.parentId,parent);
+  const exact=await waitForNext({initial:state,parentId:historyParent,call:noCall});
+  assert.equal(exact.reason,'official-parent-ended-and-idle');assert.equal(exact.parentId,privateParent);
+  const live=structuredClone(state);Object.assign(live.rooms[0],{ended:false,result:null});
+  const excludedLive=await waitForNext({initial:live,priorParentIds:[historyParent],call:noCall});
+  assert.equal(excludedLive.parentId,parent);
+});
+
+test('terminal scope preserves a fresh current request with old ended parents and an empty server game map',async()=>{
+  const state=endedHistory();Object.assign(state.rooms.find(value=>value.id===parent),{ended:false,result:null});
+  state.actions=[action(12)];state.boards=[{room,parentId:parent,request:{rqid:12}}];
+  const result=await waitForNext({initial:state,origin:action(),call:async()=>{throw Error('Fresh request needs no query');}});
+  assert.equal(result.reason,'fresh-action');assert.equal(result.state.actions[0].token,'token-12');
+});
+
+test('terminal scope prior-search exclusions suppress stale alias actions without consuming a second search',async()=>{
+  const privateParent=historyParent+'-fixturepw',privateChild=historyChild+'-fixturepw',calls=[];
+  const before=endedHistory();before.rooms=before.rooms.filter(value=>value.parentId===historyParent);
+  const searching=board({room:privateChild,parentId:privateParent,kind:'preview',rqid:2,token:'old-alias-token'},
+    {revision:20,boards:[],search:{searching:['fixture'],games:null},rooms:[
+      {id:privateParent,parentId:privateParent,ended:false,result:null},
+      {id:privateChild,parentId:privateParent,ended:false,result:null},
+    ]});
+  const preview=board(action(3,'preview'),{revision:21,rooms:[{id:parent,parentId:parent,ended:false}]});
+  const result=await startNext({q:{id:'prior-alias-search',confirmed:true},call:async name=>{
+    calls.push(name);
+    if(name==='battle_status')return before;
+    if(name==='battle_start')return {ok:true,result:{status:'sent-not-acknowledged'}};
+    if(name==='battle_turn_status')return searching;
+    assert.equal(name,'battle_wait');return preview;
+  }});
+  assert.deepEqual(calls,['battle_status','battle_start','battle_turn_status','battle_wait']);
+  assert.equal(result.next.reason,'fresh-action');assert.equal(result.next.state.actions[0].token,'token-3');
+});
+
 test('search send uncertainty does not authorize a retry',async()=>{
   const calls=[];
   const result=await startNext({q:{id:'explicit-search',confirmed:true},call:async name=>{
@@ -341,4 +493,117 @@ test('search send uncertainty does not authorize a retry',async()=>{
 
 test('invalid authored command fails before contacting the server',async()=>{
   await assert.rejects(playNext({q:{...choice,id:'contains:invalid'},observed:board(action()),call:async()=>{throw Error('No call');}}),/command ID/);
+});
+
+test('opt-in start-next returns the preview arriving 21.887 s after search input in the same dispatch',async()=>{
+  for(const extended of [false,true]) {
+    const began=1792734065382;
+    let time=began,waits=0;const calls=[];
+    const searching=board(null,{revision:241,boards:[],autoReady:true,rooms:[],
+      search:{searching:['gen9championsvgc2026regmcbo3'],games:null}});
+    const preview=board(action(3,'preview'),{revision:242,boards:[{room,parentId:parent,requestAgeMs:0}],
+      rooms:[{id:parent,parentId:parent,ended:false},{id:room,parentId:parent,ended:false}],
+      search:{searching:[],games:{[parent]:'fixture set',[room]:'fixture battle'}}});
+    const result=await startNext({q:{id:'observed-delayed-search',confirmed:true,...(extended?{postSendWaitMs:55000}:{})},
+      now:()=>time,call:async(name,args,options)=>{
+        calls.push({name,args,timeoutMs:options.timeoutMs});
+        if(name==='battle_status')return {ok:true,result:{...searching,search:{searching:[],games:null}}};
+        if(name==='battle_start'){time+=6;return {id:'observed-delayed-search',ok:true,result:{status:'sent-not-acknowledged',searchesSent:2,authorizedSets:6}};}
+        if(name==='battle_turn_status')return {ok:true,result:searching};
+        assert.equal(name,'battle_wait');
+        if(++waits===1){time=began+19904;return {ok:true,result:searching};}
+        time=began+21887;return {ok:true,result:preview};
+      }});
+    assert.equal(result.next.reason,extended?'fresh-action':'bounded-wait-ended');
+    assert.equal(waits,extended?2:1);
+    if(extended){assert.equal(time-began,21887);assert.equal(result.next.state.result.boards[0].requestAgeMs,0);}
+    assert.equal(calls.filter(c=>c.name==='battle_start').length,1);
+    assert(calls.every(c=>c.timeoutMs<=20000));
+    assert.equal(calls.find(c=>c.name==='battle_start').timeoutMs,5000);
+  }
+});
+
+test('start-next larger wait returns immediate previews and excludes prior-parent or reserved actions',async()=>{
+  for(const mode of ['immediate','prior-parent','prior-child-metadata','prior-parent-room','reserved','sent','unactionable','opponent-board-only']) {
+    let time=1000,waits=0;const calls=[];
+    const previous='game-bestof3-gen9championsvgc2026regmcbo3-099';
+    const searching=board(null,{revision:1,boards:[],search:{searching:['fixture'],games:null},
+      rooms:[{id:previous,ended:true,result:{type:'win'}}]});
+    const preview=board(action(2,'preview'),{rooms:[...searching.rooms,{id:parent,ended:false},{id:room,parentId:parent,ended:false}]});
+    const oldRoom='battle-gen9championsvgc2026regmcbo3-098';
+    const distractor=mode==='prior-parent'?{...action(1,'preview'),parentId:previous}:
+      mode==='prior-child-metadata'?{...action(1,'preview'),room:oldRoom,parentId:undefined}:
+      mode==='prior-parent-room'?{...action(1,'ready'),room:previous,parentId:undefined}:
+      {...action(1,'preview'),...(mode==='unactionable'?{actionable:false}:{submissionStatus:mode==='sent'?'sent':'uncertain'})};
+    const result=await startNext({q:{id:'normal-search-'+mode,confirmed:true,postSendWaitMs:55000},now:()=>time,
+      call:async(name,args,options)=>{
+        calls.push({name,args,timeoutMs:options.timeoutMs});
+        if(name==='battle_status')return {ok:true,result:searching};
+        if(name==='battle_start')return {ok:true,result:{status:'sent-not-acknowledged'}};
+        if(name==='battle_turn_status')return mode==='immediate'?preview:{...searching,
+          rooms:[...searching.rooms,{id:oldRoom,parentId:previous,ended:true}],
+          actions:mode==='opponent-board-only'?[]:[distractor],
+          boards:mode==='opponent-board-only'?[{room:'battle-unrelated-observer',ownSide:null}]:[]};
+        assert.equal(name,'battle_wait');waits++;time+=100;return preview;
+      }});
+    assert.equal(result.next.reason,'fresh-action',mode);
+    assert.equal(result.next.state.actions[0].token,'token-2',mode);
+    assert.equal(waits,mode==='immediate'?0:1,mode);
+    assert.equal(calls.filter(c=>c.name==='battle_start').length,1,mode);
+  }
+});
+
+test('start-next optional read window never extends refused or uncertain search recovery',async()=>{
+  for(const mode of ['refused','uncertain','expired-uncertain']) {
+    let time=1000;const calls=[];
+    const result=await startNext({q:{id:'no-repeat-'+mode,confirmed:true,postSendWaitMs:55000},now:()=>time,
+      call:async(name,args,options)=>{
+        calls.push({name,args,timeoutMs:options.timeoutMs});
+        if(name==='battle_status')return {ok:true,result:{rooms:[]}};
+        if(name==='battle_start') {
+          if(mode==='refused')return {ok:false,error:'search refused',recovery:{state:board(null)}};
+          time+=mode==='expired-uncertain'?20000:19000;throw Error('search outcome unknown');
+        }
+        assert.equal(name,'battle_turn_status');return board(null);
+      }});
+    assert.equal(calls.filter(c=>c.name==='battle_start').length,1,mode);
+    assert.equal(calls.filter(c=>c.name==='battle_wait').length,0,mode);
+    if(mode==='refused')assert.equal(result.next.reason,'search-rejected');
+    else {assert.equal(result.recovery.outcome,'mutation-uncertain');assert.equal(result.recovery.retry,false);}
+    if(mode==='uncertain')assert.equal(calls.at(-1).timeoutMs,1000);
+    if(mode==='expired-uncertain')assert.deepEqual(calls.map(c=>c.name),['battle_status','battle_start']);
+  }
+});
+
+test('start-next opt-in wait retains one 55 s absolute read cap without hot polling or another search',async()=>{
+  for(const mode of ['idle','immediate-unchanged','read-error']) {
+    let time=1000,waits=0;const calls=[];
+    const searching=board(null,{boards:[],search:{searching:['fixture'],games:null}});
+    const result=await startNext({q:{id:'bounded-search-'+mode,confirmed:true,postSendWaitMs:55000},now:()=>time,
+      call:async(name,args,options)=>{
+        calls.push({name,timeoutMs:options.timeoutMs});
+        if(name==='battle_status')return {rooms:[]};
+        if(name==='battle_start')return {ok:true,result:{status:'sent-not-acknowledged'}};
+        if(name==='battle_turn_status')return searching;
+        waits++;
+        if(mode==='read-error')throw Error('read unavailable');
+        if(mode==='idle')time+=options.timeoutMs;
+        return searching;
+      }});
+    assert.equal(result.next.reason,mode==='read-error'?'read-unavailable':'bounded-wait-ended');
+    assert.equal(time-1000,mode==='idle'?55000:0);
+    assert.equal(waits,mode==='idle'?3:1);
+    assert.equal(calls.filter(c=>c.name==='battle_start').length,1);
+    assert(calls.every(c=>c.timeoutMs<=20000));
+  }
+});
+
+test('start-next rejects invalid optional budgets before any I/O and preserves the original dispatch budget',async()=>{
+  for(const postSendWaitMs of [0,19999,55001,Infinity,1.5])await assert.rejects(startNext({
+    q:{id:'invalid-search-budget',confirmed:true,postSendWaitMs},call:async()=>{throw Error('No I/O');}}),/postSendWaitMs/);
+  let time=1000;const calls=[];
+  const result=await startNext({q:{id:'expired-preread',confirmed:true,postSendWaitMs:55000},now:()=>time,
+    call:async(name,args,options)=>{calls.push({name,timeoutMs:options.timeoutMs});time+=20000;return {rooms:[]};}});
+  assert.deepEqual(calls,[{name:'battle_status',timeoutMs:20000}]);
+  assert.equal(result.recovery.outcome,'not-sent');
 });

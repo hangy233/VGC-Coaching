@@ -1,76 +1,70 @@
-# Agent startup with any MCP host
+# Agent startup
 
-The tools are model-independent. Your agent host must launch the local MCP stdio server, expose its tool schemas and results to the model, and load the coaching instructions below. A model change alone does not require server changes. Host-specific skill discovery, project rules and UI metadata are separate from MCP.
+The local MCP server supports analysis, calculations and reports. Automated live decisions use the supported Codex CLI workflow, with the official CLI's ChatGPT sign-in and no API-key fallback. See [installation](../README.md#install-and-connect), [CLI setup](../isolated/README.md) and [architecture](ARCHITECTURE.md).
 
-The server advertises short model-neutral instructions during MCP initialization. Hosts differ in how they present those instructions; use the explicit startup block below when needed, and verify that the agent reads the complete required guidance.
+## Connect MCP
 
-## Copyable startup instructions
-
-Add this block to your host's project instructions or initial agent prompt. It points to the complete workflow rather than replacing it:
-
-```text
-Use this checkout's VGC Coaching MCP. Preserve the user's scope; advice, credentials and unused allowance do not authorize battles or roster changes. Read current relevant guidance with battle_skill_read (teambuilding or matchups), including required references in full. Analyze the exact team version through filtered team_metrics_agent_report, then focused team_metrics_game_evidence; verify cached sets, freshness, exclusions and unknowns. Use actual MCP calculate_damage and calculate_speed for numerical checks; label unsupported states. For authorized live play, follow the full BO3 cycle, stage/send legal paired choices before optional analysis, and respect observed deadlines. After every set, preserve evidence, review decisions/control/variance, validate a lesson or justified no-change, sync/read changed guidance, save/verify the review checkpoint, and inspect preflight before another authorized search. These checks do not prove tactical judgment. Read docs/AGENT-STARTUP.md for setup, receipts, editing and shutdown details.
-```
-
-## Configure the host
-
-Build the checkout as described in the [README](../README.md#install-and-connect), then adapt this example to your host's MCP configuration:
+Build the checkout and configure your MCP host to launch its stdio server:
 
 ```json
 {
   "mcpServers": {
     "vgc-coaching": {
       "command": "node",
-      "args": ["/absolute/path/to/VGC-Coaching/dist/index.js"],
-      "env": {
-        "VGC_COACHING_SKILLS_ROOT": "/absolute/path/to/installed-agent-skills"
-      }
+      "args": ["/absolute/path/to/VGC-Coaching/dist/index.js"]
     }
   }
 }
 ```
 
-The optional `VGC_COACHING_SKILLS_ROOT` is an absolute path to the **parent** containing `champions-mc-matchups/` and `champions-mc-teambuilding/`. Set it in the trusted server-start environment, then restart the MCP connection to adopt a change. Without it, the target remains `$CODEX_HOME/skills`, or `~/.codex/skills` when `CODEX_HOME` is unset. The installed folders must be separate from the repository's maintained `skills/` folders. MCP callers cannot choose an arbitrary installation target.
+Replace the path with this checkout. Analysis needs no Showdown login. Host project rules and skill discovery are separate from MCP; do not assume a host automatically reads repository instructions or skill metadata.
 
-Install or sync the complete reviewed folders, including references and metadata. A host can read guidance through MCP even if it does not natively discover these folders; the configured installation is also the copy checked by the review workflow. Configure the host's project instructions to follow this guide. Do not assume it automatically loads `AGENTS.md`, `agents/openai.yaml`, or another application's skill conventions.
+The optional trusted startup environment setting `VGC_COACHING_SKILLS_ROOT` selects the absolute parent of installed `champions-mc-matchups/` and `champions-mc-teambuilding/` folders. Otherwise the standard Codex skill location is used. Keep installed copies separate from maintained repository sources. Reload MCP after rebuilding or changing its environment.
 
-Live controls use an OS-local bridge to the existing terminal-owned battle client. The MCP process needs access to the same checkout and local session; this is not a remotely hosted battle service. Windows saved login is optional and platform-specific. See [client setup](../showdown/README.md); an analysis or replay-review request needs no login.
+## Read guidance and establish scope
 
-## Choose the task's scope and read guidance
-
-| Task | Guidance |
+| Task | Maintained guidance |
 | --- | --- |
-| Build, audit or revise a team | `battle_skill_read({"skill":"champions-mc-teambuilding"})` |
-| Preview, paired decisions or replay review with an existing team | `battle_skill_read({"skill":"champions-mc-matchups"})` |
-| Authorized live M-C BO3s | The matchup skill, its full required BO3 cycle, and the [agent battle workflow](../showdown/AGENT-WORKFLOW.md) |
+| Build, audit or revise a roster | [Team building](../skills/champions-mc-teambuilding/SKILL.md) |
+| Preview, paired decisions or replay review | [Matchups](../skills/champions-mc-matchups/SKILL.md) |
+| Authorized BO3 play | Matchups, its complete [BO3 cycle](../skills/champions-mc-matchups/references/headless-battle-cycle.md), and the [battle workflow](../showdown/AGENT-WORKFLOW.md) |
 
-Read the returned current instructions and their required references in full, including rules/calculator guidance and the live cycle where applicable. A skill name, old summary or truncated result is not complete guidance. If the host truncates delivery, obtain the complete required files through its file-reading facilities and retain the actual tool receipt for live review.
+Use `battle_skill_status`, inspect reviewed sync differences, apply `battle_skill_sync` only when authorized, then call `battle_skill_read`. Read every required returned file completely. A file list, old summary or truncated display is insufficient. Receipts are private, content-bound and process-bound; use a fresh read after source changes, MCP restart or expiry.
 
-Before live play, use `battle_skill_status` to check repository/installed hashes. Resolve reviewed differences through `battle_skill_sync` (inspect its default dry run before applying), then call `battle_skill_read` again. Its read receipt is bound to the current content and MCP process and expires after 60 minutes. Use a fresh receipt after restarting MCP or changing guidance.
+The manager prepares the fixed team, battle allowance and compatible genuine saved-position qualification input. The battle model owns tactics and actual MCP research; the runner owns mechanical delivery and execution. Advice, stored credentials and successful qualification grant no extra search, roster change or replay publication.
 
-Advice, report access and saved credentials grant no additional permission to change a roster, publish replays or start battles. Carry forward the user's actual scope and remaining battle allowance.
+## Analysis and replay review
 
-## Analyze the exact team and relevant evidence
+1. Identify the exact immutable version with `team_metrics_list` and `team_metrics_agent_report`. Check cached sets, filters, cutoff, warnings and included/excluded counts.
+2. Read relevant `team_metrics_game_evidence` and available open sheets, submitted choices and observed execution. Missing reserves and investments remain unknown.
+3. Use actual MCP damage/Speed tools. Native Champions uses `gen: 0`, damage `evs` and Speed `statPoints`, each with `hp`, `atk`, `def`, `spa`, `spd`, `spe`. Validate the 66-point total and 32-point per-stat limits. No mental or direct-engine substitute establishes a numerical result.
+4. Use [simulation](SIMULATOR.md) for a material unresolved paired sequence. Retain assumptions and source receipts; a finite conditional sample is not a guarantee.
+5. Separate a local hypothetical improvement from a different game result. An approved roster revision is a new version, not an edit to past evidence.
 
-1. Use `team_metrics_list` to identify the exact team version. Read `team_metrics_agent_report`, verify its cached full sets, filters, cutoff, refresh warnings and included/excluded counts. Keep changed versions separate.
-2. Follow supporting game IDs with `team_metrics_game_evidence`, preferably for the relevant turn range. Read available open sheets, selections and decision observations. Missing reserves or opposing investments remain unknown; agent notes describe intent rather than proving execution.
-3. Use actual MCP `calculate_damage` and `calculate_speed` for numerical claims. In Champions mode use `gen: 0`, native points in damage `evs` and Speed `statPoints`, and explicit current forms/abilities and supported field state. Do not substitute mental arithmetic or a direct calculator. Leave unsupported conditions unverified.
-4. Cite observed opportunities, plausible paired responses and lost coverage when assessing a revision. A local calculated improvement does not establish that an alternate team would win the game. Propose or save changes within the user's scope; register accepted variants separately for later comparison.
+Optional `evidenceContext` retains calculator inputs/results for later review. The live host binds it automatically. Report details and definitions are in [metrics](../metrics/README.md).
 
-Optional `evidenceContext` on calculator calls retains actual inputs/results for notes and reviews. See [metrics definitions and agent reports](../metrics/README.md#reading-reports-as-an-agent) and the maintained skill's rules reference for schemas and limitations.
+## Live admission
 
-## Run authorized battles and preserve lessons
+Use the public [CLI workflow](../isolated/README.md), not a separate chat-authored turn loop. Live mode requires:
 
-Start or reuse the terminal client only within the user's authorization. Inspect its loaded capabilities, claim exclusive control, configure deadline protection while idle and run `battle_preflight` before a separate `battle_start`. Stage and submit complete legal paired choices promptly; do optional research and notes after protecting the current action deadline. No strategy is generated by the client.
+- Explicit account/team/one-set authorization and an owned manual-ready client.
+- A manager-prepared compatible bundle of complete genuine saved requests. A new checkout is immediately useful for analysis; it does not fabricate live qualification fixtures.
+- Actual selected-model generation, model-requested MCP and material simulation/range checks, retained-session continuity and fresh-game reset under original clocks.
+- Same-process qualified provider receipts. A saved JSON report, authentication check or small generation probe is not admission.
+- Loaded source/schema/policy verification, synchronized guidance, prior native review and current `battle_preflight` before search.
 
-After **every official BO3**, including the last set or a forfeit:
+Each game begins a fresh CLI thread with the full verified matchup folder. The model receives eight read-only battle research tools; host-only state/control fields stay private. Current and frozen work share three calculator invocations and one simulation trajectory per turn. Live spread inference is cache-only, preserving capacity for model-selected numerical questions.
 
-1. Verify the official parent and expected children. Preserve authorized replays, sync metrics and read the exact team's new evidence and wider history.
-2. Review successful plans and mistakes. Separate team limitations, piloting, control failures and variance; distinguish chosen, sent, accepted, executed and defaulted actions.
-3. Validate a reusable lesson against relevant scenarios and a counterexample, or record a supported no-change reason. Edit maintained source guidance only when warranted, then sync and read changed guidance.
-4. Save the structured review with `battle_review_save` and verify `battle_review_status`, using the current process's read receipt and actual calculator references where relevant. Complete bounded retention and inspect preflight before the next authorized search.
-5. At the batch boundary, finish preservation/review/retention, call `battle_stop` and verify shutdown unless the user has requested keeping the client open.
+Keep complete current facts and guidance within the 8 MiB packet bound while respecting the model's separate token window. On attention, drain the same owner's stream and use its prepared recovery contract; never retry an uncertain send or invent a clock extension.
 
-The tools check recorded evidence and readiness; they do not prove tactical judgment or enforce the complete review workflow inside `battle_start`. A source update does not update a running client.
+## Complete the cycle
 
-Reflection that changes the skill needs ordinary file-edit access to the maintained repository folders; the MCP sync tool installs reviewed content but does not edit source. An MCP-only host can read evidence and save a justified no-change review, but cannot claim an unwritten lesson was installed. Keep private match details, credentials and replay access links out of shared guidance. Follow the [required BO3 cycle](../skills/champions-mc-matchups/references/headless-battle-cycle.md) for complete review, adoption and cleanup requirements.
+After every official BO3, including a win, forfeit and final set:
+
+1. Verify the exact parent/children and idle state; preserve retrieval-verified replays and flush metrics.
+2. Review actual decisions, positive plans, control failures and variance. Separate selected, sent, accepted, executed and defaulted actions.
+3. Validate a supported reusable change with a counterexample, or record a specific no-change result. Keep team plans private; sync/read reviewed guidance changes.
+4. Save with `battle_review_save`, verify `battle_review_status`, and complete bounded retention. Native checks validate evidence/adoption, not tactical correctness.
+5. At batch end, stop the owned client normally and verify exit. Recheck review status after shutdown for late evidence drift before another authorized search.
+
+The manager handles skill/source edits outside the live decision path. Unresolved control-compromising failures block another batch until repaired or covered by a validated mitigation. Offline fixes require fresh qualification and loaded adoption at a normal authorized startup; they do not justify an extra battle or login.
