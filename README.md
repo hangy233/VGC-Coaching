@@ -230,7 +230,7 @@ Rules use a deliberately pinned [Showdown snapshot](https://github.com/smogon/po
 Review dependency/rule updates and both package files together.
 
 Read [architecture](docs/ARCHITECTURE.md) for current responsibilities and data
-flow, [engineering history](docs/learnings/README.md) for the problems behind
+flow, [engineering history](docs/learnings/WHY-THE-CLI.md) for the problems behind
 the design, and [context efficiency](docs/TOKEN-EFFICIENCY.md) for measurement
 limits. Team analytics draw inspiration from
 [PASRS](https://devoncorp.press/resources/the-release-of-pasrs-7-0). This independent
