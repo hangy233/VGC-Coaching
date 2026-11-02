@@ -14,7 +14,7 @@ import {createHash} from 'node:crypto';
 import {unpackCalculationPayload} from '../workflow/calculation-archive.mjs';
 
 const context={source:{sessionId:'test-session',teamId:'a'.repeat(64),room:'battle-gen9championsvgc2026regmcbo3-1',rqid:5,token:'b'.repeat(64)},analysis:'current'};
-function fixture({exists=true,idle=false,boundContext=context}={}){
+function fixture({exists=true,idle=false,boundContext=context,idleState={},onStatus}={}){
   const registrations=new Map(),calls=[],settled=[],cache=new Map();let numeric=0,simulation=0,id=0;
   const client=createResearchBudgetToolClient(createPlanningToolClient({registerTool:(name,config,handler)=>registrations.set(name,{config,handler}),tool:(name,shape,handler)=>registrations.set(name,{shape,handler})}),{
     workspace:'unused',descriptorExists:()=>exists,
@@ -22,7 +22,8 @@ function fixture({exists=true,idle=false,boundContext=context}={}){
       calls.push(structuredClone(command));
       const {category,requestSha256}=command,researchContext={source:command.source,analysis:command.analysis,...(command.freezeId?{freezeId:command.freezeId}:{})};
       const budget=()=>({calculatorsUsed:numeric,calculatorsRemaining:3-numeric,simulationsUsed:simulation,simulationsRemaining:1-simulation});
-      if(command.op==='status')return {ok:true,result:{awaitingSet:!idle,searchPending:!idle,search:{searching:[],games:idle?{}:{parent:'battle'}},rooms:[]}};
+      if(command.op==='status'){onStatus?.();return {ok:true,result:{connected:true,authenticated:true,stopped:false,awaitingSet:!idle,searchPending:!idle,switchingTeam:false,savingReplays:false,
+        search:{searching:[],games:idle?{}:{parent:'battle'}},actions:[],controlPolicy:{pending:[],observationFault:false,disposed:false},rooms:[],...idleState}};}
       assert.deepEqual(researchContext,boundContext);
       if(command.op==='research-reserve'){
         if(cache.has(requestSha256))return {ok:true,result:{status:'reused',result:cache.get(requestSha256),budget:budget()}};
@@ -68,6 +69,44 @@ test('active unbound callbacks refuse; absent descriptor and official idle expli
     assert.equal(backend,settings.exists===true&&!settings.idle?0:1);assert.equal(result.isError===true,backend===0);assert.equal(f.counts().numeric,0);
   }
 });
+
+test('official post-set games:null and an empty known map permit unbound offline work without spending live capacity',async()=>{
+  for(const games of [null,{}]){
+    const f=fixture({idle:true,idleState:{search:{searching:[],games},rooms:[{ended:true}]}});let backend=0;
+    f.client.registerTool('calculate_speed',{inputSchema:scalar},async()=>{backend++;return {structuredContent:{offlineOnly:true}};});
+    const result=await f.client.callTool('calculate_speed',{gen:0});
+    assert.equal(result.structuredContent.offlineOnly,true);assert.equal(backend,1);assert.deepEqual(f.calls.map(row=>row.op),['status']);
+    assert.deepEqual(f.counts(),{numeric:0,simulation:0});assert.equal(result.researchBudget,undefined);
+  }
+});
+
+test('null games cannot hide queued, active, disconnected, pending or unknown native state',async()=>{
+  const inactive={search:{searching:[],games:null},rooms:[{ended:true}]};
+  for(const changed of [
+    {search:{searching:['queued-format'],games:null}}, {search:{searching:[],games:{parent:'child'}}},
+    {search:{searching:[]}}, {search:{searching:[],games:[]}}, {search:{searching:[],games:'unknown'}},
+    {connected:false}, {connected:undefined}, {authenticated:false}, {stopped:true},
+    {awaitingSet:true}, {searchPending:true}, {switchingTeam:true}, {savingReplays:true},
+    {actions:[{kind:'ready'}]}, {actions:undefined}, {rooms:[{ended:false}]}, {rooms:[{}]}, {rooms:undefined},
+    {controlPolicy:{pending:[{attempted:true}],observationFault:false,disposed:false}}, {controlPolicy:{pending:[],observationFault:true,disposed:false}},
+    {controlPolicy:{pending:[],observationFault:false,disposed:true}},
+    {controlPolicy:undefined},
+  ]){
+    const f=fixture({idle:true,idleState:{...inactive,...changed}});let backend=0;
+    f.client.registerTool('calculate_speed',{inputSchema:scalar},async()=>{backend++;return {structuredContent:{}};});
+    const result=await f.client.callTool('calculate_speed',{gen:0});
+    assert.equal(result.isError,true,JSON.stringify(changed));assert.equal(backend,0,JSON.stringify(changed));
+    assert.deepEqual(f.counts(),{numeric:0,simulation:0});assert.deepEqual(f.calls.map(row=>row.op),['status']);
+  }
+});
+
+test('cancellation during the authoritative idle read cannot dispatch an unbound backend',async()=>{
+  const controller=new AbortController(),f=fixture({idle:true,idleState:{search:{searching:[],games:null}},onStatus:()=>controller.abort()});let backend=0;
+  f.client.registerTool('calculate_speed',{inputSchema:scalar},async()=>{backend++;return {structuredContent:{}};});
+  const result=await f.registrations.get('calculate_speed').handler({gen:0},{signal:controller.signal});
+  assert.equal(result.isError,true);assert.match(result.structuredContent.reason,/cancelled/u);assert.equal(backend,0);
+  assert.deepEqual(f.calls.map(row=>row.op),['status']);assert.deepEqual(f.counts(),{numeric:0,simulation:0});
+});
 test('an active direct SDK nonnative generation refuses before charging while explicit offline legacy stays usable',async()=>{
   for(const exists of [true,false]){
     const f=fixture({exists});let backend=0;f.client.registerTool('calculate_damage',{inputSchema:z.strictObject({gen:z.number()})},async()=>{backend++;return {structuredContent:{gen:9}};});
@@ -106,8 +145,9 @@ test('actual native history, facade, registered callback and native session quot
   }finally{f.close();}
 });
 
-const actualG3T4File=new URL('../cache/team-metrics/calculations/7ca4f5e27d98d9b4116c3b02bc1c6f23b0ff0ac2507b9b38f66d2bee05691d4b--4e659c22-d5c6-44ce-aeb0-8614b27a0815.json',import.meta.url);
-test('retained G3T4 history no longer spends the model three-call budget before direct questions',{skip:!existsSync(actualG3T4File)},async()=>{
+// Optional private evidence stays outside the published source and test fixtures.
+const actualG3T4File=process.env.VGC_PRIVATE_RESEARCH_REGRESSION;
+test('retained G3T4 history no longer spends the model three-call budget before direct questions',{skip:!actualG3T4File||!existsSync(actualG3T4File)},async()=>{
   const bytes=readFileSync(actualG3T4File);assert.equal(createHash('sha256').update(bytes).digest('hex'),'254def853ceee593720edf6df37ae73ce079c2fbc7042563989eb09c39d5bcd3');
   const row=JSON.parse(bytes),{input,result,payloadArchive}=row,saved=unpackCalculationPayload({tool:'simulate_choices',...(payloadArchive?{payloadArchive}:{input,result})});
   const oldTickets=new Set(Object.values(saved.input.candidatePools).flatMap(pool=>pool.records??[]).map(record=>record.nativeReply?.researchBudget).filter(b=>b?.status==='completed').map(b=>b.reservationId));

@@ -15,6 +15,10 @@ export function applyKnownNativeHistory(built,assembly){
   for(const side of position.sides){const proof=history.sides?.[side.id];
     if(proof?.totalFainted!==undefined){side.nativeState??={};put(side.nativeState,'totalFainted',proof.totalFainted,side.id+'.nativeState.totalFainted',v=>Number.isInteger(v)&&v>=0&&v<=100);}
     for(const p of side.pokemon){const row=history.pokemon?.[p.id];if(!row)continue;p.nativeState??={};
+      if(Object.hasOwn(row,'lastMove')){
+        need(history.completeHistory===true,'lastMove requires complete source history');
+        p.lifecycle??={};put(p.lifecycle,'lastMove',row.lastMove,`${side.id}.${p.id}.lifecycle.lastMove`,v=>v===false||typeof v==='string'&&v.length>0&&v.length<=80);
+      }
       for(const key of ['timesAttacked','lastMoveTargetLoc','moveLastTurnResult'])if(Object.hasOwn(row,key)){
         const valid=key==='moveLastTurnResult'?v=>typeof v==='boolean'||v===null:key==='lastMoveTargetLoc'?v=>Number.isInteger(v)&&v>=-4&&v<=4:v=>Number.isInteger(v)&&v>=0&&v<=10000;
         put(p.nativeState,key,row[key],`${side.id}.${p.id}.nativeState.${key}`,valid);

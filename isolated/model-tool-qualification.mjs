@@ -259,12 +259,13 @@ export async function qualifyModelTools({provider,requests,nativeClient,connect=
   verifyIsolatedPolicySource();
   const prepared=savedRequests(requests);base.teamId=prepared[0].identity.teamId;
   const actualSdk=nativeClient===undefined&&connect===connectOfflineNumericClient&&now===Date.now;
-  const rows=[],nativeJournal=[];let connection,client=nativeClient,closed=false,providerReset=false,compactCatalogAdvertised=false,rangeCatalogAdvertised=false;
+  const rows=[],nativeJournal=[],offlineResearchCases=[];let connection,client=nativeClient,closed=false,providerReset=false,compactCatalogAdvertised=false,rangeCatalogAdvertised=false;
   const emit=event=>{try{onEvent(clone(event));}catch{/* Observation cannot alter a decision or deadline. */}};
   await provider.reset();
   try{
     const auth=await provider.preflight();need(auth?.authMode==='chatgpt'&&(auth.contextMode??'session')==='session','Actual selected subscription session transport required.');
-    if(!client){connection=await connect();client=connection?.client;}
+    if(!client){connection=await connect({qualificationOnly:true});client=connection?.client;}
+    if(actualSdk)need(connection?.qualificationAuthority?.mode==='child-local-saved-research'&&typeof connection.registerQualificationCase==='function','Actual qualification requires its isolated saved-source research authority.');
     need(client&&typeof client.callTool==='function'&&typeof client.listTools==='function','Owned native MCP connection required.');
     // Archive/readiness checks are preparation before each original fresh local
     // clock. A failed check leaves observed simulation unavailable.
@@ -287,6 +288,12 @@ export async function qualifyModelTools({provider,requests,nativeClient,connect=
       emit({type:'case-start',caseId:row.caseId,kind:row.action.kind,startedAt,deadlineAt});
       timer=setTimeout(()=>controller.abort(),CLOCK_MS);
       try{
+        if(connection?.registerQualificationCase){
+          const binding=row.context.binding,source=Object.fromEntries(['sessionId','teamId','room','rqid','token'].map(key=>[key,binding[key]]));
+          const registration=await connection.registerQualificationCase({caseId:randomUUID(),contexts:[{source,analysis:'current'}],turn:row.state.boards.find(board=>board.room===row.action.room).turn,
+            kind:row.action.kind,sourceSha256:row.sourceSha256,factsSha256:digest({boardHash:binding.boardHash,legalHash:binding.legalHash}),deadlineAt});
+          offlineResearchCases.push(clone(registration));record.offlineResearchCase=clone(registration);
+        }
         local=await localOperator(row,{client,actualSdk,deadlineAt,startedAt,now,nativeJournal,allowExplicitOffline});
         compactCatalogAdvertised||=local.catalog.tools.some(tool=>tool.name==='simulate_choices');
         rangeCatalogAdvertised||=local.catalog.tools.some(tool=>tool.name==='calculate_damage_range');
@@ -356,7 +363,7 @@ export async function qualifyModelTools({provider,requests,nativeClient,connect=
     compactCatalogAdvertised,compactChoiceSimulationQualified,compactQualificationReceipts:prepared.flatMap(row=>row.compactReceipts.map(receipt=>({caseId:row.caseId,...receipt}))),joinedCompactQualificationReceipts:joinedCompact,
     rangeCatalogAdvertised,rangeWorkflowQualified,rangeQualificationChecks:rangeChecks,joinedRangeQualificationReceipts:joinedRange,
     freshGameQualified:technical&&continuity,currentMatchupGuidanceVerified:true,skillVersion:ISOLATED_POLICY_SOURCE.skillVersion,skillSha256:ISOLATED_POLICY_SOURCE.skillSha256,
-    rows,nativeJournal,closed,providerReset,actualSdkConnection:actualSdk,provenance:'manager-supplied-complete-frozen-native-requests',
+    rows,nativeJournal,closed,providerReset,actualSdkConnection:actualSdk,offlineResearchAuthority:connection?.qualificationAuthority?clone(connection.qualificationAuthority):null,offlineResearchCases,liveQuotaExercised:false,provenance:'manager-supplied-complete-frozen-native-requests',
     reason:qualified?null:'actual-model-tool-workflow-evidence-incomplete',modelCalls:rows.length,completedActualMcpCalls:nativeJournal.filter(entry=>entry.nativeSdkReceipt&&entry.outcome==='completed').map(entry=>entry.name),
     simulationQualification:compactCatalogAdvertised?'The single-outcome compact material probe requires one model-authored own/opposing pair through the maintained facade, verified saved native source and genuine history, with its one native trajectory input/result joined to the actual owned SDK and the same model command. Historical evidence grants no current choice authority or live budget reservation.':'Complete model-authored explicit hypothetical simulations establish that paired tool capability only. Full workflow admission additionally requires a branded audited saved-observed reconstruction joined to the same actual owned SDK input/result and material request; no current battle descriptor or guessed state is used.'};
   if(qualified)receipts.set(result,selected);

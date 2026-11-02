@@ -95,7 +95,7 @@ before the next authorized queue and follow the play → conclude → update cyc
 
 - **Shared learning between batches:** Give repeated unsafe entries/stat-drop mistakes despite existing rules. Tighten the shared trigger/check, keep evidence/team plans private, test failure and justified trade, and verify whole-folder sync/read before another batch. Contrast no relevant opportunity/supported clarification: retain specific no-change and untested matchup. Private review or changed hash proves no next-operator application.
 
-- **Learn Speed without inventing a spread:** Give an ordinary same-priority foe acting before our known set, then another known ally comparison on unchanged conditions. Retain both, narrow numerical hypotheses with MCP, keep ties/exact investment unknown, and carry through handoff/game two of the locked BO3. Contrast Protect, unexecuted fainted-user move, forced order and weather/control changing before resolution: reject invalid constraints, retain conditional evidence/re-evaluate order. Opposite orders can tie; repeated orders exclude no tie. No receipt means no verified bound; inference must not delay protection.
+- **Learn Speed without inventing a spread:** Give an ordinary same-priority foe acting before our known set, then another known ally comparison on unchanged conditions. Retain both, narrow numerical hypotheses with MCP, keep ties/exact investment unknown, and carry through handoff/game two of the locked BO3. Contrast Protect, unexecuted fainted-user move, forced order and weather/control changing before resolution: reject invalid constraints, retain conditional evidence/re-evaluate order. Opposite orders can tie; repeated orders exclude no tie. No receipt means no verified bound; inference must not delay protection. For a comparison with mirror species or multiple actors sharing a generic hypothesis label, distinguish every entry by actor and side/slot, changing labels rather than snapshots. Contrast an ordinary comparison with already unique labels: proceed once without extra research; labels establish no Speed order.
 
 - **Batch patterns and follow-through:** Give repeatedly selected setup in a prior batch, then a winning batch with the species registered once but unselected: weakness remains untested. Separate controls, preserve actual winning sequences/conditions. Then give an eligible preservation opportunity, documented application, repeated miss and card counterexample: classify separately, improve the trigger rather than duplicate the rule, and accept reasonable deviation. Cross-set citations belong in final-checkpoint validation, not another parent's decision evidence.
 
@@ -112,6 +112,15 @@ before the next authorized queue and follow the play → conclude → update cyc
 - **Draining-attack denial:** Give Leech Life facing earlier affecting Psychic Noise, ally able to Protect/attack. Compare non-drain/protected positioning and useful partner action; resistance does not erase denial. Contrast Noise into partner, blocked Noise or Noise after drain: permit justified Leech Life. Track existing Heal Block/expiry rather than globally banning the move.
 
 - **Break the support engine:** Give screens plus boosting/draining/Protect attacker. Contrast setter removal denying renewal but leaving immediate boost, useful paired attacker removal, and contained threat where preservation through screen expiry finishes. Name removal/credible opposing pair/follow-up and change branches. Setter KO leaves screens; neither automatic doubling nor recoverable connected chip proves progress. Numerical support must model relevant state.
+
+- **Check the answer before more cleanup:** Give a plan removing support while a
+  surviving attacker can boost or recover, with a selected answer needing entry
+  or a Choice reset. Identify that answer's first effective attack and material
+  payoff before spending more turns or the answer itself; a late benchmark does
+  not validate earlier "stronger pressure later" claims. Contrast support removal
+  that stops an urgent enabling action and leaves a concrete converting answer,
+  contained expiry, or a necessary trade/gamble. Permit those lines without a
+  fixed target, new research quota, universal survival or an invented alternate win.
 
 - **Convert healing denial:** Give our denial before a draining attack plus useful partner progress. Contrast blocked application/Protect/immunity, expiry before finish and non-draining coverage. Track application/order/lifetime and converting attack/entry; blocked drain is not executed damage, repetition is no permanent lock/win. Stalling must contain setup/partner progress through expiry. Add copied attacker, active-block rehit and fresh application before provider exits: track identity/expiry; rehit does not renew, fresh late denial may cover next entry. Contrast protected, cleared/expired effect and necessary defense; no alternate win without deliverable pair.
 
@@ -139,7 +148,7 @@ before the next authorized queue and follow the play → conclude → update cyc
 
 - **Actor-specific weather:** Give Mega Sol Mega Meganium Weather Ball/Solar Beam in actual rain plus ordinary rain attacker. Check effective sun before Grass/Water/Fire-weak entry while rain still governs Politoed Weather Ball/Archaludon Electro Shot. Contrast ordinary Incineroar Fire actually reduced by rain. Do not globalize Mega Sol or invent survival; unsupported MCP state stays unverified.
 
-- **Attribution and uncertainty:** Give accepted selection fainting before action, defaulted Soul, Encore-forced Soul, explicit miss, critical KO and concession before finisher. Classify each, leave unsupported benchmarks open. Numerical alternatives require actual MCP damage/Speed; no direct fallback for unsupported state.
+- **Attribution and uncertainty:** Give accepted selection fainting before action, defaulted Soul, Encore-forced Soul, explicit miss, critical KO and concession before finisher. Classify each, leave unsupported benchmarks open. When a private authored Psychic is retained before a pre-action faint, report selected Psychic and unexecuted; never substitute Trick Room from an earlier plan or game. With no authored command, selection remains unknown. Numerical alternatives require actual MCP damage/Speed; no direct fallback for unsupported state.
 
 - **Batch control repair:** Give winning batch with authored watchdog, generated unprotected replacement after restoration, reproducible stale-token bug and external disconnect. Inventory every case; separate runtime/workflow/service/unknown, repair bug with failing/normal tests, check recovery and external mitigation/unresolved blocker. Contrast normal no-ack waiting: no invented failure/resend/forfeit. Skill edits/generated legal moves erase no defect/classification. Control risk blocks next batch; pending adoption does not retain ended sign-in/authorize test battle/login; verify at next normal startup before search.
 
@@ -192,6 +201,15 @@ before the next authorized queue and follow the play → conclude → update cyc
 
 Keep these separate from tactical success. Exercise the maintained implementation
 and original deadline; a wording match or fixture alone is not live reliability.
+
+- **Command targets before simulation:** Resolve all four authored move actions,
+  including opposing hypotheses, from actor/slot to name and current command
+  target class immediately before serialization. A side-wide Light Screen omits
+  its chosen target; a targeted Hurricane retains it. Contrast Expanding Force's
+  targeted native menu despite multiple recipients, and Curse changing between
+  self and targeted menus with the user's current typing. Use the fresh menu or
+  explicitly supported conditional state; never infer arity from recipient count,
+  silently rewrite the hypothesis or ban a move after an input refusal.
 
 - **Complete context:** A packet over a preferred display target retains all
   required facts and skill files within the hard cap. A packet or retained thread

@@ -36,6 +36,8 @@ const RUNTIME_MODULES=Object.freeze({
   'planning/order-evidence.mjs':createHash('sha256').update(readFileSync(new URL('../planning/order-evidence.mjs',import.meta.url))).digest('hex'),
   'planning/identity.mjs':createHash('sha256').update(readFileSync(new URL('../planning/identity.mjs',import.meta.url))).digest('hex'),
   'planning/source.mjs':createHash('sha256').update(readFileSync(new URL('../planning/source.mjs',import.meta.url))).digest('hex'),
+  'simulation/observed-position.mjs':createHash('sha256').update(readFileSync(new URL('../simulation/observed-position.mjs',import.meta.url))).digest('hex'),
+  'simulation/registered-identity.mjs':createHash('sha256').update(readFileSync(new URL('../simulation/registered-identity.mjs',import.meta.url))).digest('hex'),
 });
 const LOADED_AT=new Date().toISOString();
 // Only the supervisor callbacks can grant this narrow control fallback. It is

@@ -44,7 +44,7 @@ analysis does not expand the live budget.
 
 ## Required cycle
 
-Cycle revision: **2026-11-01.123**. Before live play and after a handoff read the
+Cycle revision: **2026-11-01.125**. Before live play and after a handoff read the
 complete [BO3 cycle](references/headless-battle-cycle.md), including its
 [search gate](references/headless-battle-cycle.md#before-a-new-search).
 Verify complete-folder status, reviewed sync and content read; previous private
@@ -80,8 +80,11 @@ Lead live advice with the actionable pair and key alternative, not a metagame su
 
 Establish actives, HP, boosts/status, consumed items, actual form/Mega use, selected
 reserves and field/control age. Missing details are not zeros. Moving first
-proves no item; Seed consumption alone proves no ability; a pre-action faint
-reveals no selected move. Open sheets reveal registered six/moves/items/abilities
+proves no item; Seed consumption alone proves no ability. A pre-action faint
+alone reveals no selected move. Use the retained private authored command when
+available, separating selection from its unexecuted outcome; a preview plan,
+earlier request or previous game cannot replace that command. Open sheets reveal
+registered six/moves/items/abilities
 and nature/level only when supplied, not selected four, investments or next
 actions. Empty observed reserves does not mean only two opponents remain.
 

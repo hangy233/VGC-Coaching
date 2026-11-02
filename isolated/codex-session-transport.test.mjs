@@ -482,6 +482,56 @@ test('tool completion must match its call and be observed before the turn can fi
   }
 });
 
+test('quiet and legacy traffic after fast tools cannot manufacture a final or hide its deadline',async t=>{
+  for(const mode of ['timeout','complete','missing-echo']){
+    let responses=0,backends=0;
+    const f=await fixture(t,{onTurn:state=>{
+      requestTool(state,{rpcId:900,callId:'call-native-1'});
+      requestTool(state,{rpcId:901,callId:'call-native-2'});
+    },onResponse:state=>{
+      responses++;
+      if(mode!=='missing-echo')completeTool(state,state.value.result,{callId:state.value.id===900?'call-native-1':'call-native-2'});
+      if(responses!==2)return;
+      for(let i=0;i<5860;i++)state.emit({method:i%2?'codex/event/private_debug':'remoteControl/status/changed',params:{private:'DO_NOT_RETAIN_PRIVATE_PAYLOAD'}});
+      state.emit({method:'item/reasoning/textDelta',params:{threadId:state.threadId,turnId:state.turnId,delta:'DO_NOT_RETAIN_PRIVATE_REASONING'}});
+      if(mode!=='timeout')state.finish();
+    }});
+    await f.transport.preflight();
+    const request=f.request({deadlineAt:Date.now()+800,modelTools:{definitions:nativeDefinitions,call:async()=>{backends++;return {content:[]};}}});
+    let telemetry;
+    if(mode==='complete'){
+      const result=await f.transport.callDecision(request);telemetry=result.telemetry;
+      assert.deepEqual(result.decision,{choice:'protect'});assert.equal(telemetry.sessionTurnCompleted,true);
+      assert(telemetry.modelToolCalls.every(row=>Number.isFinite(row.itemCompletedAt)));
+      assert.equal(telemetry.tokenUsageTurnCompleteAtObservation,false,'the usage snapshot preceded authoritative completion');
+    }else await assert.rejects(f.transport.callDecision(request),error=>{
+      assert.equal(error.code,mode==='timeout'?'deadline_exceeded':'session_tool_incomplete');
+      telemetry=error.telemetry;assert.equal(telemetry.sessionTurnCompleted,false);return true;
+    });
+    assert.equal(backends,2);assert.equal(responses,2);
+    assert.equal(telemetry.cliActivity.counts.legacy,2930);assert.equal(telemetry.cliActivity.counts.quiet,2930);
+    assert.equal(telemetry.cliActivity.counts.toolRequest,2);assert.equal(telemetry.cliActivity.counts.reasoning,1);
+    assert.equal(telemetry.cliActivity.counts.turnCompleted??0,mode==='timeout'?0:1);
+    assert.equal(telemetry.cliActivity.payloadsRetained,false);assert(telemetry.cliActivity.buckets.length<=64);
+    assert(Buffer.byteLength(JSON.stringify(telemetry.cliActivity))<8192);
+    assert(!JSON.stringify(telemetry).includes('DO_NOT_RETAIN'));
+    assert.equal(f.transport.status().active,mode==='complete');
+  }
+});
+
+test('provider error diagnostics retain only recognized category, HTTP status and explicit retry flag',async t=>{
+  const f=await fixture(t,{onTurn:({emit,threadId,turnId})=>emit({method:'error',params:{threadId,turnId,
+    willRetry:true,error:{message:'DO_NOT_RETAIN_PRIVATE_ERROR',additionalDetails:'DO_NOT_RETAIN_DETAILS',codexErrorInfo:{HttpConnectionFailed:{httpStatusCode:429,private:'DO_NOT_RETAIN_SECRET'}}}}})});
+  await f.transport.preflight();await assert.rejects(f.transport.callDecision(f.request()),error=>{
+    assert.equal(error.code,'generation_failed');
+    assert.deepEqual(Object.keys(error.telemetry.cliActivity.providerError).sort(),['at','httpStatus','kind','reportedWillRetry']);
+    assert.equal(error.telemetry.cliActivity.providerError.kind,'HttpConnectionFailed');
+    assert.equal(error.telemetry.cliActivity.providerError.httpStatus,429);
+    assert.equal(error.telemetry.cliActivity.providerError.reportedWillRetry,true);
+    assert(!JSON.stringify(error.telemetry).includes('DO_NOT_RETAIN'));return true;
+  });
+});
+
 test('only allowlisted bounded calculation receipt fields enter tool telemetry',async t=>{
   const ref={id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',sha256:'a'.repeat(64),tool:'calculate_speed',path:'PRIVATE_PATH',private:'PRIVATE_SECRET'};
   const name='calculate_speed',definitions=[{...nativeDefinitions[0],name}];

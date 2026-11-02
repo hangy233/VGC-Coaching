@@ -11,6 +11,7 @@ import {assessOfflineBudget,sha} from './qualification-budget.mjs';
 import {ISOLATED_POLICY_SOURCE,verifyIsolatedPolicySource} from './decision-context.mjs';
 import {runRunner,readRunnerConfiguration} from './runner.mjs';
 import {createOperator} from '../showdown/operator-client.mjs';
+import {createAttentionAlert} from './attention-alert.mjs';
 
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PROFILE=Object.freeze({model:'gpt-6.1-sol',reasoningEffort:'low',serviceTier:'fast',contextMode:'session'});
@@ -73,6 +74,12 @@ export async function launchWorkflow(options,{workspace=ROOT,providerFactory=cre
   run=runRunner,readConfiguration=readRunnerConfiguration,operatorFactory=createOperator,gate=waitManagerGate,input=process.stdin,write=value=>process.stdout.write(JSON.stringify(value)+'\n')}={}){
   if(options.mode==='run')need(input.isTTY===true&&!input.destroyed&&!input.readableEnded,'LAUNCH_INPUT','Live mode requires open interactive input before any provider setup.');
   const source=await inputDocument(workspace,options.requestFile),{document}=source,output=await privateOutput(workspace,options.output,document.teamId);
+  const alert=options.mode==='run'?createAttentionAlert({directory:output.path}):null;
+  const liveWrite=value=>{
+    const saved=alert?.accept(value);
+    if(saved?.preserved===false)write({state:'attention-alert-unavailable',code:saved.code});
+    write(value);
+  };
   const provider=await providerFactory({workspace,...PROFILE,...(options.executable?{executable:options.executable}:{}),artifactDirectory:join(output.path,'cli-transient')});
   let live=false;
   try{
@@ -104,7 +111,8 @@ export async function launchWorkflow(options,{workspace=ROOT,providerFactory=cre
         }} });return {...owned,dispatch:async(query,metadata)=>{
           if(query.op==='start-next'){
             need(!searchReserved,'LAUNCH_SEARCH_RESERVED','The one search was already reserved.');
-            await output.save('startup-adoption.json',{held:true,sourceSha256:pins.sha256,searchDispatched:false,operations:adoption});
+            await output.save('startup-adoption.json',{held:true,sourceSha256:pins.sha256,searchDispatched:false,
+              attentionAlert:{path:relative(workspace,alert.path).replaceAll('\\','/'),prepared:true,automaticActions:false},operations:adoption});
             write({state:'held-ready-awaiting-search',sourceSha256:pins.sha256});await gate('START_SEARCH',{input});
             need(sha(pins)===sha(await sourcePins()),'LAUNCH_SOURCE_CHANGED','Source changed before search.');searchReserved=true;
           }
@@ -118,7 +126,7 @@ export async function launchWorkflow(options,{workspace=ROOT,providerFactory=cre
       // runRunner already publishes bounded, sanitized recovery context. Keep
       // that complete envelope so the same owner can protect/reconcile a live
       // request; a summary would discard its usable command/source contract.
-      write,
+      write:liveWrite,
     };
     const result=await run(['--run','--provider','codex-cli','--model',PROFILE.model,'--reasoning-effort',PROFILE.reasoningEffort,'--codex-context-mode','session','--codex-service-tier','fast','--model-tool-qualification',options.requestFile,'--session',options.session,'--scope',options.scope,...(options.executable?['--codex-executable',options.executable]:[])],runnerOptions);
     await output.save('live-result.json',result);return result;

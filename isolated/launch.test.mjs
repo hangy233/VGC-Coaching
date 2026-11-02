@@ -65,3 +65,15 @@ test('changed source and escaped output refuse without qualifying a copied repor
   const f=await fixture(t);let reads=0;await assert.rejects(launchWorkflow(f.options,{...f.deps,sourcePins:async()=>({sha256:String(++reads).repeat(64)})}),{code:'LAUNCH_SOURCE_CHANGED'});
   const g=await fixture(t);await assert.rejects(launchWorkflow({...g.options,output:resolve(g.workspace,'../outside')},g.deps),{code:'LAUNCH_OUTPUT'});assert.deepEqual(g.events,[]);
 });
+
+test('a first attention cue is durable before a stalled handoff or manager stream read',async t=>{
+  const f=await fixture(t),delivered=[];
+  await launchWorkflow({...f.options,mode:'run',session:'session.json',scope:'scope.json'},{...f.deps,input:{isTTY:true},gate:async()=>{},write:value=>delivered.push(value),run:async(_args,deps)=>{
+    deps.write({state:'controller-attention',code:'deadline_exceeded',detectedAt:1000,runId:'fixture-run',controllerLease:'PRIVATE'});
+    const alarm=JSON.parse(await readFile(join(f.workspace,'cache/new-run/attention-alert.json'),'utf8'));
+    assert.equal(alarm.active,true);assert.equal(alarm.firstDetectedAt,1000);assert.equal(alarm.code,'deadline_exceeded');
+    assert(!JSON.stringify(alarm).includes('PRIVATE'));
+    assert(delivered.some(value=>value.state==='controller-attention'));
+    return {state:'attention-retained'};
+  }});
+});

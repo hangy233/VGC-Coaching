@@ -144,6 +144,13 @@ label assumed opposing spreads. It compares within one priority bracket only
 and does not settle Quick Claw, Quash or other non-Speed ordering effects. If the
 MCP cannot model the relevant state, leave the comparison unverified.
 
+Give each comparison entry a distinct actor-and-side/slot `label`; add a unique
+hypothesis suffix for variants of one actor. Mirror species still need separate
+identities; do not reuse a generic hypothesis label across entries. A duplicate
+label error gives no Speed result and does not refund a reserved call. Already
+unique labels need no extra research or repeated calculation: labels identify
+snapshots, not their numerical order.
+
 ### Infer Speed from observed move order
 
 Use earlier turns to narrow opposing Speed hypotheses, rather than repeatedly

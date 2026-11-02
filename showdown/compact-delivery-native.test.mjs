@@ -49,7 +49,7 @@ test('authored MCP delivery checks distinguish lost Armor Tail from preserved Ar
   const descriptorPath=join(workspace,'cache','showdown-session.json');
   const bridge=await serveLocalSession(session,{descriptorPath});
   const client=new Client({name:'compact-delivery-native-regression',version:'1'},{capabilities:{}});
-  const transport=new StdioClientTransport({command:process.execPath,args:[fixtureServer,workspace]});
+  const transport=new StdioClientTransport({command:process.execPath,args:[fixtureServer,workspace,'--offline-detailed-analysis']});
   let serverPid;
   try{
     await client.connect(transport);serverPid=transport.pid;assert.ok(Number.isInteger(serverPid));
@@ -67,6 +67,23 @@ test('authored MCP delivery checks distinguish lost Armor Tail from preserved Ar
       hypotheses:structuredClone(normalizedHypotheses),branches:[{...structuredClone(command.delivery.branches[0]),ourActions:structuredClone(actions),
         gate:{kind:'delivery',requiredActionsBy:['own0']}}],seeds:structuredClone(command.delivery.seeds)},budgetMs:3500}});
     const call=callFor(command.actions),authored=structuredClone(call.args);
+
+    await t.test('default active-source fixture still refuses unbound and multi-seed research',async()=>{
+      const guarded=new Client({name:'guarded-delivery-native-countercase',version:'1'}),guardTransport=new StdioClientTransport({command:process.execPath,args:[fixtureServer,workspace]});let guardPid;
+      try{
+        await guarded.connect(guardTransport);guardPid=guardTransport.pid;assert.ok(Number.isInteger(guardPid));
+        const {sessionId,teamId,room,rqid,token}=call.args.request.source;
+        for(const [args,reason]of [[call.args,/exact host-bound researchContext/u],[{...call.args,researchContext:{source:{sessionId,teamId,room,rqid,token},analysis:'current'}},/exactly one branch and one seed/u]]){
+          const result=decode(await guarded.callTool({name:call.name,arguments:args}));
+          assert.equal(result.coverage.checkedCandidates,0);assert.equal(result.checkedCandidates[0].status,'refused');
+          assert.match(result.checkedCandidates[0].reason,reason);assert.equal(result.checkedCandidates[0].calculationRef,undefined);
+          assert.deepEqual(result.checkedCandidates[0].branches,[]);
+        }
+      }finally{
+        await guarded.close();assert.equal(guardTransport.pid,null);
+        if(guardPid)assert.throws(()=>process.kill(guardPid,0),error=>error.code==='ESRCH');
+      }
+    });
 
     const check=async(call,expectedStatus)=>{
       const started=commands.length,reply=await client.callTool({name:call.name,arguments:call.args});

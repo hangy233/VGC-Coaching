@@ -5,12 +5,13 @@ import {createRequire} from 'node:module';
 import {types} from 'node:util';
 import {publishedSheetDigest} from './observed-position.mjs';
 import {validateOwnReservePpSnapshot} from '../showdown/battle-state.mjs';
+import {registeredSpeciesKey} from './registered-identity.mjs';
 const {Teams,TeamValidator,Dex}=createRequire(import.meta.url)('pokemon-showdown');
 const FORMAT='gen9championsvgc2026regmc',dex=Dex.forFormat(FORMAT),stats=['hp','atk','def','spa','spd','spe'],stages=['atk','def','spa','spd','spe','accuracy','evasion'];
 const id=value=>String(value??'').toLowerCase().replace(/[^a-z0-9]/gu,''),sha=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const check=(value,message)=>{if(!value)throw Error('Approximate position: '+message);};
 function json(value){let nodes=0,bytes=0;const seen=new Set();function visit(v,depth){check(depth<=45&&++nodes<=200000,'bounded ordinary JSON required');if(v===null||typeof v==='boolean'||typeof v==='number'&&Number.isFinite(v)||typeof v==='string'){bytes+=Buffer.byteLength(JSON.stringify(v));check(bytes<=8*1024*1024,'source byte limit');return v;}check(v&&typeof v==='object'&&!types.isProxy(v),'data-only ordinary JSON required');check(!seen.has(v),'cyclic source');const array=Array.isArray(v),proto=Object.getPrototypeOf(v);check(array||proto===Object.prototype||proto===null,'plain source required');seen.add(v);const out=array?[]:{},keys=Reflect.ownKeys(v).filter(key=>!(array&&key==='length'));check(!array||keys.length===v.length,'dense source arrays required');for(const [index,key]of keys.entries()){check(typeof key==='string'&&(!array||key===String(index)),'ordinary string source keys required');bytes+=Buffer.byteLength(key);check(bytes<=8*1024*1024,'source byte limit');const d=Object.getOwnPropertyDescriptor(v,key);check(d.enumerable&&Object.hasOwn(d,'value'),'data-only source required');if(!array&&d.value===undefined)continue;Object.defineProperty(out,key,{value:visit(d.value,depth+1),enumerable:true,writable:true,configurable:true});}seen.delete(v);return out;}return visit(value,0);}
-const base=value=>{const s=dex.species.get(value);check(s.exists,'unknown species '+value);return id(s.isMega?s.baseSpecies:s.name);};
+const base=value=>registeredSpeciesKey(value,dex);
 const canonical=(table,value,label)=>{const data=table.get(value);check(data.exists,'unknown '+label+' '+value);return data.name;};
 const setFor=(party,species)=>{const found=party.filter(p=>base(p.species)===base(species));check(found.length===1,'registered identity is missing or ambiguous for '+species);return found[0];};
 const moves=value=>{check(Array.isArray(value)&&value.length>=1&&value.length<=4,'one to four native current moves required');return value.map(m=>canonical(dex.moves,m,'move'));};

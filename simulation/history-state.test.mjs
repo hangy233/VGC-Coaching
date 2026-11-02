@@ -31,3 +31,21 @@ test('an approximate world cannot replace a contradictory exact field using unre
   f.built.position.stateAssumptions=[{path:'p1.arch.pp',reason:'Uncertain PP'}];
   assert.throws(()=>applyKnownNativeHistory(f.built,f.assembly),/conflicts with proved history/u);
 });
+
+test('per-actor lastMove replaces only its disclosed fallback and never borrows battle lastMove',()=>{
+  const f=fixture(),p=f.built.position.sides[0].pokemon.find(p=>p.id==='arch');
+  f.built.provenance.approximate=true;p.lifecycle={lastMove:false};f.assembly.facts.nativeHistory.pokemon.arch.lastMove='Magnetic Flux';
+  f.built.position.stateAssumptions=[{path:'p1.arch.lifecycle.lastMove',reason:'Unknown move',selected:false},{path:'p1.arch.lifecycle.activeTurns',reason:'Unknown age',selected:0},{path:'p1.arch.pp',reason:'Uncertain PP'}];
+  const out=applyKnownNativeHistory(f.built,f.assembly);
+  assert.equal(out.position.sides[0].pokemon.find(p=>p.id==='arch').lifecycle.lastMove,'Magnetic Flux');assert.equal(out.position.nativeState.lastMove,'protect');
+  assert.deepEqual(out.position.stateAssumptions,f.built.position.stateAssumptions.slice(1));assert.equal(p.lifecycle.lastMove,false);
+});
+
+test('lastMove proof refuses incomplete/foreign bindings and exact conflicts, and cannot cross actor IDs',()=>{
+  for(const change of [f=>{f.assembly.facts.nativeHistory.completeHistory=false;},f=>{f.assembly.facts.nativeHistory.binding.sourceSha256='d'.repeat(64);},
+    f=>{f.built.position.sides[0].pokemon[0].lifecycle={lastMove:'Protect'};},f=>{f.assembly.facts.nativeHistory.pokemon.arch.lastMove=42;}]){
+    const f=fixture();f.assembly.facts.nativeHistory.pokemon.arch.lastMove='Magnetic Flux';change(f);assert.throws(()=>applyKnownNativeHistory(f.built,f.assembly),/Native history/u);
+  }
+  const f=fixture();f.assembly.facts.nativeHistory.pokemon={absent:{lastMove:'Magnetic Flux'}};
+  const out=applyKnownNativeHistory(f.built,f.assembly);assert(!out.position.sides.flatMap(s=>s.pokemon).some(p=>p.lifecycle?.lastMove==='Magnetic Flux'));
+});

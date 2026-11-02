@@ -29,14 +29,24 @@ export function createResearchBudgetToolClient(client,{workspace,call=callLocalS
     if(!descriptorExists(descriptor))return true;
     const state=await rpc('status',{},extra);
     // A missing/unknown server status is never evidence of an idle client.
-    return state.awaitingSet===false&&state.searchPending===false&&state.search&&Array.isArray(state.search.searching)&&!state.search.searching.length&&state.search.games&&Object.keys(state.search.games).length===0&&Array.isArray(state.rooms)&&state.rooms.every(room=>room.ended===true);
+    // The native client uses games:null after official completion. An empty
+    // known map is equivalent; absent, malformed or active game data is not.
+    const search=state.search,games=search?.games;
+    const noGames=search&&Object.hasOwn(search,'games')&&(games===null||games&&typeof games==='object'&&!Array.isArray(games)&&
+      [Object.prototype,null].includes(Object.getPrototypeOf(games))&&Object.keys(games).length===0);
+    return state.connected===true&&state.authenticated===true&&state.stopped===false&&
+      state.awaitingSet===false&&state.searchPending===false&&state.switchingTeam===false&&state.savingReplays===false&&
+      noGames&&Array.isArray(search.searching)&&search.searching.length===0&&
+      Array.isArray(state.actions)&&state.actions.length===0&&
+      Array.isArray(state.controlPolicy?.pending)&&state.controlPolicy.pending.length===0&&state.controlPolicy.observationFault===false&&state.controlPolicy.disposed===false&&
+      Array.isArray(state.rooms)&&state.rooms.every(room=>room.ended===true);
   };
   const wrap=(name,handler)=>async(input,extra={})=>{
     const {researchContext:supplied,...args}=input,context=supplied??inherited.getStore();
     if(extra.signal?.aborted)return failed('Research cancelled before reservation');
     // A disconnected offline SDK has no battle quota and makes no live claim.
     if(!descriptorExists(descriptor))return handler(args,extra);
-    if(!context){try{if(await idle(extra))return await handler(args,extra);}catch{}return failed('Active battle numeric research requires an exact host-bound researchContext');}
+    if(!context){try{if(await idle(extra))return extra.signal?.aborted?failed('Research cancelled before offline dispatch'):await handler(args,extra);}catch{}return failed('Active battle numeric research requires an exact host-bound researchContext');}
     const category=NUMERIC.has(name)?'calculator':'simulation';
     if(category==='calculator'&&args.gen!==0)return failed('Active numerical research requires native gen:0');
     if(category==='simulation'&&(name==='simulate_turn_batch'||args.request?.branches?.length!==1||args.request?.seeds?.length!==1))return failed('Active battle simulation admits exactly one branch and one seed; batches are offline only');

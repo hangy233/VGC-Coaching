@@ -395,13 +395,17 @@ because a new turn arrived.
 Use supplied base priorities, current own reported Speed and prior observed
 order as facts, not an effective-Speed ranking. Recheck items, boosts, status,
 abilities and control changes before carrying an old relation forward.
-Before a simulation call, inspect each hypothesized move's target class as well
-as our clickable menu. Omit chosen targets for spread, self and field actions;
-retain legal targets for targeted actions. Native base target metadata is not
-the opponent's current menu: form-dependent targeting and conditional recipient
-changes can differ. Do not blanket-rewrite a hypothesis from the base class.
-Resolve that distinction from known mechanics/state or label the uncertainty;
-native validation remains authoritative. A rejected research hypothesis is no
+Immediately before serializing `simulate_choices`, check all four move actions,
+including both opposing hypotheses: **actor + slot -> move name -> current
+command target class -> target present or absent**. Read `moveOrder.targetColumns`;
+our fresh clickable menu takes precedence. Omit a chosen target for self, side,
+field and spread command menus that accept none; retain the legal target for a
+targeted menu. Count command arguments, not the move's eventual recipients: an
+attack can hit several recipients while still requiring a chosen target.
+Native base metadata is not the opponent's current menu. Resolve form-dependent
+or conditional targeting from known mechanics/state or label the uncertainty.
+The model authors any correction; the host never strips or inserts a target.
+Native validation remains authoritative. A rejected research hypothesis is no
 evidence that our live legal pair or the move's mechanics are unsupported.
 
 Live research has a combined maximum of **three calculator calls** per battle

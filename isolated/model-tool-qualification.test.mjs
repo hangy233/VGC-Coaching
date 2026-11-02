@@ -117,6 +117,22 @@ test('injected complete control exercises never manufacture actual generation, S
   assert.match(result.simulationQualification,/model-authored explicit hypothetical/u);
 });
 
+test('main qualification explicitly requests an isolated child and registers each exact saved case without minting proof',async()=>{
+  const provider=fakeProvider(),client=fakeNative(),requests=sequence(),registrations=[];let closed=false;
+  const result=await qualifyModelTools({provider,requests,now:provider.now,connect:async options=>{
+    assert.deepEqual(options,{qualificationOnly:true});return {client,qualificationAuthority:{mode:'child-local-saved-research',liveQuotaExercised:false,liveDescriptorAccessed:false},
+      registerQualificationCase:async spec=>{registrations.push(structuredClone(spec));return {status:'registered',caseId:spec.caseId,sourceSha256:spec.sourceSha256,factsSha256:spec.factsSha256,liveQuotaExercised:false};},close:async()=>{closed=true;}};
+  }});
+  assert.equal(closed,true);assert.equal(registrations.length,3);assert.equal(new Set(registrations.map(r=>r.caseId)).size,3);
+  for(const [i,spec]of registrations.entries()){
+    const original=requests[i],binding=original.context.binding;
+    assert.deepEqual(spec.contexts,[{source:Object.fromEntries(['sessionId','teamId','room','rqid','token'].map(key=>[key,binding[key]])),analysis:'current'}]);
+    assert.equal(spec.turn,original.state.boards[0].turn);assert.equal(spec.kind,original.action.kind);assert.equal(spec.deadlineAt,result.rows[i].deadlineAt);
+    assert.equal(spec.deadlineAt-result.rows[i].startedAt,40000);assert.equal(spec.sourceSha256,result.rows[i].sourceSha256);
+  }
+  assert.equal(result.qualified,false);assert.equal(result.liveQuotaExercised,false);assert.equal(hasModelToolQualificationReceipt(provider,result),false);
+});
+
 test('advertised compact interface requires its verified saved-source route and never falls through to a live descriptor',async()=>{
   const provider=fakeProvider({research:false}),native=fakeNative(),list=native.listTools,original=provider.decisionProvider.callDecision,answers=[];
   native.listTools=async()=>({tools:[...(await list()).tools,{name:'simulate_choices',description:'Actual compact argument contract; injected transport grants no SDK qualification.',annotations:{readOnlyHint:true},inputSchema:z.toJSONSchema(simulationChoicesToolSchema,{target:'draft-7'})}]});

@@ -3,10 +3,11 @@ import test,{after} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdirSync,mkdtempSync} from 'node:fs';
-import {readFile,rm} from 'node:fs/promises';
+import {readFile,rm,mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {runRunner,validateScopeConfiguration} from './runner.mjs';
+import {digest} from '../planning/identity.mjs';
 
 const TEAM='a'.repeat(64),PARENT='game-bestof3-gen9championsvgc2026regmcbo3-901',VERSION='ponder-runner-fixture';
 const identity={version:1,sessionId:'ponder-runner',teamId:TEAM,account:'Fixture',teamFile:'unused-team.txt'};
@@ -68,6 +69,7 @@ test('explicit pondering prepares before live controller/search, receives native
   const stop=f.events.indexOf('ponder.stop');assert(stop>f.events.indexOf('controller.run'));assert(stop<f.events.indexOf('team_metrics_sync_battles'));assert.equal(f.events.filter(x=>x==='ponder.stop').length,1);assert.equal(f.events.filter(x=>x==='ponder.drain').length,1);
   assert.equal(value.ponderEvidence.preserved,true);assert(f.events.indexOf('ponder.archive')>f.events.indexOf('battle_control_release'));
   const saved=JSON.parse(await readFile(join(f.workspace,value.ponderEvidence.path),'utf8'));assert.equal(saved.entries.at(-1).phase,'ponder-analysis');assert.equal(saved.entries.at(-1).analysis.frozenOnly,true);assert.equal(saved.entries.at(-1).analysis.actualSDKReceiptsNotMinted,true);
+  assert.equal(saved.entries.filter(row=>row.phase==='ponder-analysis').length,1);assert.equal(f.events.filter(value=>value==='ponder.archive').length,1);
 });
 
 test('legacy false scope creates no shadow and adds no operator/controller hooks',async()=>{
@@ -80,6 +82,61 @@ test('failed shadow preparation cannot search and is stopped before idle SDK cle
 
 test('returned or thrown loop failures stop pondering before retained attention without another search',async()=>{
   for(const options of [{failure:true},{throwLoop:true}]){const f=fixture(options),value=await runRunner(args,f.dependencies);assert.equal(value.state,'attention-resolved');assert.equal(f.events.filter(x=>x==='start-next').length,1);assert.equal(f.events.filter(x=>x==='ponder.stop').length,1);assert(f.events.indexOf('ponder.drain')<f.events.indexOf('attention'));assert(!f.events.includes('ponder.archive'));}
+});
+
+function populatedJournal(){
+  const frozenSource={sessionId:identity.sessionId,teamId:TEAM,room:'battle-gen9championsvgc2026regmcbo3-902',rqid:1,token:'b'.repeat(64)},authoredArguments={species:'Pikachu'},input={...authoredArguments,gen:0},nativeResult={structuredContent:{name:'Pikachu',fixtureOnly:true}},modelResult=structuredClone(nativeResult);
+  const record={name:'get_pokemon',source:{sessionId:identity.sessionId,teamId:TEAM,parentId:PARENT,gameId:frozenSource.room,sourceSha256:'c'.repeat(64)},frozenSource,sourceSha256:'c'.repeat(64),factsSha256:'d'.repeat(64),turn:1,freezeId:'00000000-0000-4000-8000-000000000003',analysis:'frozen',evidenceScope:'frozen-pre-submission-only',liveFreshness:false,choiceAuthority:false,startedAt:1000,deadlineAt:2000,settledAt:1500,inputSha256:digest(input),authoredArgumentsSha256:digest(authoredArguments),nativeResultSha256:digest(nativeResult),modelResultSha256:digest(modelResult),timely:true,outcome:'returned',authoredArguments,input,nativeResult,modelResult};
+  return {kind:'private-frozen-ponder-journal',records:[record],bytes:Buffer.byteLength(JSON.stringify(record)),maxBytes:16*1024*1024,droppedByBound:0,complete:true};
+}
+
+test('verified native attention stop preserves populated frozen work once, after recovery and before process cleanup',async()=>{
+  const f=fixture({failure:true}),journal=populatedJournal();let stopProven=false;
+  f.ponder.privateEvidence=()=>{assert.equal(stopProven,true,'No journal work before attention resolves');f.events.push('ponder.archive');return journal;};
+  f.dependencies.attentionHandler=async()=>{f.events.push('attention');assert(!f.events.includes('ponder.archive'));stopProven=true;return{resolved:true,clientStopped:true};};
+  const result=await runRunner(args,f.dependencies);assert.equal(result.state,'attention-resolved');assert.equal(result.clientStopped,true);assert.equal(result.ponderEvidence.preserved,true);
+  const saved=JSON.parse(await readFile(join(f.workspace,result.ponderEvidence.path),'utf8')),rows=saved.entries.filter(e=>e.phase==='ponder-analysis');assert.equal(rows.length,1);assert.equal(rows[0].binding.parentId,PARENT);assert.equal(rows[0].analysis.journal.records.length,1);assert.equal(rows[0].analysis.noCurrentAuthority,true);assert.equal(rows[0].analysis.actualSDKReceiptsNotMinted,true);assert.equal(rows[0].analysis.completeAtCapture,true);
+  assert.equal(rows[0].analysis.journal.records[0].storedNativeResultSha256,digest(rows[0].analysis.journal.records[0].nativeResult));assert.equal(f.events.filter(e=>e==='ponder.archive').length,1);assert(f.events.indexOf('ponder.archive')>f.events.indexOf('attention'));assert(f.events.indexOf('ponder.archive')<f.events.indexOf('sdk.close'));assert.equal(f.events.filter(e=>e==='start-next').length,1);
+});
+
+test('verified stop preserves an empty journal, without inventing completed pending work',async()=>{
+  for(const pending of [false,true]){
+    const resolution={resolved:true,clientStopped:true};
+    const f=fixture({failure:true});f.dependencies.attentionHandler=async handles=>{assert.equal(handles.failure.liveOwnershipRetained,true);assert.equal(handles.failure.affectedParentId,PARENT);f.events.push('attention');return resolution;};
+    if(pending)f.ponder.status=()=>({closed:true,shadowModelPending:false,shadowClosePending:true,shadowPreflightPending:false,nativeCallsPending:1,core:{cleanupPending:1}});
+    const result=await runRunner(args,f.dependencies);assert.equal(result.ponderEvidence.preserved,true);const saved=JSON.parse(await readFile(join(f.workspace,result.ponderEvidence.path),'utf8')),analysis=saved.entries[0].analysis;
+    assert.deepEqual(analysis.journal.records,[]);assert.equal(analysis.completeAtCapture,!pending);assert.equal(analysis.noCurrentAuthority,true);assert.equal(f.events.filter(e=>e==='ponder.archive').length,1);assert(f.events.indexOf('ponder.archive')>f.events.indexOf('attention'));
+  }
+});
+
+test('retired owner defers its journal instead of racing a successor shared-trace writer',async()=>{
+  const f=fixture({failure:true}),path=join(f.workspace,'cache','bo3-runs',PARENT,'isolated-model-trace.json'),successorBytes='Synthetic successor-owned trace bytes; old owner must not read or replace them.';
+  f.ponder.privateEvidence=()=>assert.fail('Retired owner cannot append the shared trace');
+  f.dependencies.attentionHandler=async handles=>{assert.equal(handles.failure.affectedParentId,PARENT);f.events.push('attention');await mkdir(join(f.workspace,'cache','bo3-runs',PARENT),{recursive:true});await writeFile(path,successorBytes);return{resolved:true,ownershipLost:true};};
+  const result=await runRunner(args,f.dependencies);assert.equal(result.state,'attention-ownership-lost');assert.equal(result.ownershipLost,true);assert.equal(result.operatorRetained,false);assert.equal(result.clientStopped,false);assert.equal(result.reservationsPreserved,true);
+  assert.deepEqual(result.ponderEvidence,{preserved:false,deferred:true,code:'PONDER_ARCHIVAL_DEFERRED_OWNERSHIP_RETIRED'});assert.equal(await readFile(path,'utf8'),successorBytes);assert(!f.events.includes('ponder.archive'));assert(!f.events.includes('battle_stop'));assert(f.events.includes('sdk.close'));
+});
+
+test('unresolved attention and unproven generic resolution do not start optional archival ahead of live control',async()=>{
+  for(const resolution of [{resolved:false},{resolved:true}]){
+    const f=fixture({failure:true});f.ponder.privateEvidence=()=>assert.fail('No verified stop or authority retirement');f.dependencies.attentionHandler=async()=>{f.events.push('attention');return resolution;};
+    const result=await runRunner(args,f.dependencies);assert.equal(result.ponderEvidence,undefined);assert.equal(f.events.filter(e=>e==='start-next').length,1);if(!resolution.resolved)assert(!f.events.includes('sdk.close'));
+  }
+});
+
+test('post-attention invalid journal and unwritable destination remain explicit failures without delaying verified shutdown',async()=>{
+  for(const blocked of [false,true]){
+    const f=fixture({failure:true});
+    if(!blocked)f.ponder.privateEvidence=()=>({kind:'invalid-private-journal'});
+    f.dependencies.attentionHandler=async()=>{f.events.push('attention');if(blocked){await mkdir(join(f.workspace,'cache','bo3-runs'),{recursive:true});await writeFile(join(f.workspace,'cache','bo3-runs',PARENT),'Synthetic blocked archive directory');}return{resolved:true,clientStopped:true};};
+    const result=await runRunner(args,f.dependencies);assert.equal(result.state,'attention-resolved');assert.equal(result.clientStopped,true);assert.equal(result.ponderEvidence.preserved,false);assert.equal(result.ponderEvidence.code,'PONDER_ARCHIVAL_FAILED');assert.equal(result.modelEvidence.failed,true);assert(f.events.includes('sdk.close'));assert(f.events.includes('main.close'));assert.equal(f.events.filter(e=>e==='start-next').length,1);
+    if(!blocked){assert.equal(result.ponderEvidence.failureDiagnostic.preserved,true);assert.equal(result.ponderEvidence.failureDiagnostic.validated,false);assert.equal(result.ponderEvidence.failureDiagnostic.choiceAuthority,false);}
+  }
+});
+
+test('verified attention stop without a bound affected parent creates no orphan journal file',async()=>{
+  const f=fixture({failure:true});f.dependencies.controllerFactory=()=>({async initialize(){},async runSet(){return{status:'decision-unavailable'};},status:()=>({})});f.dependencies.attentionHandler=async()=>({resolved:true,clientStopped:true});f.ponder.privateEvidence=()=>assert.fail('Unknown parent cannot own a journal');
+  const result=await runRunner(args,f.dependencies);assert.equal(result.ponderEvidence.preserved,false);assert.equal(result.ponderEvidence.code,'PONDER_PARENT_UNAVAILABLE');assert.equal(result.modelEvidence.path,null);assert(f.events.includes('sdk.close'));
 });
 
 test('a hung optional cleanup stays bounded before attention',async()=>{

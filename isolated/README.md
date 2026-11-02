@@ -44,6 +44,13 @@ the combined three calculator invocations and one native trajectory per case.
 Partial/refused work remains partial/refused. Technical qualification establishes
 no tactical score guarantee.
 
+Saved-position qualification explicitly starts a separate calculation-only MCP
+child. The manager registers each verified historical source, frozen identifier
+and original cutoff with its in-memory three-calculator/one-trajectory authority;
+nested range calls share that allowance. It never reads or reserves against an
+open live client. These offline reservations grant no live quota, freshness or
+action authority. The normal MCP server and its live source guards are unchanged.
+
 Receipts stay attached to the same provider objects in memory. JSON reports are
 private evidence and cannot admit another process. `--qualify-only` closes those
 providers on exit; a later live launch must qualify afresh.
@@ -85,8 +92,39 @@ proof against qualified source before releasing this second gate. The launcher
 reserves one search before dispatch and never retries it.
 
 Watch links come from actual native room identities. Keep selected, sent,
-accepted, executed, defaulted and inactive outcomes separate. Use one owner to
-drain the interactive stream and supervise attention.
+accepted, executed, defaulted and inactive outcomes separate. The manager owns
+the interactive runner and supervises it directly. An agent relaying occasional
+terminal updates is not a bounded failure monitor.
+
+Before releasing `START_SEARCH`, verify the independent `attention-alert.json`
+path in `startup-adoption.json` and arrange to monitor that file alongside the
+stream. The launcher writes a small, atomic, sanitized alert at the first
+attention cue, before evidence preservation or recovery preparation. It contains
+no credential, controller lease, source token or private watch suffix. Alert
+creation must succeed before startup; a later write failure is reported on the
+stream. The file grants no action authority. Use the retained owner and the
+existing explicit recovery/forfeit authorization to contain the current set.
+
+During attention only, the runner checks fresh native ownership at one-second
+intervals. A verified same-session lease change retires the old runner and its
+model/MCP connection without stopping the client or sending an action. Failed,
+stale or foreign reads establish no handoff. Native reservations and uncertain
+sends remain with the new owner. The normal decision loop adds no polling.
+If terminal input closes during attention, ownership monitoring continues; EOF
+alone does not authorize a client stop, release or new search.
+
+After an attention exit verifies a native stop, the runner preserves its frozen
+pondering journal before closing its process resources. A retired owner defers that
+archive so it cannot overwrite a successor's active shared trace. Deferred or
+failed preservation is not complete evidence; neither path changes battle clocks.
+
+CLI traces include bounded `cliActivity` event counts and time buckets, tool
+reply/item-completion times, and token-usage observation times. Quiet status and
+legacy duplicate events are counted separately from text/reasoning deltas; no
+event payload or model text is retained. These are local wire observations,
+not remote network timings or proof of model attention. An intermediate token
+snapshot does not measure all work before a later timeout. A missing final and
+authoritative turn completion remains a failure even while status events arrive.
 
 ## Context and research
 

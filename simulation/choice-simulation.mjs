@@ -18,10 +18,11 @@ import {sanitizeResponse} from '../showdown/operator-response.mjs';
 import {summarizeChoiceSamples} from './choice-ranges.mjs';
 import {enumerateSpreadDomain} from './spread-range.mjs';
 import {presentSingleChoiceOutcome} from './choice-presentation.mjs';
+import {registeredSpeciesKey} from './registered-identity.mjs';
 
 const {Teams,Dex}=createRequire(import.meta.url)('pokemon-showdown'),dex=Dex.mod('champions');
 const clone=value=>structuredClone(value),key=value=>String(value??'').toLowerCase().replace(/[^a-z0-9]/gu,'');
-const base=species=>{const s=dex.species.get(species);return key(s.isMega?s.baseSpecies:s.name);},check=(ok,message)=>{if(!ok)throw Error(message);};
+const base=species=>registeredSpeciesKey(species,dex),check=(ok,message)=>{if(!ok)throw Error(message);};
 const unwrap=reply=>{check(reply?.ok!==false&&!reply?.isError,reply?.error??'Native simulation source unavailable');return reply?.result??reply;};
 const namedSet=(sheet,species)=>{const rows=sheet.filter(p=>base(p.species)===base(species));check(rows.length===1,'Registered species identity is missing or ambiguous');return rows[0];};
 

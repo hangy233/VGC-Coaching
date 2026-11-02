@@ -1,6 +1,6 @@
 // Offline selected-model qualification of the actual shadow runtime. Importing
 // this module opens no provider/SDK and grants no battle or login allowance.
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {join} from 'node:path';
@@ -29,12 +29,12 @@ const need=(condition,message)=>{if(!condition)throw Object.assign(Error(message
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
 const success=value=>value?.isError!==true&&value?.error===undefined&&value?.structuredContent?.ok!==false;
 const CLOCK_MS=40000,CLEANUP_MS=5000;
-const SOURCE_FILES=Object.freeze(['isolated/launch.mjs','isolated/qualification-budget.mjs','isolated/codex-cli-transport.mjs','isolated/codex-wire.mjs','observability/numeric-client.mjs','isolated/ponder-qualification.mjs','isolated/ponder-runtime.mjs','isolated/ponder-controller.mjs','isolated/ponder-evidence.mjs','isolated/runner.mjs',
+const SOURCE_FILES=Object.freeze(['isolated/launch.mjs','isolated/attention-alert.mjs','isolated/qualification-budget.mjs','isolated/codex-cli-transport.mjs','isolated/codex-wire.mjs','observability/numeric-client.mjs','observability/qualification-research.mjs','isolated/ponder-qualification.mjs','isolated/ponder-runtime.mjs','isolated/ponder-controller.mjs','isolated/ponder-evidence.mjs','isolated/runner.mjs',
   'isolated/context-limits.mjs','isolated/game-summary.mjs','isolated/decision-context.mjs','isolated/matchup-guidance.mjs',
   'isolated/native-controller.mjs','isolated/model-tool-cycle.mjs','isolated/model-tool-qualification.mjs','showdown/operator-client.mjs','showdown/action-next.mjs','showdown/agent-session.mjs','showdown/battle-state.mjs','showdown/protocol-action.mjs',
   'isolated/codex-cli-provider.mjs','isolated/codex-session-transport.mjs','isolated/codex-session-context.mjs','isolated/codex-tool-schema.mjs','isolated/model-tool-validation.mjs',
   'isolated/compact-model-tool-qualification.mjs','showdown/model-owned-tools.mjs','simulation/choice-simulation.mjs','simulation/choice-schemas.mjs','simulation/choice-state.mjs','simulation/choice-presentation.mjs','planning/research-budget.mjs','planning/mcp-tools.mjs',
-  'simulation/spread-candidates.mjs','simulation/spread-observations.mjs','simulation/spread-range.mjs','simulation/choice-ranges.mjs','simulation/observed-position.mjs','simulation/turn-simulator.mjs','simulation/move-support.mjs','simulation/native-state.mjs','simulation/approximate-position.mjs','simulation/history-state.mjs','simulation/turn-worker.mjs','simulation/mcp-tools.mjs','simulation/schemas.mjs',
+  'simulation/spread-candidates.mjs','simulation/spread-observations.mjs','simulation/spread-range.mjs','simulation/choice-ranges.mjs','simulation/registered-identity.mjs','simulation/observed-position.mjs','simulation/turn-simulator.mjs','simulation/move-support.mjs','simulation/native-state.mjs','simulation/approximate-position.mjs','simulation/history-state.mjs','simulation/turn-worker.mjs','simulation/mcp-tools.mjs','simulation/schemas.mjs',
   'workflow/calculations.mjs','workflow/calculation-archive.mjs','planning/tool-client.mjs','dist/index.js','dist/speed/calculator.js','package-lock.json']);
 const PROBE='OFFLINE SHADOW MATERIAL QUALIFICATION (host-marked, not independent research detection): This is a saved historical position and an explicitly simulated local-submission wait, not an actual live submission. Choose a meaningful our/opposing paired-action question yourself, call simulate_choices with your own complete pairs, inspect its actual frozen result, then return bounded speculative proposals under the supplied output schema. No tactical pair, hypothesis, expected answer, or current-turn gate is supplied by the harness. One original 40-second local clock covers tools and final output. A fresh-request event may interrupt this read-only exercise immediately.';
 const RANGE_PROBE='HOST-REQUIRED FROZEN RANGE ENDPOINT COVERAGE: In this normal completion case, also request calculate_damage_range for a material question you choose under native Champions gen:0. Independently author its species, move, fixed conditions, legal nature/stat-point domains and any HP hypotheses. Inspect the actual finite-domain or explicitly partial range and its coverage before returning proposals. Both simulate_choices and calculate_damage_range are required technical endpoint coverage for this case. No tactical pair, calculation input, domain, expected bound or probability is supplied. These are frozen historical hypotheses and establish no current action authority. This host-marked probe does not establish model-detected research, and shares the same original 40-second clock.';
@@ -139,7 +139,8 @@ export async function qualifyPonderRuntime({workspace=ROOT,provider,mainQualific
     }catch(error){entry.settledAt=now();entry.outcome='unavailable';entry.code=String(error?.code??'NATIVE_TOOL_FAILED').slice(0,100);throw error;}
   };
   try{
-    if(!client){connection=await connect();client=connection?.client;}
+    if(!client){connection=await connect({qualificationOnly:true});client=connection?.client;}
+    if(actualDependencies)need(connection?.qualificationAuthority?.mode==='child-local-saved-research'&&typeof connection.registerQualificationCase==='function','Actual shadow qualification requires its isolated saved-source research authority.');
     need(client&&typeof client.callTool==='function'&&typeof client.listTools==='function','Owned numerical SDK required.');
     const wrapperClient={listTools:(...args)=>client.listTools(...args),callTool:async(nativeRequest,schema,options)=>{
       if(nativeRequest.name!=='simulate_choices')return forward(nativeRequest,schema,options);
@@ -176,6 +177,8 @@ export async function qualifyPonderRuntime({workspace=ROOT,provider,mainQualific
       const adapter=await adapterFactory({workspace,state:row.state,ownTeamText:row.ownTeamText,opponentSheet:row.opponentSheet,provenance:row.provenance,now}),marker=adapter.frozenMarker();
       const startedAt=now(),deadlineAt=startedAt+CLOCK_MS;
       activeCase={caseId:preempt?'preempt-during-frozen-tool':'complete-frozen-material',preempt,adapter,startedAt,deadlineAt,qualified:false};cases.push(activeCase);
+      if(connection?.registerQualificationCase)activeCase.offlineResearchCase=await connection.registerQualificationCase({caseId:randomUUID(),contexts:[{source:clone(marker.source),analysis:'current'},{source:clone(marker.source),analysis:'frozen',freezeId:marker.freezeId}],
+        turn:row.board.turn,kind:row.action.kind,sourceSha256:row.sourceSha256,factsSha256:digest({boardHash:row.context.binding.boardHash,legalHash:row.context.binding.legalHash}),deadlineAt});
       activeCase.waiting=createPonderQualificationWaitFixture({state:row.state,action:row.action,committedActions:row.decision.actions,marker});
       activeCase.waitFixtureProvenance=clone(activeCase.waiting.offlinePonderWaitFixture);
       need(marker.source?.sessionId===row.context.binding.sessionId&&marker.source.teamId===row.context.binding.teamId&&['room','rqid','token'].every(key=>marker.source[key]===row.context.binding[key]),'Frozen adapter marker differs from the exact saved request.');
@@ -220,6 +223,7 @@ export async function qualifyPonderRuntime({workspace=ROOT,provider,mainQualific
     const result={...base,qualified,teamId:row.identity.teamId,sourcePins,sourcePinsUnchanged:digest(sourcePins)===digest(sourcePinsAfter),savedSourceSha256:row.sourceSha256,requestDigest:row.context.binding.requestDigest,
       generationObserved:normalModel?.generationReceiptVerified===true,frozenCompactQualified:actualDependencies&&frozenQualified,rangeCatalogAdvertised,frozenRangeWorkflowQualified:actualDependencies&&frozenRangeQualified,preemptionQualified:actualDependencies&&preemptQualified,actualSdkConnection:actualDependencies,numericSdkClosed:closed,
       cases:cases.map(({adapter,waiting,...record})=>record),models,nativeJournal,compactJournal,joinedCompactReceipts:joined.map(value=>clone(value.proof)),joinedFrozenRangeReceipts:joinedRanges,events,journal,status,shadowClosed,cleanupVerified:clean,
+      offlineResearchAuthority:connection?.qualificationAuthority?clone(connection.qualificationAuthority):null,liveQuotaExercised:false,
       generationReceiptOwner:'the original selected shadow provider, separate from the qualification-only neutral-probe proxy',reason:qualified?null:'shadow-model-tool-workflow-evidence-incomplete'};
     // Results must not freeze the arrays/records still owned by cleanup or late
     // diagnostic callbacks. Brand only the immutable detached snapshot.

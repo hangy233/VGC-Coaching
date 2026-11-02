@@ -504,6 +504,29 @@ test('the CLI retains the same SDK and private operator when post-search attenti
   assert(!JSON.stringify(output).includes(PRIVATE_FIXTURE_TEXT));
 });
 
+test('proven attention ownership loss closes only the old provider, timing and SDK',async()=>{
+  const f=workflowFixture({runResult:{status:'decision-unavailable'},stateChange:value=>{value.controller={required:true,owner:'original-owner',generation:1};}});
+  let sdkClosed=0,timingClosed=0,providerClosed=0;
+  const result=await runRunner(['--run','--session','fixture-session.json','--scope','fixture-scope.json',...CLI_SELECTION],{
+    codexProviderFactory:async options=>({...await fixtureCliProvider(options),close:async()=>{providerClosed++;}}),
+    configurationReader:async()=>({identity:identity(),scope:scope(),ownTeamText:'fixture'}),connect:async()=>({client:{close:async()=>{sdkClosed++;}}}),
+    operatorFactory:()=>f.operator,controllerFactory:f.createController,verifyPolicy:f.args.verifyPolicy,qualifyCodex:f.args.qualifyCodex,
+    timingFactory:async()=>({recorder:createTimingRecorder({component:'isolated_runner'}),flush:async()=>{},close:async()=>{timingClosed++;},status:()=>({})}),
+    attentionHandler:async handles=>{
+      assert.deepEqual(handles.failure.ownedControllerProof,{owner:'original-owner',generation:1});
+      const input=new PassThrough();
+      const result=await serveAttentionMode({...handles,input,ownershipPollMs:5,prepareHandoff:async({operator})=>{
+        const dispatch=f.operator.dispatch;f.operator.dispatch=async query=>query.op==='turn'?{result:{sessionId:identity().sessionId,teamId:TEAM,username:identity().account,
+          observedAt:Date.now(),connected:true,authenticated:true,controller:{required:true,owner:'new-owner',generation:2}}}:dispatch(query);
+        await operator.dispatch({id:'fresh-owner-observation',op:'turn'});return {state:'recovery-context',disposition:'unavailable'};
+      }});input.destroy();return result;
+    },write:()=>{}});
+  assert.equal(result.state,'attention-ownership-lost');assert.equal(result.operatorRetained,false);assert.equal(result.clientStopped,false);
+  assert.deepEqual([providerClosed,timingClosed,sdkClosed],[1,1,1]);
+  assert.equal(f.calls.filter(query=>query.op==='start-next').length,1);
+  assert(!f.calls.some(query=>query.name==='battle_control_release'||query.name==='battle_stop'||query.name==='battle_forfeit'||query.name==='battle_choose'));
+});
+
 test('idle pre-search failure closes the SDK without entering live attention mode', async () => {
   const f = workflowFixture({preflightReady: false}); let sdkClosed = 0, timingClosed = 0;
   await assert.rejects(runRunner(['--run', '--session', 'fixture-session.json', '--scope', 'fixture-scope.json',...CLI_SELECTION], {
@@ -609,6 +632,138 @@ test('fault notification is emitted without private source before handoff prepar
   for (const secret of ['secret-token', PRIVATE_FIXTURE_TEXT, 'private-session']) assert(!JSON.stringify(notice).includes(secret));
   assert.equal(controllerAttentionNotice({type: 'decision.complete'}, runId), null);
   assert(controllerAttentionNotice({...event, type: 'controller.preparation-failed'}, runId));
+});
+
+test('a fresh native takeover retires the old attention owner without releasing or mutating reservations',async()=>{
+  const input=new PassThrough(),output=[],calls=[],proof={owner:'original-owner',generation:1};
+  const pending={attempted:true,state:'uncertain',token:'PRIVATE-RESERVATION'};
+  const result=await serveAttentionMode({operator:{async dispatch(query){calls.push(query);return {result:{sessionId:identity().sessionId,teamId:TEAM,username:identity().account,
+    observedAt:Date.now(),connected:true,authenticated:true,controller:{required:true,owner:'new-owner',generation:2},controlPolicy:{pending:[pending]}}};}},
+    identity:identity(),scope:scope(),runId,input,write:value=>output.push(value),ownershipPollMs:5,
+    failure:{code:'generation_failed',message:'fixture',affectedParentId:PARENT,ownedControllerProof:proof},
+    prepareHandoff:async()=>({state:'recovery-context',disposition:'unavailable'})});
+  input.destroy();
+  assert.deepEqual(result,{resolved:true,ownershipLost:true,clientStopped:false,reservationsPreserved:true});
+  assert.equal(calls.length,1);assert.equal(calls[0].op,'turn');assert.equal(calls[0].full,true);
+  assert.equal(pending.attempted,true);assert.equal(pending.state,'uncertain');
+  assert(output.some(value=>value.state==='attention-ownership-lost'&&value.operatorRetained===false));
+  assert(!JSON.stringify(output).includes('PRIVATE-RESERVATION'));
+});
+
+test('the actual native compact turn through the maintained operator carries enough fresh ownership proof',async()=>{
+  const [{AgentSession},{ShowdownClient}]=await Promise.all([import('../showdown/agent-session.mjs'),import('../showdown/client.mjs')]);
+  const packed='FixtureSpecies|fixtureitem|fixtureability|fixturemove',team=createHash('sha256').update(packed).digest('hex');
+  const client=new ShowdownClient({expectedTeamHash:team});client.connected=true;client.authenticated=true;
+  const session=new AgentSession(client,{username:'Fixture User',packed,authorizedSets:1,autoReady:false});
+  const old=session.controller.claim({controllerId:'original-owner'}),proof={owner:old.owner,generation:old.generation};
+  session.controller.claim({controllerId:'new-owner',takeover:true,expectedGeneration:old.generation});
+  const calls=[],input=new PassThrough(),output=[];
+  const operator=createOperator({responseFile:'in-memory-only',publish:async()=>{},client:{async callTool(request){calls.push(request.name);
+    assert(['battle_turn_status','battle_status'].includes(request.name));
+    const value=request.name==='battle_turn_status'?session.turnSnapshot():session.snapshot();
+    if(request.name==='battle_turn_status'){assert.equal(value.teamId,undefined);assert.equal(value.teamSha256,undefined);assert(Number.isSafeInteger(value.observedAt));}
+    else{assert.equal(value.teamSha256,team);assert.equal(value.observedAt,undefined);}
+    return {structuredContent:{ok:true,result:value}};}}});
+  try{
+    const result=await serveAttentionMode({operator,identity:{...identity(),sessionId:session.id,teamId:team},scope:scope(),runId,input,write:value=>output.push(value),
+      ownershipPollMs:5,failure:{code:'generation_failed',message:'fixture',affectedParentId:PARENT,ownedControllerProof:proof}});
+    assert.equal(result.ownershipLost,true);assert.equal(result.clientStopped,false);assert.deepEqual(calls,['battle_turn_status','battle_status']);
+    assert(!output.some(value=>value.disposition==='actionable'));assert.equal(session.controller.status().owner,'new-owner');assert.equal(session.stopped,false);
+  }finally{input.destroy();session.dispose();}
+});
+
+test('failed, stale, foreign and incomplete reads never establish a takeover or a safe resend',async()=>{
+  for(const change of [value=>{value.observedAt=0;},value=>{value.sessionId='foreign';},value=>{value.teamId='c'.repeat(64);},
+    value=>{value.controller.generation=0;},value=>{delete value.controller;},value=>{value.ok=false;},value=>{value.controller={required:true,owner:'original-owner',generation:1};}]){
+    const input=new PassThrough(),output=[];let calls=0,allowValid=false;
+    const serving=serveAttentionMode({operator:{async dispatch(query){calls++;assert.equal(query.op,'turn');const value={sessionId:identity().sessionId,teamId:TEAM,username:identity().account,
+      observedAt:Date.now(),connected:true,authenticated:true,controller:{required:true,owner:'new-owner',generation:2}};if(!allowValid)change(value);return {result:value};}},
+      identity:identity(),scope:scope(),runId,input,write:value=>output.push(value),ownershipPollMs:5,
+      failure:{code:'operator',message:'fixture',affectedParentId:PARENT,ownedControllerProof:{owner:'original-owner',generation:1}},
+      prepareHandoff:async()=>({state:'recovery-context',disposition:'unavailable'})});
+    await delay(18);input.end();assert(!output.some(value=>value.state==='attention-ownership-lost'));assert(calls>=1);
+    allowValid=true;assert.equal((await serving).ownershipLost,true);
+  }
+});
+
+test('unsettled attention reads retain their serialization slot and never cause another read or mutation',async()=>{
+  const input=new PassThrough(),output=[];let settle,calls=0;
+  const pending=new Promise(resolve=>{settle=resolve;});
+  const serving=serveAttentionMode({operator:{async dispatch(){calls++;await pending;return {result:{sessionId:identity().sessionId,teamId:TEAM,username:identity().account,
+    observedAt:Date.now(),connected:true,authenticated:true,controller:{required:true,owner:'new-owner',generation:2}}}; }},identity:identity(),scope:scope(),runId,input,
+    write:value=>output.push(value),ownershipPollMs:5,failure:{code:'operator',message:'fixture',affectedParentId:PARENT,ownedControllerProof:{owner:'original-owner',generation:1}},
+    prepareHandoff:async({operator})=>{void operator.dispatch({id:'initial-read',op:'turn'});return {state:'recovery-context',disposition:'unavailable'};}});
+  await delay(25);input.end();await delay(15);assert.equal(calls,1);assert(!output.some(value=>value.state==='attention-ownership-lost'));
+  settle();assert.equal((await serving).ownershipLost,true);assert.equal(calls,1);
+});
+
+test('a queued command cannot cross a takeover that settles during its handoff drain',async()=>{
+  for(const query of [{id:'queued-forfeit',op:'call',name:'battle_forfeit',args:{confirmed:true,room:PARENT,commandId:'queued-forfeit'}},
+    {id:'queued-recovery',op:'recover-current',expectedRequest:{room:ROOM,rqid:3,token:'b'.repeat(64)}}]){
+    const input=new PassThrough(),output=[];let settle,dispatches=0;
+    const pending=new Promise(resolve=>{settle=resolve;});
+    const result=await serveAttentionMode({operator:{async dispatch(q){dispatches++;assert.equal(q.op,'turn');await pending;
+      return {result:{sessionId:identity().sessionId,teamId:TEAM,username:identity().account,observedAt:Date.now(),connected:true,authenticated:true,
+        controller:{required:true,owner:'new-owner',generation:2}}};}},identity:identity(),scope:{...scope(),allowManualForfeit:true},runId,input,write:value=>output.push(value),ownershipPollMs:5,
+      controller:{recoverCurrent:()=>assert.fail('Revoked owner cannot invoke a recovery author')},
+      failure:{code:'operator',message:'fixture',affectedParentId:PARENT,ownedControllerProof:{owner:'original-owner',generation:1}},
+      prepareHandoff:async({operator})=>{void operator.dispatch({id:'pending-read',op:'turn'});input.write(JSON.stringify(query)+'\n');setTimeout(settle,15);return {state:'recovery-context',disposition:'unavailable'};}});
+    input.destroy();assert.equal(result.ownershipLost,true);assert.equal(dispatches,1);assert(!output.some(value=>value.state==='manual-result'||value.state==='recovery-input-received'));
+  }
+});
+
+test('compact takeover without a team hash requires a timely matching full-status confirmation, including after EOF',async()=>{
+  for(const variant of ['missing-team','wrong-account','stale-status','changed-again','late-status']){
+    const input=new PassThrough(),output=[];let valid=false,at=1000,statusReads=0;
+    const native=()=>({sessionId:identity().sessionId,connected:true,authenticated:true,controller:{required:true,owner:'new-owner',generation:valid&&variant==='changed-again'?3:2}});
+    const serving=serveAttentionMode({operator:{async dispatch(query){
+      if(query.op==='turn')return {result:{...native(),observedAt:at}};
+      assert.equal(query.op,'status');statusReads++;
+      const value={...native(),teamSha256:TEAM,username:identity().account};
+      if(!valid){
+        if(variant==='missing-team')delete value.teamSha256;
+        if(variant==='wrong-account')value.username='Foreign';
+        if(variant==='stale-status')value.observedAt=0;
+        if(variant==='changed-again')value.controller.generation=3;
+        if(variant==='late-status')at+=1500;
+      }
+      return {result:value};
+    }},identity:identity(),scope:scope(),runId,input,now:()=>at,write:value=>output.push(value),ownershipPollMs:5,
+      failure:{code:'operator',message:'fixture',affectedParentId:PARENT,ownedControllerProof:{owner:'original-owner',generation:1}},
+      prepareHandoff:async()=>({state:'recovery-context',disposition:'unavailable'})});
+    await delay(18);input.end();await delay(8);assert(statusReads>=1,variant);assert(!output.some(value=>value.state==='attention-ownership-lost'),variant);
+    assert(output.some(value=>value.state==='attention-input-closed'),variant);
+    valid=true;assert.equal((await serving).ownershipLost,true,variant);
+  }
+});
+
+test('a timed-out full-status confirmation blocks queued recovery without consuming its command ID',async()=>{
+  const input=new PassThrough(),output=[],query={id:'same-after-confirmation',op:'recover-current',expectedRequest:{room:ROOM,rqid:3,token:'b'.repeat(64)}};
+  let releaseCompact,releaseStatus,preparations=0,recoveries=0,released=false,statusCalls=0;
+  const compactPending=new Promise(resolve=>{releaseCompact=resolve;}),statusPending=new Promise(resolve=>{releaseStatus=resolve;});
+  const changed=()=>({sessionId:identity().sessionId,username:identity().account,observedAt:Date.now(),connected:true,authenticated:true,
+    controller:{required:true,owner:'new-owner',generation:2}});
+  const result=await serveAttentionMode({operator:{async dispatch(q){
+    if(q.op==='status'){statusCalls++;await statusPending;return {result:{}};}
+    assert.equal(q.op,'turn');if(!released)await compactPending;
+    return {result:{...changed(),...(released?{teamId:TEAM}:{})}};
+  }},identity:identity(),scope:scope(),runId,input,ownershipPollMs:5000,
+    failure:{code:'operator',message:'fixture',affectedParentId:PARENT,ownedControllerProof:{owner:'original-owner',generation:1}},
+    controller:{async recoverCurrent(){assert.equal(released,true,'No author may start behind an unsettled confirmation');recoveries++;return {status:'refused'};}},
+    prepareHandoff:async({operator})=>{
+      if(preparations++===0){void operator.dispatch({id:'deferred-compact',op:'turn'});input.write(JSON.stringify(query)+'\n');setTimeout(releaseCompact,10);}
+      else await operator.dispatch({id:'fresh-after-recovery',op:'turn'});
+      return {state:'recovery-context',disposition:'unavailable'};
+    },write:value=>{
+      output.push(value);
+      if(value.state==='manual-command-blocked'&&value.id===query.id){
+        assert.equal(value.code,'operator-busy');assert.equal(recoveries,0);assert(!output.some(row=>row.state==='recovery-input-received'));
+        released=true;releaseStatus();setTimeout(()=>input.write(JSON.stringify(query)+'\n'),10);
+      }
+    }});
+  input.destroy();assert.equal(result.ownershipLost,true);assert.equal(statusCalls,1);assert.equal(recoveries,1);
+  assert.equal(output.filter(value=>value.state==='recovery-input-received').length,1);
+  assert.equal(output.filter(value=>value.state==='recovery-result').length,1);assert(!output.some(value=>value.cached===true));
 });
 
 test('timed-out prefetch drains before recovery without spending a token on a busy read', async () => {
@@ -862,6 +1017,19 @@ test('Codex failed traces preserve safe stream-bound diagnostics without retaini
   for(const [key,value]of Object.entries(counters))assert.equal(entry.telemetry[key],value,key);
   assert.equal(entry.validation.code,'stream_limit');assert.equal(entry.validation.choiceAuthority,false);assert.equal(entry.decision,undefined);
   assert.equal(text.includes('DROP-RAW'),false);assert.equal(entry.telemetry.rawProtocolFrame,undefined);assert.equal(entry.telemetry.rawToolResult,undefined);
+});
+
+test('failed traces retain bounded CLI activity and intermediate token timing without implying completion',async t=>{
+  const dir=await workspace(t),trace=createModelTraceStore({workspace:dir,teamId:TEAM,runId}),row=failedResponseEvidence();
+  row.provider={kind:'codex-cli',model:'gpt-6.1-sol',reasoningEffort:'low',selectionEvidence:'host-declared-request'};
+  row.validation={...row.validation,apiAttempted:false,providerAttempted:true,stage:'single-provider',code:'deadline_exceeded'};
+  const cliActivity={schemaVersion:1,scope:'current-turn-parsed-wire',payloadsRetained:false,counts:{legacy:5860,toolRequest:2},lastEventAt:4000};
+  row.telemetry={telemetrySource:'codex-cli-session',cliActivity,tokenUsageObservedAt:1500,tokenUsageTurnCompleteAtObservation:false,
+    modelToolCalls:[{name:'get_pokemon',itemCompletedAt:1600}],rawWireText:'DROP-ME'};
+  const saved=await trace.append(row),text=await readFile(join(dir,saved.path),'utf8'),entry=JSON.parse(text).entries[0];
+  assert.deepEqual(entry.telemetry.cliActivity,cliActivity);assert.equal(entry.telemetry.tokenUsageObservedAt,1500);
+  assert.equal(entry.telemetry.tokenUsageTurnCompleteAtObservation,false);assert.equal(entry.telemetry.modelToolCalls[0].itemCompletedAt,1600);
+  assert.equal(entry.telemetry.completedAt,undefined);assert(!text.includes('DROP-ME'));assert.equal(entry.decision,undefined);
 });
 
 

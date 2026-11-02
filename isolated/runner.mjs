@@ -269,7 +269,8 @@ for(const key of ['modelToolsEnabled','modelToolManifestSha256','modelToolWireMa
   'streamCountersScope','streamTurnBytes','streamTurnEvents','streamLineLimitBytes','streamMaxLineBytes','streamLastChunkBytes','streamMaxChunkBytes',
   'streamLimitKind','streamLimitObserved','streamLimitValue',
   'rejectedRpcMethod','rejectedRpcCode','rejectedRpcCategory','rejectedRpcMessageSha256','rejectedRpcMissingField','rejectedRpcActualType','rejectedRpcExpectedType',
-  'verifiedThreadSettings','moderationMetadataReceivedAt','rejectedNotificationField','rejectedNotificationValueType'])CODEX_TRACE_TELEMETRY.add(key);
+  'verifiedThreadSettings','moderationMetadataReceivedAt','rejectedNotificationField','rejectedNotificationValueType',
+  'cliActivity','tokenUsageObservedAt','tokenUsageTurnCompleteAtObservation'])CODEX_TRACE_TELEMETRY.add(key);
 function sanitizeEvidence(value, secrets = [], depth = 0) {
   if (depth > 32) throw new RunnerError('trace');
   if (typeof value === 'string') {
@@ -429,7 +430,7 @@ export async function runBattleWorkflow({operator, createController, identity, s
   }
   // Offline qualification history must never become a live battle's memory.
   await resetDecisionContext?.();
-  let sequence = 0, claimed = false, searched = false, reviewBoundary = false, controller, affectedParentId;
+  let sequence = 0, claimed = false, searched = false, reviewBoundary = false, controller, affectedParentId,ownedControllerProof;
   const preSearchParentIds = new Set();
   // A kept native session retains command-id results across runner processes.
   // Reserve a fresh namespace once per invocation; each individual command's
@@ -482,6 +483,8 @@ export async function runBattleWorkflow({operator, createController, identity, s
     requireThat(preflight.ready === true && Array.isArray(preflight.blockers) && preflight.blockers.length === 0, 'preflight');
     const beforeSearch = await dispatch({op: 'status', full: true});
     verifiedIdentity(beforeSearch, identity); verifiedIdle(beforeSearch);
+    if(beforeSearch.controller?.required===true&&typeof beforeSearch.controller.owner==='string'&&beforeSearch.controller.owner&&Number.isSafeInteger(beforeSearch.controller.generation))
+      ownedControllerProof=Object.freeze({owner:beforeSearch.controller.owner,generation:beforeSearch.controller.generation});
     requireThat(scope.manualReady!==true||beforeSearch.autoReady===false,'readiness');
     for (const room of beforeSearch.rooms) if (PARENT.test(canonical(room.id))) preSearchParentIds.add(canonical(room.id));
     // Reserving before dispatch prevents any retry from granting another search.
@@ -544,6 +547,7 @@ export async function runBattleWorkflow({operator, createController, identity, s
     // Keep the original controller's memory and request/reservation ledgers.
     // This handle never crosses stdout or the model boundary.
     if (failure.liveOwnershipRetained && controller) Object.defineProperty(failure, 'recoveryController', {value: controller});
+    if (failure.liveOwnershipRetained && ownedControllerProof) Object.defineProperty(failure, 'ownedControllerProof', {value: ownedControllerProof});
     const pendingRead=controller?.pendingRead?.();
     if(failure.liveOwnershipRetained&&pendingRead instanceof Promise)Object.defineProperty(failure,'pendingOperatorRead',{value:pendingRead});
     throw failure;
@@ -598,7 +602,7 @@ export function manualContainmentTemplate({identity,scope,parentId,runId}={}) {
 }
 
 export async function serveAttentionMode({operator, identity, scope, runId, input = process.stdin, write, failure,
-  controller = failure?.recoveryController, now = Date.now, prepareHandoff = prepareRecoveryHandoff, onEvent = () => {}} = {}) {
+  controller = failure?.recoveryController, now = Date.now, prepareHandoff = prepareRecoveryHandoff, onEvent = () => {},ownershipPollMs=1000} = {}) {
   const attentionStartedAt = now(), detectedAt = Number.isFinite(failure.detectedAt) && failure.detectedAt >= 0 && failure.detectedAt <= attentionStartedAt ? failure.detectedAt : attentionStartedAt;
   const manualContainment=manualContainmentTemplate({identity,scope,parentId:failure.affectedParentId,runId});
   const event = (type, fields = {}) => {try {onEvent({type, at: now(), ...fields});} catch { /* Timing cannot change control. */ }};
@@ -623,17 +627,46 @@ export async function serveAttentionMode({operator, identity, scope, runId, inpu
     void retained.finally(() => {if (pendingHandoffRead === retained) pendingHandoffRead = null;}).catch(() => {});
   }
   const commandPrefix = `iso-attention-${randomUUID().replaceAll('-', '')}`;
+  const proof=failure.ownedControllerProof;
+  const checkOwner=proof&&typeof proof.owner==='string'&&proof.owner&&Number.isSafeInteger(proof.generation)&&proof.generation>=1;
+  requireThat(Number.isInteger(ownershipPollMs)&&ownershipPollMs>=1&&ownershipPollMs<=5000,'configuration');
+  let ownershipLost=false,ownerCandidate;
+  const retainedDispatch=(...args)=>{requireThat(!ownershipLost,'operator');return operator.dispatch(...args);};
+  function observeOwner(reply,startedAt){
+    const state=body(reply),control=state?.controller;
+    // Failed, stale, incomplete or foreign observations establish no handoff.
+    // Only a fresh response from this retained armed session can revoke it.
+    if(!checkOwner||reply?.error||reply?.ok===false||reply?.isError===true||state?.error||state?.ok===false||state?.isError===true||
+      state?.sessionId!==identity.sessionId||state.connected!==true||state.authenticated!==true||
+      !Number.isSafeInteger(state.observedAt)||state.observedAt<startedAt||state.observedAt>now()||
+      state.teamId!==undefined&&state.teamId!==identity.teamId||state.teamSha256!==undefined&&state.teamSha256!==identity.teamId||
+      state.username!==undefined&&state.username!==identity.account||control?.required!==true||
+      !Number.isSafeInteger(control.generation)||control.generation<proof.generation||
+      !(control.owner===null||typeof control.owner==='string'&&control.owner))return;
+    if(control.owner!==proof.owner||control.generation!==proof.generation){
+      if(state.teamId===identity.teamId||state.teamSha256===identity.teamId)ownershipLost=true;
+      else ownerCandidate={owner:control.owner,generation:control.generation};
+    }
+  }
+  function lostOwnerResult(){
+    write({state:'attention-ownership-lost',runId,parentId:failure.affectedParentId,at:now(),operatorRetained:false,clientStopped:false,
+      reservationsPreserved:true,authorityRetired:true,cleanupVerified:false,
+      reason:'Fresh native controller ownership changed. This old runner sends no further operations; client and native reservations remain with the new owner. Provider/SDK cleanup is not yet verified.'});
+    return {resolved:true,ownershipLost:true,clientStopped:false,reservationsPreserved:true};
+  }
   const handoff = async () => {
     // A read timing out at the outer layer is not cancellation of the operator's
     // inner dispatch. Keep its serialization slot until that promise settles.
     const readingOperator = {dispatch(...args) {
-      const pending = Promise.resolve().then(() => operator.dispatch(...args));
+      const startedAt=now();
+      const pending = Promise.resolve().then(() => retainedDispatch(...args)).then(reply=>{observeOwner(reply,startedAt);return reply;});
       pendingHandoffRead = pending;
       void pending.finally(() => {if (pendingHandoffRead === pending) pendingHandoffRead = null;}).catch(() => {});
       return pending;
     }};
     const packet = await prepareHandoff({operator: readingOperator, identity, parentId: failure.affectedParentId, now,
       commandId: `${commandPrefix}-${++sequence}`});
+    if(ownershipLost)return;
     const handoffDelayMs = Math.max(0, now() - detectedAt);
     write({...packet, runId, detectedAt, handoffDelayMs,
       isolatedRecoveryAvailable: typeof controller?.recoverCurrent === 'function'});
@@ -649,15 +682,64 @@ export async function serveAttentionMode({operator, identity, scope, runId, inpu
     } finally {clearTimeout(timer);}
   }
   const call = async (name, args = {}) => {
-    const reply = await operator.dispatch({id: `${commandPrefix}-${++sequence}`, op: 'call', name, args, full: true});
+    const reply = await retainedDispatch({id: `${commandPrefix}-${++sequence}`, op: 'call', name, args, full: true});
     requireThat(!reply?.error && reply?.ok !== false && reply?.isError !== true, 'operator');
     const result = body(reply); requireThat(result?.ok !== false && result?.isError !== true, 'operator'); return result;
+  };
+  const pollOwner=async()=>{
+    if(!checkOwner||pendingHandoffRead)return;
+    const startedAt=now(),pending=Promise.resolve().then(()=>retainedDispatch({id:`${commandPrefix}-${++sequence}`,op:'turn',full:true},
+      {inputReceivedAt:startedAt})).then(reply=>observeOwner(reply,startedAt));
+    pendingHandoffRead=pending;
+    void pending.finally(()=>{if(pendingHandoffRead===pending)pendingHandoffRead=null;}).catch(()=>{});
+    let timer;
+    try{await Promise.race([pending.catch(()=>{}),new Promise(resolve=>{timer=setTimeout(resolve,1500);})]);}
+    finally{clearTimeout(timer);}
+  };
+  const confirmOwner=async()=>{
+    if(!ownerCandidate||pendingHandoffRead)return;
+    const candidate=ownerCandidate;ownerCandidate=undefined;
+    const startedAt=now(),wallStartedAt=performance.now();
+    // Native full status deliberately has no observedAt. This explicit fresh
+    // status command must settle within its bounded read and confirm the exact
+    // changed controller observed by the timestamped compact turn. It is never
+    // inferred from a retained status, missing team hash or a late response.
+    const pending=Promise.resolve().then(()=>retainedDispatch({id:`${commandPrefix}-${++sequence}`,op:'status',full:true},
+      {inputReceivedAt:startedAt})).then(reply=>{
+        const state=body(reply),control=state?.controller;
+        if(reply?.error||reply?.ok===false||reply?.isError===true||state?.error||state?.ok===false||state?.isError===true||
+          performance.now()-wallStartedAt>=1500||now()<startedAt||now()-startedAt>=1500||
+          state?.observedAt!==undefined&&(!Number.isSafeInteger(state.observedAt)||state.observedAt<startedAt||state.observedAt>now())||
+          state?.sessionId!==identity.sessionId||state.connected!==true||state.authenticated!==true||state.username!==identity.account||
+          !(state.teamId===identity.teamId||state.teamSha256===identity.teamId)||
+          state.teamId!==undefined&&state.teamId!==identity.teamId||state.teamSha256!==undefined&&state.teamSha256!==identity.teamId||
+          control?.required!==true||control.owner!==candidate.owner||control.generation!==candidate.generation)return;
+        ownershipLost=true;
+      });
+    pendingHandoffRead=pending;void pending.finally(()=>{if(pendingHandoffRead===pending)pendingHandoffRead=null;}).catch(()=>{});
+    let timer;try{await Promise.race([pending.catch(()=>{}),new Promise(resolve=>{timer=setTimeout(resolve,1500);})]);}
+    finally{clearTimeout(timer);}
   };
   try {
     if (await drainHandoffRead()) await handoff();
     else write({state: 'recovery-context-unavailable', code: 'operator-busy', runId, operatorRetained: true,
       reason: 'A bounded operator read is still in flight. Retain this owner; request recovery-context after its native read settles.'});
-    for await (const line of lines) {
+    let nextLine=lines.next();
+    while(true){
+      if(ownerCandidate&&!pendingHandoffRead)await confirmOwner();
+      if(ownershipLost)return lostOwnerResult();
+      const poll=Symbol('ownership-poll');let pollTimer;
+      let arrived;
+      try{arrived=await (checkOwner?Promise.race([nextLine,new Promise(resolve=>{pollTimer=setTimeout(()=>resolve(poll),ownershipPollMs);})]):nextLine);}
+      finally{clearTimeout(pollTimer);}
+      if(arrived===poll){await pollOwner();continue;}
+      if(arrived.done){
+        if(!checkOwner)break;
+        write({state:'attention-input-closed',runId,operatorRetained:true,clientStopped:false,
+          reason:'Input ended without resolution. Read-only ownership monitoring remains active until a verified handoff; no automatic action is authorized.'});
+        nextLine=new Promise(()=>{});continue;
+      }
+      const line=arrived.value;nextLine=lines.next();
       let query;
       const inputProcessedAt = now(), arrivedAt = arrivalTimes.shift();
       const inputTiming = {inputProcessedAt, ...(arrivalOverflow || !Number.isFinite(arrivedAt) ? {inputArrivalUnknown: true} :
@@ -671,6 +753,15 @@ export async function serveAttentionMode({operator, identity, scope, runId, inpu
           write({state: 'manual-command-blocked', id: query.id, code: 'operator-busy', reason: 'Recovery context read is still in flight; retain the same owner and command until it settles.', ...inputTiming});
           continue;
         }
+        if(ownershipLost)return lostOwnerResult();
+        if(ownerCandidate){await confirmOwner();if(ownershipLost)return lostOwnerResult();}
+        // Confirmation has its own bounded outer wait. A timeout does not
+        // cancel the underlying status read or release its serialization slot.
+        if(pendingHandoffRead&&!await drainHandoffRead()){
+          write({state:'manual-command-blocked',id:query.id,code:'operator-busy',reason:'Ownership confirmation read is still in flight; retain the same owner and command until it settles.',...inputTiming});
+          continue;
+        }
+        if(ownershipLost)return lostOwnerResult();
         if (query.op === 'recovery-context') {
           requireThat(Object.keys(query).every(key => ['id', 'op'].includes(key)), 'arguments');
           await handoff(); continue;
@@ -689,10 +780,12 @@ export async function serveAttentionMode({operator, identity, scope, runId, inpu
           recoveryCommands.set(query.id, reservation);
           write({state: 'recovery-input-received', id: query.id, ...inputTiming, attentionAgeMs: (inputTiming.inputReceivedAt ?? inputProcessedAt) - detectedAt});
           event('recovery.host-input', inputTiming);
+          if(ownershipLost)return lostOwnerResult();
           const result = await controller.recoverCurrent({expectedRequest: query.expectedRequest});
           reservation.result = {state: 'recovery-result', id: query.id, ...inputTiming, completedAt: now(), result};
           write(reservation.result);
           if (result?.status === 'submitted' && query.continueSet === true) {
+            if(ownershipLost)return lostOwnerResult();
             requireThat(typeof controller.runSet === 'function', 'operator');
             write({state: 'isolated-resumed', id: query.id, parentId: failure.affectedParentId, at: now(), searchesAttempted: 0});
             const resumed = await controller.runSet();
@@ -725,7 +818,8 @@ export async function serveAttentionMode({operator, identity, scope, runId, inpu
             requireThat(metrics.teamId === identity.teamId && metrics.recording?.state === 'ready' && !metrics.recording.lastError && !state.replayPolicy?.active && !(state.replayPolicy?.pendingParents?.length), 'operator');
           }
         }
-        const response = await operator.dispatch(query), result = body(response);
+        if(ownershipLost)return lostOwnerResult();
+        const response = await retainedDispatch(query), result = body(response);
         write({state: 'manual-result', id: query.id, ...inputTiming, completedAt: now(), response});
         if (query.op === 'call' && query.name === 'team_metrics_finalize_bo3' && query.args?.dryRun === false && query.args?.confirmed === true && !response?.error && response?.ok !== false && response?.isError !== true && !result?.error && result?.ok !== false && result?.isError !== true && appliedFinalizationReady(result, identity.teamId, canonical(query.args.parentId))) retainedParents.add(canonical(query.args.parentId));
         if (query.op === 'call' && query.name === 'battle_stop' && result?.stopped === true) return {resolved: true, clientStopped: true};
@@ -734,7 +828,7 @@ export async function serveAttentionMode({operator, identity, scope, runId, inpu
           code: error instanceof RunnerError ? error.code : 'operator', reason: error instanceof RunnerError ? error.message : MESSAGES.operator});
       }
     }
-  } finally {reader.close();}
+  } finally {reader.close();if(ownershipLost&&input===process.stdin){input.pause();input.unref?.();}}
   // EOF is not a reviewed resolution. Keep the native SDK/lease in this host.
   write({state: 'attention-input-closed', runId, operatorRetained: true, clientStopped: false,
     reason: 'The host input closed before a verified native stop. Keep this process and use an explicit coordinated native handoff; do not authenticate or start another set.'});
@@ -765,7 +859,7 @@ export function controllerAttentionNotice(event = {}, runId) {
     requires: 'Continue reading this same stream for the fresh recovery-context. Do not detour through reports or health checks.'};
 }
 
-const TEST_FILES = ["codex-cli-provider.test.mjs","codex-cli-transport.test.mjs","codex-session-context.test.mjs","codex-session-transport.test.mjs","codex-tool-schema.test.mjs","codex-wire.test.mjs","compact-model-tool-qualification.test.mjs","context-compaction-integration.test.mjs","context-compaction.test.mjs","decision-context.test.mjs","game-summary.test.mjs","launch.test.mjs","matchup-guidance.test.mjs","model-owned-tools.test.mjs","model-tool-cycle.test.mjs","model-tool-observed-qualification.test.mjs","model-tool-qualification.test.mjs","model-tool-validation.test.mjs","native-controller.test.mjs","ponder-controller.test.mjs","ponder-evidence.test.mjs","ponder-qualification.test.mjs","ponder-runner.test.mjs","ponder-runtime.test.mjs","recovery-handoff.test.mjs","recovery-stream.test.mjs","runner.test.mjs","saved-choice-capture.test.mjs","saved-compact-replay.test.mjs","team-guidance.test.mjs"];
+const TEST_FILES = ["attention-alert.test.mjs","codex-cli-provider.test.mjs","codex-cli-transport.test.mjs","codex-session-context.test.mjs","codex-session-transport.test.mjs","codex-tool-schema.test.mjs","codex-wire.test.mjs","compact-model-tool-qualification.test.mjs","context-compaction-integration.test.mjs","context-compaction.test.mjs","decision-context.test.mjs","game-summary.test.mjs","launch.test.mjs","matchup-guidance.test.mjs","model-owned-tools.test.mjs","model-tool-cycle.test.mjs","model-tool-observed-qualification.test.mjs","model-tool-qualification.test.mjs","model-tool-validation.test.mjs","native-controller.test.mjs","ponder-controller.test.mjs","ponder-evidence.test.mjs","ponder-qualification.test.mjs","ponder-runner.test.mjs","ponder-runtime.test.mjs","recovery-handoff.test.mjs","recovery-stream.test.mjs","runner.test.mjs","saved-choice-capture.test.mjs","saved-compact-replay.test.mjs","team-guidance.test.mjs"];
 export async function runOfflineQualification({workspace = ROOT, spawnImpl = spawn} = {}) {
   const args = ['--test', '--test-reporter=tap', '--test-concurrency=1', ...TEST_FILES.map(name => join(workspace, 'isolated', name))];
   // Do not pass provider credentials to the offline test subprocess.
@@ -829,7 +923,20 @@ export async function runRunner(args, {workspace = ROOT, write = value => proces
   }
   const runId = randomUUID();
   const trace = createModelTraceStore({workspace, teamId: identity.teamId, runId, secrets: []});
-  let sdk, timing, operator,ponderRuntime, retainConnection = false;
+  let sdk, timing, operator,ponderRuntime, retainConnection = false,ponderArchive;
+  const archivePonder=parentId=>{
+    if(!ponderRuntime)return undefined;
+    if(ponderArchive)return ponderArchive;
+    if(!PARENT.test(canonical(parentId)))return {preserved:false,code:'PONDER_PARENT_UNAVAILABLE'};
+    ponderArchive=(async()=>{
+      try{const status=ponderRuntime.status();
+        const receipt=await trace.append({phase:'ponder-analysis',binding:{teamId:identity.teamId,parentId:canonical(parentId)},analysis:{version:1,frozenOnly:true,noCurrentAuthority:true,actualSDKReceiptsNotMinted:true,capturedAt:Date.now(),
+          settlement:{runtimeStopped:status.closed===true,shadowModelPending:status.shadowModelPending===true,shadowClosePending:status.shadowClosePending===true,shadowPreflightPending:status.shadowPreflightPending===true,providerCleanupPending:status.core?.cleanupPending>0,nativeCallsPending:status.nativeCallsPending},journal:ponderRuntime.privateEvidence()}});
+        return {preserved:true,...receipt};
+      }catch{const diagnostic=trace.status().failureDiagnostic;return {preserved:false,code:'PONDER_ARCHIVAL_FAILED',...(diagnostic?{failureDiagnostic:diagnostic}:{})};}
+    })();
+    return ponderArchive;
+  };
   const onEvent=event=>{const notice=controllerAttentionNotice(event,runId);if(notice)write(notice);recordControllerTiming(timing?.recorder,event,identity.teamId,runId);};
   try {
     const connection = connect ? await connect({workspace, teamId: identity.teamId}) : await connectNativeSdk({workspace, teamId: identity.teamId});
@@ -846,14 +953,7 @@ export async function runRunner(args, {workspace = ROOT, write = value => proces
       onEvidence: event => trace.append(event), onEvent}));
     // The workflow returns only after official completion and verified idle.
     // Error/attention recovery deliberately never waits for optional archival.
-    let ponderEvidence;
-    if(ponderRuntime){
-      try{const status=ponderRuntime.status();
-        const receipt=await trace.append({phase:'ponder-analysis',binding:{teamId:identity.teamId,parentId:result.parentId},analysis:{version:1,frozenOnly:true,noCurrentAuthority:true,actualSDKReceiptsNotMinted:true,capturedAt:Date.now(),
-          settlement:{runtimeStopped:status.closed===true,shadowModelPending:status.shadowModelPending===true,shadowClosePending:status.shadowClosePending===true,shadowPreflightPending:status.shadowPreflightPending===true,providerCleanupPending:status.core?.cleanupPending>0,nativeCallsPending:status.nativeCallsPending},journal:ponderRuntime.privateEvidence()}});
-        ponderEvidence={preserved:true,...receipt};
-      }catch{const diagnostic=trace.status().failureDiagnostic;ponderEvidence={preserved:false,code:'PONDER_ARCHIVAL_FAILED',...(diagnostic?{failureDiagnostic:diagnostic}:{})};}
-    }
+    const ponderEvidence=await archivePonder(result.parentId);
     await timing.flush();
     const summary = {...result,...(ponderEvidence?{ponderEvidence}:{}), modelEvidence: trace.status(), timing: timing.status()};
     write(summary); return summary;
@@ -864,7 +964,13 @@ export async function runRunner(args, {workspace = ROOT, write = value => proces
     const resolution = await timing.recorder.run({traceId: runId, teamId: identity.teamId}, () => attentionHandler({operator, sdk, timing, identity, scope, runId, write, failure: error,
       onEvent: event => recordControllerTiming(timing.recorder, event, identity.teamId, runId)}));
     if (resolution?.resolved === true) retainConnection = false;
-    const result = {state: retainConnection ? 'attention-retained' : 'attention-resolved', runId, teamId: identity.teamId, clientStopped: resolution?.clientStopped === true, operatorRetained: retainConnection};
+    // Do not archive ahead of an active request or attention/recovery. The
+    // maintained handler proves native stop before this optional shared-trace
+    // write. A retired owner must not race a successor's active trace writer.
+    const ponderEvidence=resolution?.resolved===true&&resolution.clientStopped===true?await archivePonder(error.affectedParentId):
+      ponderRuntime&&resolution?.resolved===true&&resolution.ownershipLost===true?{preserved:false,deferred:true,code:'PONDER_ARCHIVAL_DEFERRED_OWNERSHIP_RETIRED'}:undefined;
+    const result = {state: resolution?.ownershipLost===true?'attention-ownership-lost':retainConnection ? 'attention-retained' : 'attention-resolved', runId, teamId: identity.teamId, clientStopped: resolution?.clientStopped === true, operatorRetained: retainConnection,
+      ...(resolution?.ownershipLost===true?{ownershipLost:true,reservationsPreserved:true}:{}),...(ponderEvidence?{ponderEvidence,modelEvidence:trace.status()}:{})};
     write(result); return result;
   } finally {
     await stopPonderBounded(ponderRuntime,onEvent);

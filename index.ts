@@ -41,24 +41,31 @@ const {recordCalculation}=await import(new URL('../workflow/calculations.mjs',im
 const recordEvidence=(entry:any)=>recordCalculation({workspace,...entry});
 const {createPlanningToolClient}=await import(new URL('../planning/tool-client.mjs',import.meta.url).href);
 const {createResearchBudgetToolClient}=await import(new URL('../planning/research-budget.mjs',import.meta.url).href);
-const numericTools=createResearchBudgetToolClient(createPlanningToolClient(server),{workspace});
+const {QUALIFICATION_RESEARCH_ENV,registerQualificationResearchSetup,createQualificationResearchAuthority}=
+  await import(new URL('../observability/qualification-research.mjs',import.meta.url).href);
+const qualificationOnly=process.env[QUALIFICATION_RESEARCH_ENV]==='1';
+const qualificationAuthority=qualificationOnly?createQualificationResearchAuthority():null;
+if(qualificationAuthority)registerQualificationResearchSetup(server,qualificationAuthority);
+const savedSourceOnly=qualificationOnly?{call:async()=>{throw new Error('Saved qualification requires its verified source adapter; live session reads are disabled');}}:{};
+const numericTools=createResearchBudgetToolClient(createPlanningToolClient(server),{workspace,
+  ...(qualificationAuthority?{call:qualificationAuthority.call,descriptorExists:qualificationAuthority.descriptorExists}:{})});
 registerSpeedTools(numericTools,{recordEvidence,timingRecorder});
 const {registerSimulationTools,wrapTimedTool}=await import(new URL('../simulation/mcp-tools.mjs',import.meta.url).href);
-registerSimulationTools(numericTools,{workspace,recordEvidence,timingRecorder,
+registerSimulationTools(numericTools,{workspace,recordEvidence,timingRecorder,...savedSourceOnly,
   callTool:Object.assign((name:string,args:unknown,options:unknown)=>numericTools.callTool(name,args,options),{runtimeVersion:numericTools.runtimeVersion})});
 const {registerDamageRangeTools}=await import(new URL('../simulation/spread-range.mjs',import.meta.url).href);
 registerDamageRangeTools(numericTools,{recordEvidence,
   callTool:(name:string,args:unknown,options:unknown)=>numericTools.callTool(name,args,options)});
 const {registerPlanningTools}=await import(new URL('../planning/mcp-tools.mjs',import.meta.url).href);
 const planningCall=Object.assign((name:string,args:unknown,options:unknown)=>numericTools.callTool(name,args,options),{runtimeVersion:numericTools.runtimeVersion});
-registerPlanningTools(server,{workspace,callTool:planningCall,timingRecorder});
+registerPlanningTools(server,{workspace,callTool:planningCall,timingRecorder,...savedSourceOnly});
 // The terminal-owned transport remains source .mjs; it shares the same local workspace.
 const { registerBattleTools } = await import(new URL('../showdown/mcp-tools.mjs', import.meta.url).href);
-registerBattleTools(server, {workspace:fileURLToPath(new URL('..', import.meta.url))});
+if(!qualificationOnly)registerBattleTools(server, {workspace:fileURLToPath(new URL('..', import.meta.url))});
 const { registerMetricsTools } = await import(new URL('../metrics/mcp-tools.mjs', import.meta.url).href);
-registerMetricsTools(server, {workspace:fileURLToPath(new URL('..', import.meta.url))});
+if(!qualificationOnly)registerMetricsTools(server, {workspace:fileURLToPath(new URL('..', import.meta.url))});
 const {registerWorkflowTools}=await import(new URL('../workflow/mcp-tools.mjs',import.meta.url).href);
-registerWorkflowTools(server,{workspace});
+if(!qualificationOnly)registerWorkflowTools(server,{workspace});
 const {getChampionsPokemon,getChampionsMove,getChampionsAbility,getChampionsMovepool}=
   await import(new URL('../mechanics/static-data.mjs',import.meta.url).href);
 

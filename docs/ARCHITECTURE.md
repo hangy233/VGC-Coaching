@@ -28,6 +28,7 @@ guidance and tooling between sets, outside the timed decision path.
 | Component | Responsibility |
 | --- | --- |
 | `isolated/runner.mjs` | One-set lifecycle, selected-provider qualification, local MCP connection, source checks and attention handoff. |
+| `isolated/attention-alert.mjs` | Small atomic manager alarm before recovery work; no credentials or battle authority. |
 | `isolated/codex-cli-provider.mjs` | Owned CLI process, retained per-game context and actual model/tool conversation. No API-key fallback. |
 | `isolated/decision-context.mjs` | Complete fresh facts, legal menus, base move metadata and verified guidance. Base priority and reported Speed are not an effective-order calculation. |
 | `showdown/agent-session.mjs` | Exact authenticated session/team, controller lease, current requests, bounded research reservations and native commands. |
@@ -70,6 +71,12 @@ or omitted field. The engine initializes effects and resolves gameplay; the
 adapter restores known facts and preserves the declared random state. No second
 damage formula or host-selected tactical outcome is used.
 
+Per-actor last-move observations have a source-bound proof separate from broader
+lifecycle confidence. A later audited ordinary move can restore that known field
+without restoring uncertain PP or action counters. Receive gaps and relevant
+identity/lifecycle resets invalidate its proof; other conditional assumptions
+remain visible during reconstruction.
+
 The single result distinguishes completed turns from pending replacement and
 queued-action boundaries. Conditional results are not unqualified material
 proofs. Finite samples do not establish an exhaustive range or probability.
@@ -99,11 +106,20 @@ One owner retains the original deadline and send reservation. An uncertain write
 is reconciled without blind retry. An official child result can supersede a
 completed model response; that response remains evidence, not a late action.
 
+The manager supervises the runner directly and monitors its independent attention
+alarm. During attention, fresh native ownership evidence can retire a revoked
+runner without stopping its successor's client. Unknown observations preserve
+uncertainty. Event-class counters and timing buckets distinguish local status
+traffic, tool replies and output progress without retaining model text. They do
+not establish remote network duration or explain an unobserved provider stall.
+
 After the official parent result and server idle, the runner hands off for
 manager review. Verified replays, flushed metrics, a native review checkpoint
 and bounded retention precede normal client shutdown. A final static review
 check detects late evidence drift. Private team data, access links, receipts and
 control capabilities stay out of public documentation and commits.
+After a verified attention stop, frozen analysis is archived before process
+cleanup. A retired owner never rewrites its successor's shared trace.
 
 See [startup](AGENT-STARTUP.md), [battle workflow](../showdown/AGENT-WORKFLOW.md),
 [simulation](SIMULATOR.md) and [metrics](../metrics/README.md) for the contracts.

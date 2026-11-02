@@ -38,7 +38,7 @@ function nativeLife(p){return {activeTurns:p.activeTurns,activeMoveActions:p.act
 function actor(assembly,name){return assembly.facts.actors.find(p=>p.own&&p.registeredSet.name===name);}
 
 function assertNativeHistory(f){const result=f.assembly(),h=result.facts.nativeHistory;assert.equal(h.kind,'source-bound-native-history-v1');assert.equal(h.completeHistory,true);for(const key of ['sourceSha256','historySha256','sequence','teamId','room','rqid'])assert.equal(h.binding[key],result.binding[key]);
-  for(const side of f.source().observed.boards[0].sides){assert.equal(h.sides[side.id].totalFainted,f.battle[side.id].totalFainted);for(const p of side.pokemon){const native=f.battle[side.id].pokemon.find(n=>n.name===p.nickname),facts=h.pokemon[p.id];assert(native,p.id);for(const key of ['timesAttacked','lastMoveTargetLoc','moveLastTurnResult'])if(Object.hasOwn(facts,key))assert.equal(facts[key],native[key],p.nickname+'.'+key);}}
+  for(const side of f.source().observed.boards[0].sides){assert.equal(h.sides[side.id].totalFainted,f.battle[side.id].totalFainted);for(const p of side.pokemon){const native=f.battle[side.id].pokemon.find(n=>n.name===p.nickname),facts=h.pokemon[p.id];assert(native,p.id);for(const key of ['timesAttacked','lastMoveTargetLoc','moveLastTurnResult'])if(Object.hasOwn(facts,key))assert.equal(facts[key],native[key],p.nickname+'.'+key);if(Object.hasOwn(facts,'lastMove'))assert.equal(facts.lastMove,native.lastMove?.name??false,p.nickname+'.lastMove');}}
   if(Object.hasOwn(h.battle,'lastMove'))assert.equal(h.battle.lastMove,f.battle.lastMove?.id??false);return result;
 }
 
@@ -51,6 +51,44 @@ test('source-bound native history matches actual ordinary hits, original targete
 test('unrelated new public volatile does not erase independently proved native faint/hit history',()=>{const f=fixture({configure:a=>{a[1]=set('incin','Incineroar','Intimidate','Grassy Seed',['Fake Out','Taunt','Flare Blitz','Protect'],{hp:32,atk:32,def:2,spa:0,spd:0,spe:0});}});try{
   f.choose('move 4, move 2 2','move 4, move 2 -1');let result=assertNativeHistory(f);assert.equal(result.coverage.auditedHistory,false,'novel Taunt still invalidates the legacy strict-state fragment');const foe=f.source().observed.boards[0].sides[1].pokemon.find(p=>p.nickname==='foe-fari');assert.equal(result.facts.nativeHistory.pokemon[foe.id].timesAttacked,0);assert.equal(result.facts.nativeHistory.sides.p2.totalFainted,0);
   f.choose('move 3 2, move 4','move 4, move 1 1');result=assertNativeHistory(f);assert.equal(result.facts.nativeHistory.pokemon[foe.id].timesAttacked,1,'actual ordinary numeric hit remains independently source-known');
+}finally{f.battle.destroy();}});
+
+test('actor lastMove recovers after unrelated unsafe history without reviving lifecycle or PP',()=>{const f=fixture({configure:a=>{a[1]=set('incin','Incineroar','Intimidate','Grassy Seed',['Fake Out','Taunt','Flare Blitz','Protect'],{hp:32,atk:32,def:2,spa:0,spd:0,spe:0});}});try{
+  f.choose('move 4, move 2 2','move 4, move 2 -1');
+  f.choose('move 3 1, move 4','move 4, move 1 1');
+  const result=assertNativeHistory(f),board=f.source().observed.boards[0],toed=board.sides[0].pokemon.find(p=>p.nickname==='toed'),foe=board.sides[1].pokemon.find(p=>p.nickname==='rai');
+  assert.equal(result.coverage.auditedHistory,false);assert.equal(result.facts.nativeHistory.pokemon[toed.id].lastMove,'Ice Beam');
+  assert.equal(result.facts.nativeHistory.pokemon[foe.id].lastMove,'Protect');
+  assert.equal(result.hypotheses.own[toed.id].lifecycle,undefined);assert.equal(result.hypotheses.opposing[foe.id].lifecycle,undefined);
+  assert.equal(result.facts.nativeHistory.provenance.some(row=>row.path===`pokemon.${toed.id}.lastMove`&&row.origin==='audited-completed-ordinary-actor-last-move'),true);
+}finally{f.battle.destroy();}});
+
+test('called actor history stays unknown until its later ordinary move; source gaps never mint recovery',()=>{const f=fixture();try{
+  f.line('|move|p1a: toed|Ice Beam|p2a: rai|[from] move: Sleep Talk');f.receive();
+  let result=f.assembly(),toed=result.facts.actors.find(p=>p.own&&p.registeredSet.name==='toed');
+  assert.equal(result.facts.nativeHistory.pokemon[toed.id].lastMove,undefined);
+  assert(result.facts.nativeHistory.unknowns.some(row=>row.path===`pokemon.${toed.id}.lastMove`&&row.reason.includes('Called')));
+  f.choose('move 3 1, move 4','move 4, move 4');result=assertNativeHistory(f);
+  assert.equal(result.facts.nativeHistory.pokemon[toed.id].lastMove,'Ice Beam');
+  f.tracker.invalidate('Receive gap');f.choose('move 4, move 4','move 4, move 4');result=f.assembly();
+  assert.equal(result.facts.nativeHistory.completeHistory,false);assert.equal(result.facts.nativeHistory.pokemon[toed.id].lastMove,undefined);
+}finally{f.battle.destroy();}});
+
+test('native BeforeMove denial preserves that actor lastMove and a real switch clears it',()=>{const f=fixture();try{
+  f.choose('move 3 1, move 4','move 4, move 4');
+  const toed=f.battle.p1.pokemon.find(p=>p.name==='toed');assert.equal(toed.lastMove.name,'Ice Beam');
+  toed.addVolatile('flinch');f.choose('move 1 1, move 4','move 4, move 4');
+  let result=assertNativeHistory(f),actor=result.facts.actors.find(p=>p.own&&p.registeredSet.name==='toed');
+  assert.equal(toed.lastMove.name,'Ice Beam');assert.equal(result.facts.nativeHistory.pokemon[actor.id].lastMove,'Ice Beam');
+  f.choose('switch 3, move 4','move 4, move 4');result=assertNativeHistory(f);
+  assert.equal(result.facts.nativeHistory.pokemon[actor.id].lastMove,false);assert.equal(toed.lastMove,null);
+}finally{f.battle.destroy();}});
+
+test('an identity invalidation inside a move frame cannot be overwritten by its later completion',()=>{const f=fixture();try{
+  const toed=f.source().observed.boards[0].sides[0].pokemon.find(p=>p.nickname==='toed');
+  f.line('|move|p1a: toed|Ice Beam|p2a: rai');f.line('|-transform|p1a: toed|p2a: rai');f.receive();
+  const result=f.assembly();assert.equal(result.facts.nativeHistory.pokemon[toed.id].lastMove,undefined);
+  assert(result.facts.nativeHistory.unknowns.some(row=>row.path===`pokemon.${toed.id}.lastMove`&&row.reason.includes('Transformed')));
 }finally{f.battle.destroy();}});
 
 test('native hit history resets on a genuine Champions switch and source incompleteness withholds every exact history field',()=>{const f=fixture();try{

@@ -487,6 +487,9 @@ test('longer turn and optional preview budgets retain idle confirmation and curr
     assert.equal(loaded.features.currentRecipientTypeImmunityGate,true);assert.equal(loaded.features.stagedTurnPlanMetadata,true);assert.equal(loaded.features.sourceBoundIneffectiveActions,true);
     for(const file of ['planning/recipient-effects.mjs','planning/board.mjs','planning/identity.mjs','planning/source.mjs','showdown/battle-state.mjs'])assert.match(loaded.modules[file],/^[a-f0-9]{64}$/);
     assert.equal(loaded.modules['showdown/battle-state.mjs'],createHash('sha256').update(readFileSync(new URL('./battle-state.mjs',import.meta.url))).digest('hex'));
+    for (const file of ['simulation/observed-position.mjs', 'simulation/registered-identity.mjs']) {
+      assert.equal(loaded.modules[file], createHash('sha256').update(readFileSync(new URL('../' + file, import.meta.url))).digest('hex'));
+    }
     assert.equal(loaded.modules['showdown/agent-session.mjs'], loaded.buildRevision);
     assert.match(loaded.modules['showdown/deadline-supervisor.mjs'], /^[a-f0-9]{64}$/);
     loaded.modules['showdown/deadline-supervisor.mjs'] = 'caller-edit';

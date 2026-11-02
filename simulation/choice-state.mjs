@@ -21,8 +21,8 @@ const zero=()=>Object.fromEntries(stages.map(stat=>[stat,0]));
 const LIFE=()=>({activeTurns:0,activeMoveActions:0,protectCounter:0,choiceLock:false,lastMove:false});
 const nativeKnown=(value,origin,sequence)=>({known:true,value,origin,sequence});
 const nativeUnknown=(reason,sequence)=>({known:false,reason,sequence});
-const nativeInitial=()=>({timesAttacked:nativeKnown(0,'native-Champions-constructor',0),lastMoveTargetLoc:nativeUnknown('Native target location is undefined before a provable targeted move.',0),currentResult:nativeUnknown('Native current-turn result is undefined before an action.',0),moveLastTurnResult:nativeUnknown('Native previous-turn result is undefined before an action.',0)});
-function nativeClear(entry,sequence,resetHitCounter){if(!entry.nativeHistory)return;if(resetHitCounter)entry.nativeHistory.timesAttacked=nativeKnown(0,'audited-Champions-clearVolatile-reset',sequence);entry.nativeHistory.currentResult=nativeUnknown('Native clearVolatile resets current-turn result to undefined.',sequence);entry.nativeHistory.moveLastTurnResult=nativeUnknown('Native clearVolatile resets previous-turn result to undefined.',sequence);}
+const nativeInitial=()=>({timesAttacked:nativeKnown(0,'native-Champions-constructor',0),lastMove:nativeUnknown('This actor has no independently proved native last move yet.',0),lastMoveTargetLoc:nativeUnknown('Native target location is undefined before a provable targeted move.',0),currentResult:nativeUnknown('Native current-turn result is undefined before an action.',0),moveLastTurnResult:nativeUnknown('Native previous-turn result is undefined before an action.',0)});
+function nativeClear(entry,sequence,resetHitCounter){if(!entry.nativeHistory)return;if(resetHitCounter)entry.nativeHistory.timesAttacked=nativeKnown(0,'audited-Champions-clearVolatile-reset',sequence);entry.nativeHistory.lastMove=nativeKnown(false,'audited-Champions-clearVolatile-last-move-reset',sequence);entry.nativeHistory.currentResult=nativeUnknown('Native clearVolatile resets current-turn result to undefined.',sequence);entry.nativeHistory.moveLastTurnResult=nativeUnknown('Native clearVolatile resets previous-turn result to undefined.',sequence);}
 
 // Never run model/caller accessors while cloning a source or options object.
 function snapshot(value){
@@ -56,6 +56,14 @@ function ownSets(teamText,teamId){
   check(createHash('sha256').update(Teams.pack(sets)).digest('hex')===teamId,'locked team hash differs');return sets;
 }
 const sameMoves=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===4&&b.length===4&&a.every((m,i)=>id(m)===id(b[i]));
+// Party move registration stays exactly four. A fresh native action menu may
+// instead be a singleton (charge/recharge/lock) with intentionally absent PP
+// or target fields. Agreement proves source identity, not inferred full PP.
+const sameActiveMoves=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length>=1&&a.length<=4&&a.length===b.length&&a.every((move,i)=>{
+  const other=b[i],name=move?.id??move?.move,otherName=other?.id??other?.move;
+  return typeof name==='string'&&id(name)!==''&&typeof otherName==='string'&&id(name)===id(otherName)&&
+    ['pp','maxpp','target','disabled'].every(key=>Object.hasOwn(move,key)===Object.hasOwn(other,key)&&(!Object.hasOwn(move,key)||Object.is(move[key],other[key])));
+});
 const setFor=(sets,species)=>{const rows=sets.filter(s=>base(s.species)===base(species));return rows.length===1?rows[0]:null;};
 function sheetMechanics(rows){
   check(Array.isArray(rows)&&rows.length===6,'complete published six required');
@@ -144,6 +152,13 @@ export function createChoiceStateHistory(options){
     // denials have no Move header and cannot replace this global value.
     globalLastMove=ambiguous?nativeUnknown('Called, truncated or ambiguous native move resolution.',frame.sequence):nativeKnown(move.id,'audited-completed-ordinary-native-move',frame.sequence);
     if(!user)return;
+    const currentUser=Object.values(state.sides).flatMap(side=>side.pokemon).find(p=>p.id===user.id);
+    // runMove calls moveUsed before an ordinary Move header; external/called
+    // moves can bypass it. Keep this actor's proof independent of unrelated
+    // unsafe lifecycle/PP history, and let a later ordinary move recover it.
+    // A faint/switch reset after the header must not be overwritten here.
+    if(userEntry&&currentUser?.activeSlot&&!currentUser.fainted&&userEntry.nativeHistory.lastMove.sequence<=frame.sequence)
+      userEntry.nativeHistory.lastMove=ambiguous?nativeUnknown('Called, truncated or ambiguous actor move does not prove native lastMove.',frame.sequence):nativeKnown(move.name,'audited-completed-ordinary-actor-last-move',frame.sequence);
     const direct=frame.events.filter(event=>event.type==='-damage'&&!event.tags.some(tag=>tag.startsWith('[from]'))&&event.pokemonId!==user.id);
     const hasFunction=(value,seen=new Set())=>{if(!value||typeof value!=='object'||seen.has(value))return false;seen.add(value);return Object.values(value).some(v=>typeof v==='function'||v&&typeof v==='object'&&hasFunction(v,seen));};
     const ordinaryDamage=!ambiguous&&['Physical','Special'].includes(move.category)&&!move.smartTarget&&!move.multiaccuracy&&!hasFunction(move);
@@ -230,8 +245,8 @@ export function createChoiceStateHistory(options){
       if(parts.length>3&&parts.slice(3).some(v=>v!=='[silent]'&&!['frommoveshedtail','fromshedtail'].includes(id(v))))unsafe('unsupported-entry','Entry with unaudited copied/history state');
     }
     if(type==='replace'||type==='swap')unsafe('unsupported-identity','Identity replacement/swap requires separate audit');
-    if(['replace','swap'].includes(type)){for(const item of entries.values()){item.nativeHistory.timesAttacked=nativeUnknown('Identity replacement/swap makes this public counter ambiguous.',sequence);item.nativeHistory.lastMoveTargetLoc=nativeUnknown('Identity replacement/swap makes target history ambiguous.',sequence);}globalLastMove=nativeUnknown('Identity replacement/swap requires a separate native move audit.',sequence);}
-    if(type==='-transform'&&e){e.nativeHistory.timesAttacked=nativeUnknown('Native Transform copies its target hit counter; unaudited copied history is withheld.',sequence);e.nativeHistory.lastMoveTargetLoc=nativeUnknown('Transformed/called target history is unaudited.',sequence);}
+    if(['replace','swap'].includes(type)){for(const item of entries.values()){item.nativeHistory.timesAttacked=nativeUnknown('Identity replacement/swap makes this public counter ambiguous.',sequence);item.nativeHistory.lastMove=nativeUnknown('Identity replacement/swap makes actor move history ambiguous.',sequence);item.nativeHistory.lastMoveTargetLoc=nativeUnknown('Identity replacement/swap makes target history ambiguous.',sequence);}globalLastMove=nativeUnknown('Identity replacement/swap requires a separate native move audit.',sequence);}
+    if(type==='-transform'&&e){e.nativeHistory.timesAttacked=nativeUnknown('Native Transform copies its target hit counter; unaudited copied history is withheld.',sequence);e.nativeHistory.lastMove=nativeUnknown('Transformed/called actor move history is unaudited.',sequence);e.nativeHistory.lastMoveTargetLoc=nativeUnknown('Transformed/called target history is unaudited.',sequence);}
     if(type==='move'&&e){
       e.confusionAttempt=false;
       if(parts.some(s=>s.startsWith('[from]'))||e.actedTurn===state.turn||AMBIGUOUS_MOVES.has(id(parts[1])))unsafe('unsupported-move-history','Called/repeated/PP-changing or copied-state move');
@@ -318,6 +333,7 @@ export function createChoiceStateHistory(options){
     for(const prior of [...turnRecords.keys()])if(prior<Math.max(0,state.turn-7)){turnRecords.delete(prior);turnsDropped++;}
     if(['switch','drag'].includes(type)){
       const incoming=actor(parts[0]),item=entry(incoming);if(item){item.life=LIFE();item.entered=true;item.protected=false;item.actedTurn=null;item.boosts=zero();item.boostsKnown=true;item.suppressed=false;
+        item.nativeHistory.lastMove=nativeKnown(false,'audited-Champions-entry-last-move-reset',sequence);
         item.unburdenAbilityTouched=item.abilityTouched===true;item.unburden={known:true,value:false,origin:'audited-native-entry-reset',sequence};
         item.substitute=transfersSubstitute;item.substituteSequence=transfersSubstitute?sequence:null;
         const registered=setFor(incoming.id.startsWith(state.ownSide+'-')?sets:sheet??[],incoming.species);
@@ -376,7 +392,7 @@ export function createChoiceStateHistory(options){
     check(legal?.pokemon?.length===party?.length&&party.length===4,'exact private selected four required');
     const entryKeys=['ident','details','condition','active','ability','item'];
     check(party.every((p,i)=>entryKeys.every(k=>p[k]===legal.pokemon[i][k])&&sameMoves(p.moves,legal.pokemon[i].moves)),'private party source changed');
-    check(lastRequest.active.every((slot,i)=>sameMoves(slot.moves.map(m=>m.id??m.move),legal.active[i].moves.map(m=>m.id??m.move))&&JSON.stringify(slot.moves.map(m=>m.pp))===JSON.stringify(legal.active[i].moves.map(m=>m.pp))),'private active move/PP source changed');
+    check(lastRequest.active.length===legal.active.length&&lastRequest.active.every((slot,i)=>sameActiveMoves(slot?.moves,legal.active[i]?.moves)),'private active move/PP source changed');
     const tracked=battleStateSnapshot(state);
     check(JSON.stringify(board.field)===JSON.stringify(tracked.field),'observed field differs from current native history');
     for(const side of board.sides??[])for(const p of side.pokemon??[]){
@@ -428,7 +444,7 @@ export function assembleChoiceState(token){
     for(const p of side.pokemon??[]){
       const own=side.id===board.ownSide,rows=tracked.sides.find(s=>s.id===side.id)?.pokemon.filter(t=>own?t.requestIndex===p.requestIndex:t.nickname===p.nickname&&base(t.species)===base(p.species))??[];
       const native=rows.length===1?rows[0]:null,e=native?entries[native.id]:null,registered=setFor(own?sets:receipt.source.opposingSheet??[],p.species);
-      nativeHistory.pokemon[p.id]={};for(const key of ['timesAttacked','lastMoveTargetLoc','moveLastTurnResult'])nativeFact(nativeHistory.pokemon[p.id],key,e?.nativeHistory?.[key],'pokemon.'+p.id+'.'+key);
+      nativeHistory.pokemon[p.id]={};for(const key of ['timesAttacked','lastMove','lastMoveTargetLoc','moveLastTurnResult'])nativeFact(nativeHistory.pokemon[p.id],key,e?.nativeHistory?.[key],'pokemon.'+p.id+'.'+key);
       if(complete&&derivedSafe&&e&&registered){
         if(!e.abilityKnown&&!e.abilityTouched&&typeof registered.ability==='string'){
           const species=dex.species.get(p.species);e.ability=species.isMega&&Object.values(species.abilities).length===1?Object.values(species.abilities)[0]:registered.ability;e.abilityKnown=true;

@@ -17,6 +17,46 @@ const bytes=value=>Buffer.byteLength(typeof value==='string'?value:JSON.stringif
 const sha=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
 const fail=code=>{throw new CodexCliTransportError(code);};
 const safeInt=value=>Number.isSafeInteger(value)&&value>=0;
+// Counts and timings only: never retain event payloads or model text. All
+// parsed wire events are observed here, including ignored legacy duplicates;
+// these measurements do not prove remote generation or a network round trip.
+function recordCliActivity(active,message,at){
+  if(!active)return;
+  const a=active.telemetry.cliActivity??={schemaVersion:1,scope:'current-turn-parsed-wire',payloadsRetained:false,
+    startedAt:active.telemetry.startedAt,events:0,counts:{},buckets:[],overflowEvents:0,maxGapMs:0};
+  let category='other';const method=message?.method;
+  if(typeof method==='string'){
+    if(method==='item/tool/call')category='toolRequest';
+    else if(method.startsWith('codex/event/'))category='legacy';
+    else if(quietNotifications.has(method))category='quiet';
+    else if(method.startsWith('item/reasoning/'))category='reasoning';
+    else if(method==='item/agentMessage/delta')category='text';
+    else if(method==='item/started')category='itemStarted';
+    else if(method==='item/completed')category='itemCompleted';
+    else if(method==='turn/completed')category='turnCompleted';
+    else if(method==='thread/tokenUsage/updated')category='usage';
+    else if(method==='error'||method.startsWith('modelProvider/'))category='providerError';
+  }else if(object(message)&&Object.hasOwn(message,'id'))category='rpcResponse';
+  a.events++;a.counts[category]=(a.counts[category]??0)+1;a.firstEventAt??=at;
+  if(a.lastEventAt!==undefined)a.maxGapMs=Math.max(a.maxGapMs,Math.max(0,at-a.lastEventAt));a.lastEventAt=at;
+  if(category!=='legacy'&&category!=='quiet')a.lastNonNoiseParsedAt=at;
+  const second=Math.max(0,Math.floor((at-a.startedAt)/1000));
+  if(second<64){let b=a.buckets.find(value=>value.second===second);if(!b){b={second,counts:{}};a.buckets.push(b);}b.counts[category]=(b.counts[category]??0)+1;}
+  else a.overflowEvents++;
+  if(category==='reasoning'||category==='text'){
+    const k=category==='reasoning'?'reasoningDeltas':'textDeltas',d=a[k]??={events:0,bytes:0};
+    d.events++;d.firstAt??=at;d.lastAt=at;if(typeof message.params?.delta==='string')d.bytes+=bytes(message.params.delta);
+  }
+  if(category==='providerError'){
+    const e=message.params?.error,info=e?.codexErrorInfo;
+    const kinds=['ContextWindowExceeded','UsageLimitExceeded','HttpConnectionFailed','ResponseStreamConnectionFailed','ResponseStreamDisconnected','ResponseTooManyFailedAttempts','BadRequest','Unauthorized','SandboxError','InternalServerError','Other'];
+    const kind=kinds.find(k=>typeof info==='string'?info.toLowerCase()===k.toLowerCase():object(info)&&Object.keys(info).some(key=>key.toLowerCase()===k.toLowerCase()));
+    const nested=kind&&object(info)?Object.entries(info).find(([key])=>key.toLowerCase()===kind.toLowerCase())?.[1]:null;
+    const status=nested?.httpStatusCode??e?.httpStatusCode??message.params?.httpStatusCode;
+    a.providerError={at,...(kind?{kind}:{}),...(Number.isInteger(status)&&status>=100&&status<=599?{httpStatus:status}:{}),
+      ...(typeof message.params?.willRetry==='boolean'?{reportedWillRetry:message.params.willRetry}:{})};
+  }
+}
 const id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/u.test(value);
 const toolName=value=>typeof value==='string'&&/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/u.test(value);
 const TOOL_LIMITS=Object.freeze({definitions:32,calls:32,argumentsBytes:1024*1024,resultBytes:2*1024*1024,totalResultBytes:MAX_CONTEXT_BYTES,manifestBytes:1024*1024});
@@ -204,6 +244,7 @@ export function createCodexSessionTransport(options={}){
         invalidate('session_tool_call_mismatch');return false;
       }
       active.toolItems.get(item.id).completed=true;entry.itemCompleted=true;
+      entry.row.itemCompletedAt??=now();
     }else if(item.status!==undefined&&item.status!=='inProgress'){invalidate('session_tool_call_mismatch');return false;}
     return true;
   }
@@ -225,13 +266,14 @@ export function createCodexSessionTransport(options={}){
     const owns=()=>session===current&&!current.invalid&&!current.closed&&current.active===active&&!active.toolAbort.signal.aborted&&now()<active.deadlineAt;
     const reply=(requestId,result)=>{if(!owns())return false;current.child.stdin.write(`${JSON.stringify({id:requestId,result})}\n`);return true;};
     if(prior){
+      if(active.telemetry.cliActivity)active.telemetry.cliActivity.duplicateToolRequests=(active.telemetry.cliActivity.duplicateToolRequests??0)+1;
       if(prior.response)reply(message.id,prior.response);
       else prior.waiters.set(rpcKey,message.id);
       return;
     }
     if(active.toolCalls.size>=TOOL_LIMITS.calls){invalidate('session_tool_limit');return;}
     const row={name:params.tool,callIdSha256:sha(params.callId),argumentsSha256:sha(args),origin:'model-requested',requestedAt:now(),outcome:'queued'};
-    const entry={signature,waiters:new Map([[rpcKey,message.id]]),response:null,itemCompleted:false};
+    const entry={signature,waiters:new Map([[rpcKey,message.id]]),response:null,itemCompleted:false,row};
     active.toolCalls.set(params.callId,entry);active.telemetry.modelToolCalls.push(row);
     const task=active.toolTail.then(async()=>{
       if(!owns())return;
@@ -261,6 +303,7 @@ export function createCodexSessionTransport(options={}){
   }
   function notify(message){
     const current=session;if(!current||current.invalid)return;
+    recordCliActivity(current.active,message,now());
     if(object(message)&&Object.hasOwn(message,'id')){
       if(typeof message.method==='string'){if(message.method==='item/tool/call')toolRequest(current,message);else invalidate('tools_forbidden');return;}
       const entry=current.pending.get(message.id);if(!entry){invalidate('invalid_stream');return;}
@@ -335,6 +378,8 @@ export function createCodexSessionTransport(options={}){
     }
     if(method==='thread/tokenUsage/updated'){
       const usage=params.tokenUsage;if(!object(usage?.last)||!object(usage?.total)){invalidate('invalid_stream');return;}
+      active.telemetry.tokenUsageObservedAt=now();
+      active.telemetry.tokenUsageTurnCompleteAtObservation=active.telemetry.sessionTurnCompleted===true;
       for(const [field,key]of [['inputTokens','inputTokens'],['outputTokens','outputTokens'],['cachedInputTokens','cachedInputTokens'],['reasoningOutputTokens','reasoningTokens'],['totalTokens','totalTokens']]){
         if(safeInt(usage.last[field]))active.telemetry[key]=usage.last[field];
         if(safeInt(usage.total[field]))active.telemetry[`sessionCumulative${key[0].toUpperCase()}${key.slice(1)}`]=usage.total[field];

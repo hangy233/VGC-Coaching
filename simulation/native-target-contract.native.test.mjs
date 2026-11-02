@@ -26,6 +26,7 @@ function sourceFor(actor,{pair=false}={}){
 function choose(battle,p1,p2){assert.equal(battle.choose('p1',p1),true,battle.p1.choice.error);assert.equal(battle.choose('p2',p2),true,battle.p2.choice.error);}
 function reference(actor,options={}){
   const source=sourceFor(actor,options);
+  if(options.partner)source.p1[1]=options.partner;
   for(const party of Object.values(source))for(const p of party)assert.equal(new TeamValidator(FORMAT).validateSet(nativeSet(p)),null,`${p.species}: actual pinned native registration`);
   const battle=new Battle({formatid:FORMAT,seed,p1:{name:'Independent p1',team:source.p1.map(nativeSet)},p2:{name:'Independent p2',team:source.p2.map(nativeSet)}});
   choose(battle,'team 1234','team 1234');
@@ -44,7 +45,7 @@ const quiet=[move(1),move(1,-1)]; // native Rain Dance and Helping Hand
 function input(ref,p1,p2=quiet,ownSide='p1'){
   return {position:capture(ref,ownSide),branches:[{id:'native-target-contract',ourActions:copy(ownSide==='p1'?p1:p2),opposingActions:copy(ownSide==='p1'?p2:p1),gate:{kind:'delivery',requiredActionsBy:ownSide==='p1'?['ally']:['fari']}}],seeds:[seed],hypotheses:['Independent synthetic native current-state target-contract parity; not an exact historical replay or a guarantee about hidden opposing state.']};
 }
-const nativeVolatiles=p=>Object.fromEntries(Object.entries(p.volatiles).filter(([key])=>!['stall','choicelock'].includes(key)).map(([key,v])=>[key,{remainingTurns:v.duration??null}]));
+const nativeVolatiles=p=>Object.fromEntries(Object.entries(p.volatiles).filter(([key])=>!['stall','choicelock'].includes(key)).map(([key,v])=>[key,{remainingTurns:v.duration??null,...(key==='confusion'?{remainingActions:v.time}:{})}]));
 function normalize(lines,names=new Map()){
   return extractChannelMessages(lines.join('\n'),[-1])[-1].map(line=>line.replace(/\|t:\|\d+/gu,'|t:|<native-epoch>').replace(/(p[12][ab]?: )([^|]+)/gu,(_all,prefix,name)=>prefix+(names.get(name)??name)).replace(/\|(p[12]): (?:Sim|Independent) p[12](?=\|)/gu,'|$1: <side>'));
 }
@@ -70,6 +71,21 @@ function refused(request,prefix,detail){
   const before=copy(request);assert.throws(()=>simulateNativeTurn(request),error=>{assert(error.message.startsWith(prefix),error.message);assert(error.message.includes(detail),error.message);return true;});
   assert.deepEqual(request,before,'refusal does not silently repair the supplied target');
 }
+
+test('opposing Light Screen omits its side target while its Hurricane companion retains the chosen target',()=>{
+  const actor=mon('screen','Grimmsnarl','Prankster','Light Clay',['Light Screen','Reflect','Spirit Break','Protect']);
+  const partner=mon('ally','Charizard','Blaze','Focus Sash',['Hurricane','Heat Wave','Weather Ball','Protect']);
+  const ref=reference(actor,{partner});try{
+    assert.equal(ref.battle.p1.activeRequest.active[0].moves[0].target,'allySide');
+    assert.equal(ref.battle.p1.activeRequest.active[1].moves[0].target,'any');
+    const bad=[move(1,1),move(1,2)];
+    refused(input(ref,bad,quiet,'p2'),'Move does not accept a chosen target','move[1]=Light Screen menuTarget=allySide providedTarget=1');
+    const good=[move(1),move(1,2)],sample=parity(ref,input(ref,good,quiet,'p2'));
+    assert.equal(sample.accepted.p1.canonical,'move 1, move 1 2');
+    assert(ref.battle.p1.sideConditions.lightscreen);
+    assert(sample.events.some(e=>e.type==='move'&&e.actorId==='ally'&&e.move==='Hurricane'));
+  }finally{ref.battle.destroy();}
+});
 
 test('native opposing Snarl omits a chosen target while paired Mega-Z Draco Meteor retains its explicit normal target',()=>{
   const ref=reference(null,{pair:true});try{

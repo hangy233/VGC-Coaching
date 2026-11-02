@@ -159,9 +159,14 @@ slot by habit. Do not spread recoverable damage merely because both hits connect
 
 - **Remove the setter/support** when denying further screens, disruption or
   positioning opens our attacker's route. Check what the opposing attacker gains
-  during that removal and our answer to its resulting boosted board. Removing
-  the setter does not clear screens already established; name the attack, screen
-  removal or contained expiration route that still delivers the finish.
+  during that removal. When cleanup leaves a boosting or recovery-capable
+  attacker, identify the selected answer's first effective attack and entry or
+  Choice-reset cost before committing more cleanup turns or spending that answer.
+  Resolve a material payoff gap with the existing MCP allowance, or keep the
+  continuation explicitly unverified; "stronger pressure later" alone is no
+  conversion. Removing the setter does not clear screens already established;
+  name the attack, screen removal or contained expiration route that still
+  delivers the finish.
 - **Remove or disable the attacker** when it is the immediate win condition and
   its support cannot prevent a feasible removal. Check screens, Protect,
   redirection, switches and both opposing actions before committing a double.

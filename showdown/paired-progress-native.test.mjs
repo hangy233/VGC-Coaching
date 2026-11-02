@@ -62,7 +62,7 @@ test('authored delivery goals use actual MCP to distinguish a delivered attack f
     return AgentSession.prototype.execute.call(source,command);
   }},{descriptorPath});
   const client=new Client({name:'paired-progress-native-regression',version:'1'},{capabilities:{}});
-  const transport=new StdioClientTransport({command:process.execPath,args:[fixtureServer,workspace]});let serverPid;
+  const transport=new StdioClientTransport({command:process.execPath,args:[fixtureServer,workspace,'--offline-detailed-analysis']});let serverPid;
   const actions=[{type:'move',slot:1,target:1},{type:'move',slot:1,target:2}];
   const branches=[
     {id:'sound-partner-denied',opposingActions:[{type:'move',slot:2,target:2},{type:'move',slot:4,target:1}]},

@@ -116,12 +116,20 @@ test('actual runtime control with injected providers/SDK/adapter exercises norma
 });
 
 test('owned fake SDK connection closes and emits once without mutating a frozen result during finally',async()=>{
-  const f=fixture({hangUntilAbort:true}),client=f.args.nativeClient,events=[];let closes=0;delete f.args.nativeClient;
-  f.args.connect=async()=>({client,close:async()=>{closes++;}});f.args.onEvent=event=>events.push(event);
+  const f=fixture({hangUntilAbort:true}),client=f.args.nativeClient,events=[],registrations=[];let closes=0;delete f.args.nativeClient;
+  f.args.connect=async options=>{assert.deepEqual(options,{qualificationOnly:true});return {client,qualificationAuthority:{mode:'child-local-saved-research',liveQuotaExercised:false,liveDescriptorAccessed:false},
+    registerQualificationCase:async spec=>{registrations.push(structuredClone(spec));return {status:'registered',caseId:spec.caseId,sourceSha256:spec.sourceSha256,factsSha256:spec.factsSha256};},close:async()=>{closes++;}};};f.args.onEvent=event=>events.push(event);
   const result=await qualifyPonderRuntime(f.args);
   assert.equal(closes,1);assert.equal(result.numericSdkClosed,true);assert.equal(result.cleanupVerified,true);assert.equal(Object.isFrozen(result),true);assert.equal(Object.isFrozen(result.events),true);
   assert.equal(events.filter(event=>event.name==='qualification.numeric-sdk-closed').length,1);assert.equal(result.events.filter(event=>event.name==='qualification.numeric-sdk-closed').length,1);
   assert.equal(result.cases[0].controlExercised,true);assert.equal(result.cases[1].controlExercised,true);assert.equal(result.qualified,false);assert.equal(hasPonderQualificationReceipt(f.provider,result),false);
+  assert.equal(registrations.length,2);assert.notEqual(registrations[0].caseId,registrations[1].caseId);
+  for(const [i,spec]of registrations.entries()){
+    assert.equal(spec.contexts.length,2);assert.equal(spec.contexts[0].analysis,'current');assert.equal(spec.contexts[1].analysis,'frozen');assert.deepEqual(spec.contexts[0].source,spec.contexts[1].source);
+    assert.equal(spec.contexts[1].freezeId,result.journal.records[i].freezeId);assert.equal(spec.deadlineAt,result.cases[i].deadlineAt);assert.equal(spec.deadlineAt-result.cases[i].startedAt,40000);
+    assert.equal(spec.sourceSha256,result.savedSourceSha256);assert.equal(spec.turn,f.request.state.boards[0].turn);
+  }
+  assert.equal(result.liveQuotaExercised,false);
 });
 
 test('archived active-set search flags stay unchanged during the disclosed local-submission wait',async()=>{
@@ -149,7 +157,7 @@ test('changed native source, altered archived board or a mismatched frozen marke
 });
 
 test('loaded source pins bind full runtime/facade/projection and current skill, not a JSON claim',async()=>{
-  const pins=await ponderQualificationSourcePins();assert.equal(pins.skillSha256,ISOLATED_POLICY_SOURCE.skillSha256);assert.equal(pins.skillVersion,ISOLATED_POLICY_SOURCE.skillVersion);assert.equal(pins.sha256,digest(pins.files));for(const path of ['isolated/ponder-runtime.mjs','isolated/ponder-controller.mjs','isolated/codex-session-transport.mjs','simulation/choice-simulation.mjs','showdown/protocol-action.mjs','showdown/battle-state.mjs'])assert(pins.files.some(row=>row.path===path&&/^[a-f0-9]{64}$/u.test(row.sha256)));
+  const pins=await ponderQualificationSourcePins();assert.equal(pins.skillSha256,ISOLATED_POLICY_SOURCE.skillSha256);assert.equal(pins.skillVersion,ISOLATED_POLICY_SOURCE.skillVersion);assert.equal(pins.sha256,digest(pins.files));for(const path of ['isolated/attention-alert.mjs','isolated/ponder-runtime.mjs','isolated/ponder-controller.mjs','isolated/codex-session-transport.mjs','simulation/choice-simulation.mjs','showdown/protocol-action.mjs','showdown/battle-state.mjs','observability/qualification-research.mjs','simulation/registered-identity.mjs'])assert(pins.files.some(row=>row.path===path&&/^[a-f0-9]{64}$/u.test(row.sha256)));
   assert.equal(pins.files.find(row=>row.path==='showdown/battle-state.mjs').sha256,createHash('sha256').update(await readFile(new URL('../showdown/battle-state.mjs',import.meta.url))).digest('hex'));
   for(const name of ['context-limits.mjs','game-summary.mjs','decision-context.mjs','matchup-guidance.mjs']){
     const rows=pins.files.filter(row=>row.path==='isolated/'+name);assert.equal(rows.length,1,name);

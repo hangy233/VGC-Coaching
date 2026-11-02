@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 const ALLOWED=new Set(['calculate_damage','calculate_damage_range','calculate_speed','simulate_turn','simulate_turn_batch','simulate_choices']);
 export const PLANNING_RUNTIME_FILES=Object.freeze([
+  '../simulation/registered-identity.mjs',
   '../planning/research-budget.mjs',
   '../dist/index.js','../dist/speed/calculator.js','../simulation/turn-simulator.mjs','../simulation/move-support.mjs','../simulation/native-state.mjs','../simulation/approximate-position.mjs','../simulation/history-state.mjs',
   '../simulation/turn-worker.mjs','../simulation/mcp-tools.mjs','../simulation/schemas.mjs','../simulation/observed-position.mjs','../simulation/choice-schemas.mjs','../simulation/choice-simulation.mjs','../simulation/choice-presentation.mjs','../simulation/choice-state.mjs','../simulation/spread-candidates.mjs','../simulation/spread-observations.mjs','../simulation/spread-range.mjs','../simulation/choice-ranges.mjs','../package-lock.json',

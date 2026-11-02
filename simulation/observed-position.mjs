@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {z} from 'zod';
 import {validateOwnReservePpSnapshot} from '../showdown/battle-state.mjs';
+import {registeredSpeciesKey} from './registered-identity.mjs';
 import {observedBoostsSchema as boostsSchema,observedVolatileSchema as volatileSchema,observedSideConditionsSchema as sideConditionsSchema,observedSheetSchema as sheetSchema,observedPpSchema as ppSchema,observedFieldSchema,observedLifecycleSchema,observedPositionInputSchema} from './schemas.mjs';
 export {observedLifecycleSchema,observedFieldSchema,observedHypothesesSchema,observedBindingSchema,observedPositionInputSchema,observedSourceSchema} from './schemas.mjs';
 
@@ -45,9 +46,7 @@ export function bindObservedActions(actions,built,{replacement=false}={}){
 }
 
 function registeredKey(species){
-  const value=dex.species.get(species);
-  check(value.exists,`unknown current species ${species}`);
-  return id(value.isMega?value.baseSpecies:value.name);
+  return registeredSpeciesKey(species,dex);
 }
 function setFor(species,sets){
   const matches=sets.filter(set=>registeredKey(set.species)===registeredKey(species));
