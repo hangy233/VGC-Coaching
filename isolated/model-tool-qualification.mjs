@@ -238,6 +238,11 @@ async function localOperator(row,{client,actualSdk,deadlineAt,startedAt,now,nati
   }catch(error){await operator.dispatch({id:id('close_failed'),op:'close'}).catch(()=>{});throw error;}
 }
 
+// Manager-only saved-case behavioral validation uses this same source/legality
+// relay and local final recorder. This grants no generation receipt, live
+// controller, search capability or provider qualification.
+export {localOperator as createOfflineModelToolOperator};
+
 function generationMatches(response,provider,row,deadlineAt){
   const t=response?.telemetry,selected=provider.decisionProvider;
   return hasCodexCliGenerationReceipt(selected,response)&&t?.telemetrySource==='codex-cli-session'&&t.authenticationMethod==='chatgpt'&&t.contextMode==='session'&&

@@ -90,6 +90,57 @@ test('model-tools context carries full skill and only the three final author fie
   const f=await fixture(),payload=restoreContextPayload(JSON.parse(f.context.input));assert.deepEqual(f.context.schema.required,['actions','planUpdate','reason']);assert.deepEqual(Object.keys(f.context.schema.properties),['actions','planUpdate','reason']);assert.deepEqual(payload.matchupSkill,guidance);
   for(const key of ['hostRouteConstraints','firstChoiceScope','hostResearchCard','hostResearchRequirement','hypothesisPreset','atomicResearchContracts','atomicResearchContract','tacticalEvidence','automaticThreatScreen'])assert.equal(payload[key],undefined);
   assert.equal(f.context.promptMetadata.decisionMode,'model-tools');assert.equal(f.context.promptMetadata.automaticTacticalEvidence,false);
+  assert.equal(f.context.promptMetadata.policyVersion,'battle-model-tools.v6');
+  assert.match(f.context.instructions,/first content item.*separate decisionClock timing item/u);
+  assert.match(f.context.instructions,/local model clock, not an observed server clock, extension or new deadline/u);
+  assert.match(f.context.instructions,/15000 ms finalization reserve inside the existing model window/u);
+  assert.match(f.context.instructions,/finalize-now phase.*finish the complete legal final immediately/u);
+  assert.match(f.context.instructions,/Retain actual material research obligations/u);
+  assert.match(f.context.instructions,/minified JSON on one line/u);
+});
+
+test('aged initial requests expose finalization before any tool and missing time remains unknown',async()=>{
+  const f=await fixture();
+  for(const [remaining,phase] of [[38000,'research-available'],[15000,'finalize-now'],[7000,'finalize-now'],[undefined,'unknown']]){
+    const clock={modelDeadlineAt:40000,admittedAt:1000,...(remaining===undefined?{}:{remainingAtAssemblyMs:remaining})},before=structuredClone(clock);
+    const context=buildModelToolContext({state:f.state,ownTeamText,opponentSheet:f.state.boards[0].opponentSheets.p2,...ISOLATED_POLICY_SOURCE,matchupGuidance:guidance,decisionClock:clock,now:()=>1000});
+    const payload=restoreContextPayload(JSON.parse(context.input));
+    assert.equal(payload.decisionClock.phase,phase);
+    assert.equal(payload.decisionClock.modelDeadlineAt,40000);
+    assert.equal(payload.decisionClock.remainingAtAssemblyMs,remaining);
+    assert.deepEqual(clock,before);
+    assert.deepEqual(payload.matchupSkill,guidance);
+    assert.deepEqual(context.schema.properties.actions,f.context.schema.properties.actions);
+  }
+});
+
+test('turn briefs are bounded without narrowing action choices or the fuller preview plan',async()=>{
+  const f=await fixture(),limits=f.context.schema.properties;
+  assert.equal(limits.planUpdate.properties.objective.maxLength,96);
+  assert.equal(limits.planUpdate.properties.nextCondition.maxLength,96);
+  assert.equal(limits.reason.maxLength,160);
+  const state=structuredClone(f.state),action=state.actions[0],board=state.boards[0];
+  action.kind='preview';action.legalActions={teamPreview:true,maxChosenTeamSize:4,pokemon:names.map((name,index)=>({ident:`p1: ${name}`,details:`${name}, L50`,condition:'100/100',active:false,moves:['tackle','protect'],ability:abilities[index],item:''}))};
+  board.turn=0;board.request={rqid:action.rqid,teamPreview:true};
+  const preview=buildModelToolContext({state,ownTeamText,opponentSheet:board.opponentSheets.p2,...ISOLATED_POLICY_SOURCE,matchupGuidance:guidance,now:()=>1000});
+  assert.equal(preview.schema.properties.reason.maxLength,500);
+  assert.equal(preview.schema.properties.planUpdate.properties.objective.maxLength,180);
+  assert.equal(preview.schema.properties.planUpdate.properties.nextCondition.maxLength,180);
+  assert.deepEqual(restoreContextPayload(JSON.parse(preview.input)).matchupSkill,guidance);
+  assert.deepEqual(limits.actions.items.anyOf.map(item=>item.properties.type.const),['move','move','switch','pass']);
+  assert.equal(limits.planUpdate.properties.preserveIds.maxItems,6,'The model can retain all needed actor identities.');
+});
+
+test('short complete claims preserve the authored pair while an overlong brief never stages or silently truncates',async()=>{
+  const good=await fixture(),decision=pick('Protect earns partner pressure; the switch reply remains untested.');
+  decision.planUpdate={objective:'Retain the required answer while earning an attack.',preserveIds:['p1-0'],nextCondition:'Recheck the answer after the opposing field or recipient changes.'};
+  assert.equal((await good.run(async()=>({decision}))).status,'submitted');
+  assert.equal(good.evidence[0].decision.reason,decision.reason);
+  assert.deepEqual(good.observed[0].planUpdate,decision.planUpdate);
+  const bad=await fixture(),overlong=pick('Repeating the complete board and optional explanation delays the final choice. '.repeat(4));
+  await assert.rejects(bad.run(async()=>({decision:overlong})));
+  assert.equal(bad.calls.some(call=>['battle_stage_fallback','battle_choose'].includes(call.name)),false);
+  assert.deepEqual(bad.reserved,[]);
 });
 
 test('a model selecting no MCP causes zero research and preserves its final Mega pair without a prior stage',async()=>{

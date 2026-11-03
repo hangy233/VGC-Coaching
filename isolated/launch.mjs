@@ -61,11 +61,15 @@ async function privateOutput(workspace,supplied,teamId){
 }
 
 export function waitManagerGate(expected,{input=process.stdin,output=process.stdout}={}){
-  need(input.isTTY===true&&!input.destroyed&&!input.readableEnded,'LAUNCH_INPUT','An open interactive manager input is required before live control.');
-  output.write(JSON.stringify({state:'manager-gate',expected})+'\n');
+  need(input.isTTY===true,'LAUNCH_INPUT','Interactive manager input is required before live control.');
+  output.write(JSON.stringify({state:'manager-gate',expected,cancel:'CANCEL_LIVE'})+'\n');
+  if(input.destroyed||input.readableEnded){input.pause?.();input.unref?.();return Promise.resolve({cancelled:true,reason:'manager-input-closed',gate:expected});}
   return new Promise((resolveGate,reject)=>{const reader=createInterface({input,terminal:false});let settled=false;
-    reader.once('line',line=>{settled=true;reader.close();if(line===expected)resolveGate();else reject(Object.assign(new Error('The exact manager gate was not released.'),{code:'LAUNCH_GATE'}));});
-    reader.once('close',()=>{if(!settled)reject(Object.assign(new Error('Manager input closed before the gate.'),{code:'LAUNCH_GATE'}));});
+    const cancel=reason=>{input.pause?.();input.unref?.();resolveGate({cancelled:true,reason,gate:expected});};
+    reader.once('line',line=>{settled=true;reader.close();if(line===expected)resolveGate();
+      else if(line==='CANCEL_LIVE')cancel('manager-cancelled');
+      else reject(Object.assign(new Error('The exact manager gate was not released.'),{code:'LAUNCH_GATE'}));});
+    reader.once('close',()=>{if(!settled){settled=true;cancel('manager-input-closed');}});
   });
 }
 
@@ -96,8 +100,12 @@ export async function launchWorkflow(options,{workspace=ROOT,providerFactory=cre
     need(sha(pins)===sha(await sourcePins()),'LAUNCH_SOURCE_CHANGED','Loaded source changed after qualification.');
     write({state:'qualified',sourceSha256:pins.sha256,profile:PROFILE,liveAdmissionGranted:false});
     if(options.mode==='qualify-only')return {state:'qualified-offline',sourceSha256:pins.sha256,battlesStarted:0};
-    await gate('START_LIVE',{input});
-    const adoption=[],links=new Set();let searchReserved=false;
+    const admission=await gate('START_LIVE',{input});
+    if(admission?.cancelled===true){
+      const result={state:'cancelled-before-live',gate:'START_LIVE',reason:admission.reason,searchesAttempted:0,searchDispatchAttempted:false,searchDispatched:false,nativeControlOpened:false,clientStopped:false};
+      await output.save('live-result.json',result);write(result);return result;
+    }
+    const adoption=[],links=new Set();let searchReserved=false,searchDispatchAttempted=false;
     const runnerOptions={workspace,configurationReader:async args=>{
       const configuration=await readConfiguration(args);
       need(configuration.identity.teamId===document.teamId&&configuration.scope.manualReady===true&&configuration.scope.allowPonder===true&&configuration.scope.maxSets===1,'LAUNCH_SCOPE','The public live workflow requires the exact qualified team, manual readiness, pondering and one explicitly authorized set.');
@@ -105,16 +113,21 @@ export async function launchWorkflow(options,{workspace=ROOT,providerFactory=cre
     },codexProviderFactory:()=>({...provider,qualifyCodex:async args=>{
       need(args.decisionMode==='model-tools'&&sha(args.requests)===sha(document.requests)&&verifyMain(provider,main),'LAUNCH_RECEIPT','Main source/provider identity changed.');return main;}}),
       qualifyPonder:async()=>{need(await verifyShadow(provider,shadow),'LAUNCH_RECEIPT','Shadow source/provider identity changed.');return shadow;},
+      beforeSearch:async()=>{
+        need(!searchReserved&&!searchDispatchAttempted,'LAUNCH_SEARCH_RESERVED','The one search was already reserved.');
+        await output.save('startup-adoption.json',{held:true,sourceSha256:pins.sha256,searchDispatched:false,
+          attentionAlert:{path:relative(workspace,alert.path).replaceAll('\\','/'),prepared:true,automaticActions:false},operations:adoption});
+        write({state:'held-ready-awaiting-search',sourceSha256:pins.sha256});
+        const released=await gate('START_SEARCH',{input});if(released?.cancelled===true)return released;
+        need(sha(pins)===sha(await sourcePins()),'LAUNCH_SOURCE_CHANGED','Source changed before search.');searchReserved=true;
+      },
       operatorFactory:config=>{live=true;const owned=operatorFactory({...config,onState:state=>{
         config.onState?.(state);for(const room of state.rooms??[])if(room.ended===false&&typeof room.id==='string'&&/^(?:battle|game-bestof3)-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/u.test(room.id)&&!links.has(room.id)){
           links.add(room.id);write({state:'watch-link',kind:room.id.startsWith('game-')?'set':'game',room:canonical(room.id),url:'https://play.pokemonshowdown.com/'+room.id,source:'native-owned-room-id'});
         }} });return {...owned,dispatch:async(query,metadata)=>{
           if(query.op==='start-next'){
-            need(!searchReserved,'LAUNCH_SEARCH_RESERVED','The one search was already reserved.');
-            await output.save('startup-adoption.json',{held:true,sourceSha256:pins.sha256,searchDispatched:false,
-              attentionAlert:{path:relative(workspace,alert.path).replaceAll('\\','/'),prepared:true,automaticActions:false},operations:adoption});
-            write({state:'held-ready-awaiting-search',sourceSha256:pins.sha256});await gate('START_SEARCH',{input});
-            need(sha(pins)===sha(await sourcePins()),'LAUNCH_SOURCE_CHANGED','Source changed before search.');searchReserved=true;
+            need(searchReserved&&!searchDispatchAttempted,'LAUNCH_SEARCH_RESERVED','Search requires its released gate and cannot be repeated.');
+            searchDispatchAttempted=true;
           }
           const response=await owned.dispatch(query,metadata);
           if(!searchReserved&&['status','arm','decision-policy','model-tool-mode','model-tool-catalog','call'].includes(query.op)){

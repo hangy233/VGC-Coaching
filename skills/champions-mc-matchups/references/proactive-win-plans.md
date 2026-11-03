@@ -216,6 +216,24 @@ if its lock becomes exploitable. Earlier entry can still be necessary to remove 
 obstacle, stop denial or avoid immediate loss; keeping the cleaner reserved is a
 plan with contingencies, not a rule that overrides the current board.
 
+### Stall opposing Speed control without spending the finisher
+
+When opposing Tailwind or Room denies the only useful finisher, count the
+remaining turns including the current turn, then name who takes each attack,
+which legal protection or switch spends each turn, and when the finisher first
+attacks. Preserve the pivot's needed HP before that sequence becomes forced.
+A sacrifice that forces the finisher back one turn early has not stalled the
+whole window. Check actual moves and Choice locks; do not invent Protect.
+
+Resolve equal-priority attacks by current Speed under the control effect. A
+priority label alone supplies no cover. At expiry, recheck remaining opposing
+priority as well as ordinary order. Switching resets boosts and the Choice lock;
+check the returning attack from that reset state, including weather and HP.
+If no covered sequence remains, identify the earlier resource loss and label
+the late read or gamble; do not claim a forced stall. Immediate removal, a
+delivered winning trade or a checked surviving backup can justify spending the
+finisher instead of waiting.
+
 ## Trade for the finish, not just for survival
 
 Compare trades by the remaining threats and actions, not by Pokemon count alone.

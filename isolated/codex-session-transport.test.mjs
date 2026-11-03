@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
+import {createHash} from 'node:crypto';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {createCodexSessionTransport,disabledSessionConnectors} from './codex-session-transport.mjs';
@@ -9,6 +10,18 @@ import {createCodexSessionTransport,disabledSessionConnectors} from './codex-ses
 const workspace=resolve('.'),scope={parentId:'game-bestof3-fixture-1',teamId:'team-fixture'};
 const schema={type:'object',properties:{choice:{type:'string',enum:['protect','attack']}},required:['choice'],additionalProperties:false};
 const line=value=>`${JSON.stringify(value)}\n`;
+const sha=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
+function assertToolTiming(response,native,deadlineAt){
+  assert.equal(response.contentItems.length,2);
+  assert.deepEqual(response.contentItems[0],{type:'inputText',text:JSON.stringify(native)});
+  assert.equal(response.contentItems[1].type,'inputText');
+  const timing=JSON.parse(response.contentItems[1].text),clock=timing.decisionClock;
+  assert.deepEqual(Object.keys(timing),['decisionClock']);
+  assert.deepEqual(clock,{observedAt:clock.observedAt,modelDeadlineAt:deadlineAt,remainingMs:Math.max(0,deadlineAt-clock.observedAt),finalizationReserveMs:15000,
+    phase:deadlineAt-clock.observedAt<=15000?'finalize-now':'research-available',kind:'local-original-model-deadline'});
+  assert(Number.isFinite(clock.observedAt));
+  return clock;
+}
 async function fixture(t,{onTurn,onThread,onResponse,onLaunch,readConfiguration=async()=>'',terminate=true,now=Date.now,serviceTier='fast'}={}){
   await mkdir(join(workspace,'cache'),{recursive:true});const directory=await mkdtemp(join(workspace,'cache','codex-session-test-'));
   const executable=join(directory,'codex.exe');await writeFile(executable,'synthetic');
@@ -77,8 +90,10 @@ test('two decisions retain one owned CLI process and exact thread with fresh sch
   assert.equal(turns[1].params.effort,'low');assert.equal(turns[1].params.serviceTierForTurn,'priority');
   assert.equal(starts[0].params.serviceTier,'priority');
   assert.ok(calls[0].args.includes('service_tier="fast"'));
+  assert.ok(calls[0].args.includes('model_verbosity="low"'));
   assert.equal(preflight.requestedWireServiceTier,'priority');
   assert.equal(first.telemetry.requestedServiceTier,'fast');assert.equal(first.telemetry.requestedWireServiceTier,'priority');
+  assert.equal(first.telemetry.requestedModelVerbosity,'low');
   assert.ok(turns[1].params.input[0].text.includes('turn2'));assert.ok(calls[0].args.includes('mcp_servers.private-local.enabled=false'));
   assert.ok(calls[0].args.includes('forced_login_method="chatgpt"'));assert.ok(calls[0].args.includes('features.shell_tool=false'));
   assert.ok(calls[0].args.includes('features.plugins=false'));assert.ok(calls[0].args.includes('features.remote_plugin=false'));
@@ -332,18 +347,48 @@ test('declared model MCP calls return exact results inside the same CLI turn bef
   assert.equal(calls.length,1);assert.equal(calls[0].name,'get_pokemon');assert.deepEqual(calls[0].arguments,toolArguments);
   assert.equal(calls[0].callId,'call-native-1');assert.equal(calls[0].deadlineAt,request.deadlineAt);assert.equal(calls[0].signal.aborted,false);
   const response=app.messages.find(row=>row.id===900&&!row.method);assert.equal(response.result.success,true);
-  assert.deepEqual(response.result.contentItems,[{type:'inputText',text:JSON.stringify(actual)}]);
+  const clock=assertToolTiming(response.result,actual,request.deadlineAt);
   assert.deepEqual(result.decision,{choice:'attack'});assert.equal(result.telemetry.modelToolCalls.length,1);
   assert.equal(result.telemetry.modelToolCalls[0].origin,'model-requested');assert.equal(result.telemetry.modelToolCalls[0].outcome,'completed');
   assert.equal(result.telemetry.modelToolCalls[0].returnedToModel,true);
   assert.equal(result.telemetry.modelToolCalls[0].name,'get_pokemon');assert.equal(Object.hasOwn(result.telemetry.modelToolCalls[0],'arguments'),false);
+  assert.deepEqual(result.telemetry.modelToolCalls[0].decisionClock,clock);
+  assert.equal(result.telemetry.modelToolCalls[0].decisionClockSha256,sha(response.result.contentItems[1].text));
+  assert.equal(result.telemetry.modelToolCalls[0].deliveredContentSha256,sha(response.result.contentItems));
+  assert.equal(result.telemetry.modelToolCalls[0].deliveredContentBytes,Buffer.byteLength(JSON.stringify(response.result.contentItems)));
+});
+
+test('normal and near-reserve tool replies report elapsed original model time without denying work or changing the final',async t=>{
+  let time=1000,backends=0,responses=0;const deadlineAt=40000,clocks=[],actual={content:[{type:'text',text:'Complete native result.'}],decisionClock:{nativeField:'unchanged'}};
+  const original=structuredClone(actual),f=await fixture(t,{now:()=>time,onTurn:state=>requestTool(state),onResponse:state=>{
+    clocks.push(assertToolTiming(state.value.result,actual,deadlineAt));
+    const second=state.value.id===901;completeTool(state,state.value.result,second?{callId:'call-native-2'}:{});
+    if(++responses===1)requestTool(state,{rpcId:901,callId:'call-native-2'});else state.finish({decision:{choice:'attack'}});
+  }});await f.transport.preflight();
+  const result=await f.transport.callDecision(f.request({deadlineAt,modelTools:{definitions:nativeDefinitions,call:async call=>{
+    assert.equal(call.deadlineAt,deadlineAt);time=++backends===1?2000:33000;return actual;
+  }}}));
+  assert.deepEqual(clocks.map(clock=>[clock.observedAt,clock.remainingMs]),[[2000,38000],[33000,7000]]);
+  assert.deepEqual(clocks.map(clock=>clock.phase),['research-available','finalize-now']);
+  assert(clocks[1].remainingMs<clocks[1].finalizationReserveMs,'the reserve is information, not early tool denial');
+  assert.equal(backends,2);assert.equal(responses,2);assert.deepEqual(actual,original);
+  assert.deepEqual(result.decision,{choice:'attack'});assert.equal(result.telemetry.deadlineAt,deadlineAt);
+  assert.deepEqual(result.telemetry.modelToolCalls.map(row=>row.decisionClock),clocks);
+});
+
+test('declared tools with no model request add no callback or timing reply and preserve the final',async t=>{
+  let backends=0;const f=await fixture(t);await f.transport.preflight();
+  const result=await f.transport.callDecision(f.request({modelTools:{definitions:nativeDefinitions,call:async()=>{backends++;return {};}}}));
+  assert.equal(backends,0);assert.deepEqual(result.telemetry.modelToolCalls,[]);assert.deepEqual(result.decision,{choice:'protect'});
+  assert.equal(f.calls.at(-1).messages.some(message=>!message.method&&message.result?.contentItems),false);
 });
 
 test('a small retained input accepts the complete larger native tool echo in whole and fragmented frames',async t=>{
   for(const fragmented of [false,true]){
     const actual={kind:'simulation-choices',worlds:Array.from({length:3},(_,index)=>({index,events:'"native event"\\line\n'.repeat(7000)}))};
     let echoBytes=0,callbackCount=0;const f=await fixture(t,{onTurn:state=>{if(state.count===1)state.finish();else requestTool(state);},onResponse:state=>{
-      assert.deepEqual(state.value.result.contentItems,[{type:'inputText',text:JSON.stringify(actual)}],'the complete actual result reaches the CLI unchanged');
+      assert.deepEqual(state.value.result.contentItems[0],{type:'inputText',text:JSON.stringify(actual)},'the complete actual result reaches the CLI unchanged');
+      assert.equal(state.value.result.contentItems.length,2);
       const event={method:'item/completed',params:{threadId:state.threadId,turnId:state.turnId,item:{type:'dynamicToolCall',id:'call-native-1',tool:'get_pokemon',arguments:toolArguments,status:'completed',success:true,contentItems:state.value.result.contentItems}}},encoded=line(event);echoBytes=Buffer.byteLength(encoded)-1;
       if(fragmented)for(let at=0;at<encoded.length;at+=8192)state.child.stdout.write(encoded.slice(at,at+8192));else state.child.stdout.write(encoded);
       state.finish();
@@ -421,14 +466,17 @@ test('unknown tools, namespaces, foreign thread and stale turn execute no callba
 });
 
 test('duplicate RPCs and repeated callId reuse one exact callback result',async t=>{
-  let calls=0,responses=0,requestState;
-  const f=await fixture(t,{onTurn:state=>{requestState=state;requestTool(state);requestTool(state,{started:false});},onResponse:state=>{
-    responses++;
-    if(responses===1){requestTool(requestState,{started:false});requestTool(requestState,{rpcId:901,started:false});}
+  let time=1000,calls=0,responses=0,requestState;const replies=[],deadlineAt=40000,actual={content:[{type:'text',text:'exact'}]};
+  const f=await fixture(t,{now:()=>time,onTurn:state=>{requestState=state;requestTool(state);requestTool(state,{started:false});},onResponse:state=>{
+    responses++;replies.push(structuredClone(state.value.result));
+    if(responses===1){time=10000;requestTool(requestState,{started:false});requestTool(requestState,{rpcId:901,started:false});}
     if(responses===3){completeTool(state,state.value.result);state.finish();}
   }});
-  await f.transport.preflight();const result=await f.transport.callDecision(f.request({modelTools:{definitions:nativeDefinitions,call:async()=>{calls++;return {content:[{type:'text',text:'exact'}]};}}}));
+  await f.transport.preflight();const result=await f.transport.callDecision(f.request({deadlineAt,modelTools:{definitions:nativeDefinitions,call:async()=>{calls++;return actual;}}}));
   assert.equal(calls,1);assert.equal(responses,3);assert.equal(result.telemetry.modelToolCalls.length,1);
+  assert.deepEqual(replies[1],replies[0]);assert.deepEqual(replies[2],replies[0]);
+  const clock=assertToolTiming(replies[0],actual,deadlineAt);assert.equal(clock.observedAt,1000);assert.equal(clock.remainingMs,39000);
+  assert.deepEqual(result.telemetry.modelToolCalls[0].decisionClock,clock);
 });
 
 test('a duplicate callId with different arguments or RPC id reused for another call fails closed',async t=>{
@@ -451,8 +499,12 @@ test('changed declared catalogs fail closed instead of silently replacing a reta
 
 test('MCP error results and callback exceptions remain bounded tool failures and allow a final decision',async t=>{
   for(const mode of ['mcp-error','exception']){
-    const f=await fixture(t,{onTurn:state=>requestTool(state),onResponse:state=>{assert.equal(state.value.result.success,false);assert(!JSON.stringify(state.value).includes('PRIVATE_EXCEPTION'));completeTool(state,state.value.result);state.finish();}});
-    await f.transport.preflight();const result=await f.transport.callDecision(f.request({modelTools:{definitions:nativeDefinitions,call:async()=>{if(mode==='exception')throw new Error('PRIVATE_EXCEPTION');return {isError:true,content:[{type:'text',text:'Native unsupported input.'}]};}}}));
+    const actual={isError:true,content:[{type:'text',text:'Native unsupported input.'}]};let request;
+    const f=await fixture(t,{onTurn:state=>requestTool(state),onResponse:state=>{assert.equal(state.value.result.success,false);assert(!JSON.stringify(state.value).includes('PRIVATE_EXCEPTION'));
+      const native=JSON.parse(state.value.result.contentItems[0].text);assertToolTiming(state.value.result,mode==='mcp-error'?actual:native,request.deadlineAt);
+      completeTool(state,state.value.result);state.finish();}});
+    await f.transport.preflight();request=f.request({modelTools:{definitions:nativeDefinitions,call:async()=>{if(mode==='exception')throw new Error('PRIVATE_EXCEPTION');return actual;}}});
+    const result=await f.transport.callDecision(request);
     assert.deepEqual(result.decision,{choice:'protect'});assert.equal(result.telemetry.modelToolCalls[0].outcome,'returned-error');
     assert(!JSON.stringify(result.telemetry).includes('PRIVATE_EXCEPTION'));
   }

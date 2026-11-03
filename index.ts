@@ -68,6 +68,8 @@ const {registerWorkflowTools}=await import(new URL('../workflow/mcp-tools.mjs',i
 if(!qualificationOnly)registerWorkflowTools(server,{workspace});
 const {getChampionsPokemon,getChampionsMove,getChampionsAbility,getChampionsMovepool}=
   await import(new URL('../mechanics/static-data.mjs',import.meta.url).href);
+const {resolveChampionsDamageMoveState}=
+  await import(new URL('../mechanics/damage-move-state.mjs',import.meta.url).href);
 
 // Classify a team's playstyle and attributes
 server.tool(
@@ -271,7 +273,7 @@ numericTools.tool(
       curHP: z.number().int().positive().optional().describe("Actual current HP units; no percentages or server display scale"),
       abilityOn: z.boolean().optional().describe("Explicit activation state for conditional abilities supported by the calculator"),
       boostedStat: z.enum(['atk','def','spa','spd','spe','auto']).optional(),
-      alliesFainted: z.number().int().min(0).max(5).optional(),
+      alliesFainted: z.number().int().min(0).max(5).optional().describe('Fainted allies for Supreme Overlord; for Champions Last Respects, required explicit total side faint events (including repeat faints after revival), 0–5. Unknown or larger totals are unsupported.'),
       ivs: z.any().optional().describe("Attacker IVs"),
       evs: z.any().optional().describe("Attacker EVs (e.g., { at: 252, sp: 252 })"),
       boosts: z.any().optional().describe("Attacker boosts (e.g., { at: 1 })"),
@@ -294,7 +296,7 @@ numericTools.tool(
       teraType: z.string().optional().describe("Defender Tera Type"),
     }).optional(),
     move: z.string().describe("Move name (e.g., Shadow Claw)"),
-    moveOptions: z.object({
+    moveOptions: z.strictObject({
       isCrit: z.boolean().optional(),
       hits: z.number().int().min(1).max(10).optional(),
       timesUsed: z.number().int().min(1).max(10).optional(),
@@ -346,10 +348,11 @@ numericTools.tool(
         if(options?.teraType)throw new Error('Champions damage does not support Terastallization');
       }
     }
+    const moveState=resolveChampionsDamageMoveState({gen,move,attackerOptions});
     const native=timingSpan('calculator.reconstruction',{tool:'calculate_damage'}).run(()=>({
       attacker:new Pokemon(gen as any,attacker,attackerOptions as any),
       defender:new Pokemon(gen as any,defender,defenderOptions as any),
-      move:new Move(gen as any,move,{ability:attackerOptions?.ability,item:attackerOptions?.item,...moveOptions} as any),field:new Field(field as any),
+      move:new Move(gen as any,move,{ability:attackerOptions?.ability,item:attackerOptions?.item,...moveOptions,...moveState?.moveOptions} as any),field:new Field(field as any),
     }));
     for(const [role,pokemon,options] of [['attacker',native.attacker,attackerOptions],['defender',native.defender,defenderOptions]] as const){
       if(options?.curHP!==undefined&&options.curHP>pokemon.maxHP())throw new Error(`${role} curHP exceeds native maximum HP`);
@@ -363,6 +366,7 @@ numericTools.tool(
     // Expose the actual engine range for constrained SDK comparisons. Keep the
     // existing human text intact; clients must not recover numbers from prose.
     const calculated={description,damage:result.damage,range:result.range(),engine:'@smogon/calc',contractVersion:'champions-damage-v2',gen,
+      ...(moveState?{moveStateProjection:moveState.projection}:{}),
       attackerHP:{current:result.attacker.curHP(),max:result.attacker.maxHP(),unit:'actual-hp'},
       defenderHP:{current:result.defender.curHP(),max:result.defender.maxHP(),unit:'actual-hp'},
       percent:null,percentUnavailable:'The installed Result API provides percentage text, not a numeric percentage range.'};

@@ -264,7 +264,7 @@ for(const key of ['modelAttempted','coldContextBytes','remainingModelMs','minimu
 for(const key of SESSION_REFRESH_TELEMETRY_FIELDS)CODEX_TRACE_TELEMETRY.add(key);
 for(const key of ['contextMode','sessionTurnIndex','sessionScopeSha256','sessionThreadSha256','sessionTurnCompleted','sessionProcessOwned','sessionSourceRehydrated','sessionSourceSha256','retainedStaticReferences','sessionNewInputBytes','sessionFullInputBytes','sessionSavedInputBytes','sessionNewPacketBytes','sessionFullPacketBytes','sessionSavedPacketBytes','sessionContextSequence','sessionPriorRequestBytes','sessionReused','compactionCount','modelContextWindowTokens','sessionCumulativeInputTokens','sessionCumulativeCachedInputTokens','sessionCumulativeOutputTokens','sessionCumulativeReasoningTokens'])CODEX_TRACE_TELEMETRY.add(key);
 for(const key of ['providerStartedAt','presentationPreparedAt','providerFinishedAt','presentationMode','nativeInputSha256','nativeInstructionsSha256','nativeSchemaSha256','modelInputSha256','modelInstructionsSha256','modelSchemaSha256','inputPreserved','wireDecoded','presentationReason','sourceInputBytes','sourceInstructionsBytes','outputSchemaBytes','preparedInstructionsBytes','commandBytes'])CODEX_TRACE_TELEMETRY.add(key);
-for(const key of ['sourceSha256','instructionsSha256','requestDurationMs','applicationRetryCount','providerRetryCountKnown','skillCatalogOmitted','omittedSkillCount','requestedServiceTier','requestedWireServiceTier','cliStderrFirstDiagnosticAt','cliReportedTransportError','cliReportedHttpStatus'])CODEX_TRACE_TELEMETRY.add(key);
+for(const key of ['sourceSha256','instructionsSha256','requestDurationMs','applicationRetryCount','providerRetryCountKnown','skillCatalogOmitted','omittedSkillCount','requestedServiceTier','requestedWireServiceTier','requestedModelVerbosity','cliStderrFirstDiagnosticAt','cliReportedTransportError','cliReportedHttpStatus'])CODEX_TRACE_TELEMETRY.add(key);
 for(const key of ['modelToolsEnabled','modelToolManifestSha256','modelToolWireManifestSha256','modelToolFixedTupleProjections','modelToolSchemaDescriptions','modelToolCalls',
   'streamCountersScope','streamTurnBytes','streamTurnEvents','streamLineLimitBytes','streamMaxLineBytes','streamLastChunkBytes','streamMaxChunkBytes',
   'streamLimitKind','streamLimitObserved','streamLimitValue',
@@ -412,13 +412,14 @@ export function createModelTraceStore({workspace = ROOT, teamId, runId = randomU
 }
 
 /** A successful key-presence or models-list check is insufficient for a battle. */
-export async function runBattleWorkflow({operator, createController, identity, scope, ownTeamText, apiConfig, decisionProvider, contextMode='session',serviceTier='standard',ponderRuntime,qualifyPonder,verifyPonderQualification=verifyPonderQualificationReceipt,savedModelToolRequests,requireModelToolReceipt=false, resetDecisionContext, onEvidence, onEvent = () => {}, onGuidance = () => {}, now = Date.now, runId = randomUUID(), verifyPolicy = verifyIsolatedPolicySource, qualifyGeneration, qualifyDesktop, qualifyCodex, postResultTimeoutMs = 30000} = {}) {
+export async function runBattleWorkflow({operator, createController, identity, scope, ownTeamText, apiConfig, decisionProvider, contextMode='session',serviceTier='standard',ponderRuntime,qualifyPonder,verifyPonderQualification=verifyPonderQualificationReceipt,savedModelToolRequests,requireModelToolReceipt=false, resetDecisionContext, beforeSearch, onEvidence, onEvent = () => {}, onGuidance = () => {}, now = Date.now, runId = randomUUID(), verifyPolicy = verifyIsolatedPolicySource, qualifyGeneration, qualifyDesktop, qualifyCodex, postResultTimeoutMs = 30000} = {}) {
   validateSessionConfiguration(identity); validateScopeConfiguration(scope, identity);
   requireThat(contextMode==='session'&&(!resetDecisionContext||typeof resetDecisionContext==='function'),'provider_configuration');
   const externalProvider=true,codex=true,decisionMode='model-tools';
   requireThat(apiConfig===undefined&&qualifyGeneration===undefined&&qualifyDesktop===undefined&&exactKeys(decisionProvider,['kind','model','reasoningEffort','callDecision'])&&decisionProvider.kind==='codex-cli'&&CODEX_LIVE_MODELS.has(decisionProvider.model)&&['low','medium','high'].includes(decisionProvider.reasoningEffort)&&typeof decisionProvider.callDecision==='function'&&typeof qualifyCodex==='function','provider_configuration');
   requireThat(scope.allowPonder===true?decisionProvider.model==='gpt-6.1-sol'&&decisionProvider.reasoningEffort==='low'&&serviceTier==='fast'&&typeof ponderRuntime?.prepare==='function'&&typeof ponderRuntime.stop==='function'&&typeof ponderRuntime.drain==='function'&&typeof qualifyPonder==='function'&&typeof verifyPonderQualification==='function':ponderRuntime===undefined,'provider_configuration');
   requireThat(operator && typeof operator.dispatch === 'function' && typeof createController === 'function' && typeof onEvidence === 'function');
+  requireThat(beforeSearch===undefined||typeof beforeSearch==='function','configuration');
   const policySource = verifyPolicy();
   requireThat(policySource?.verified === true && HASH.test(policySource.skillSha256 ?? '') && typeof policySource.skillVersion === 'string', 'skill');
   const qualification=await qualifyCodex({decisionProvider,now,onEvent,teamId:identity.teamId,decisionMode,requests:savedModelToolRequests});
@@ -430,7 +431,7 @@ export async function runBattleWorkflow({operator, createController, identity, s
   }
   // Offline qualification history must never become a live battle's memory.
   await resetDecisionContext?.();
-  let sequence = 0, claimed = false, searched = false, reviewBoundary = false, controller, affectedParentId,ownedControllerProof;
+  let sequence = 0, claimed = false, searched = false, reviewBoundary = false, idleReleaseAttempted=false,controller, affectedParentId,ownedControllerProof;
   const preSearchParentIds = new Set();
   // A kept native session retains command-id results across runner processes.
   // Reserve a fresh namespace once per invocation; each individual command's
@@ -444,6 +445,17 @@ export async function runBattleWorkflow({operator, createController, identity, s
     return data;
   };
   const call = (name, args = {}, full = false) => dispatch({op: 'call', name, args, ...(full ? {full: true} : {})});
+  const verifyOwnedIdle=state=>{
+    verifiedIdentity(state,identity);verifiedIdle(state);
+    if(ownedControllerProof)requireThat(state.controller?.required===true&&state.controller.owner===ownedControllerProof.owner&&state.controller.generation===ownedControllerProof.generation,'operator');
+    requireThat(scope.manualReady!==true||state.autoReady===false,'readiness');
+  };
+  const releaseIdleOwnership=async()=>{
+    // A failed/uncertain release is never retried by the outer catch. A fresh
+    // identity/idle check must precede releasing this operator's native lease.
+    idleReleaseAttempted=true;verifyOwnedIdle(await dispatch({op:'status',full:true}));
+    await call('battle_control_release',{confirmed:true,commandId:id('release')});claimed=false;
+  };
   try {
     let state = await dispatch({op: 'status', full: true});
     verifiedIdentity(state, identity); verifiedIdle(state);
@@ -481,12 +493,22 @@ export async function runBattleWorkflow({operator, createController, identity, s
     await controller.initialize();
     const preflight = await call('battle_preflight', {teamId: identity.teamId}, true);
     requireThat(preflight.ready === true && Array.isArray(preflight.blockers) && preflight.blockers.length === 0, 'preflight');
-    const beforeSearch = await dispatch({op: 'status', full: true});
-    verifiedIdentity(beforeSearch, identity); verifiedIdle(beforeSearch);
-    if(beforeSearch.controller?.required===true&&typeof beforeSearch.controller.owner==='string'&&beforeSearch.controller.owner&&Number.isSafeInteger(beforeSearch.controller.generation))
-      ownedControllerProof=Object.freeze({owner:beforeSearch.controller.owner,generation:beforeSearch.controller.generation});
-    requireThat(scope.manualReady!==true||beforeSearch.autoReady===false,'readiness');
-    for (const room of beforeSearch.rooms) if (PARENT.test(canonical(room.id))) preSearchParentIds.add(canonical(room.id));
+    const beforeSearchState = await dispatch({op: 'status', full: true});
+    verifiedIdentity(beforeSearchState, identity); verifiedIdle(beforeSearchState);
+    if(beforeSearchState.controller?.required===true&&typeof beforeSearchState.controller.owner==='string'&&beforeSearchState.controller.owner&&Number.isSafeInteger(beforeSearchState.controller.generation))
+      ownedControllerProof=Object.freeze({owner:beforeSearchState.controller.owner,generation:beforeSearchState.controller.generation});
+    requireThat(scope.manualReady!==true||beforeSearchState.autoReady===false,'readiness');
+    for (const room of beforeSearchState.rooms) if (PARENT.test(canonical(room.id))) preSearchParentIds.add(canonical(room.id));
+    if(beforeSearch){
+      const admission=await beforeSearch();
+      requireThat(admission===undefined||admission?.cancelled===true&&['manager-cancelled','manager-input-closed',undefined].includes(admission.reason),'configuration');
+      if(admission?.cancelled===true){
+        await releaseIdleOwnership();
+        return {state:'cancelled-before-search',runId,teamId:identity.teamId,reason:admission.reason??'manager-cancelled',searchesAttempted:0,searchDispatchAttempted:false,searchDispatched:false,
+          ownerReleased:true,clientRetained:true,clientStopped:false};
+      }
+      verifyOwnedIdle(await dispatch({op:'status',full:true}));
+    }
     // Reserving before dispatch prevents any retry from granting another search.
     searched = true;
     await dispatch({op: 'start-next', confirmed: true});
@@ -531,11 +553,13 @@ export async function runBattleWorkflow({operator, createController, identity, s
   } catch (error) {
     // An idle pre-search failure or official review pause can safely release its
     // lease. A live/uncertain request retains ownership and authored protection.
-    if (claimed && (!searched || reviewBoundary)) {
-      try {await call('battle_control_release', {confirmed: true, commandId: id('release')});} catch { /* uncertainty remains native evidence */ }
+    if (claimed && (!searched || reviewBoundary)&&!idleReleaseAttempted) {
+      try {await releaseIdleOwnership();} catch { /* uncertainty retains this operator and native evidence */ }
     }
     const failure = error instanceof RunnerError ? error : new RunnerError('operator');
-    failure.liveOwnershipRetained = claimed && searched && !reviewBoundary;
+    failure.liveOwnershipRetained = claimed && !reviewBoundary;
+    failure.searchesAttempted=searched?1:0;failure.searchDispatchAttempted=searched;
+    if(!searched)failure.searchDispatched=false;
     if (!affectedParentId) {
       try {
         const observedParentId = canonical(controller?.status?.()?.parentId);
@@ -879,7 +903,7 @@ export async function runOfflineQualification({workspace = ROOT, spawnImpl = spa
   });
 }
 
-export async function runRunner(args, {workspace = ROOT, write = value => process.stdout.write(JSON.stringify(value) + '\n'), codexProviderFactory,ponderRuntimeFactory,qualifyPonder,verifyPonderQualification=verifyPonderQualificationReceipt, configurationReader = readRunnerConfiguration, offline = runOfflineQualification, connect, timingFactory, controllerFactory, operatorFactory, attentionHandler = serveAttentionMode, qualifyGeneration, qualifyCodex, verifyPolicy} = {}) {
+export async function runRunner(args, {workspace = ROOT, write = value => process.stdout.write(JSON.stringify(value) + '\n'), codexProviderFactory,ponderRuntimeFactory,qualifyPonder,verifyPonderQualification=verifyPonderQualificationReceipt, configurationReader = readRunnerConfiguration, offline = runOfflineQualification, connect, timingFactory, controllerFactory, operatorFactory, beforeSearch, attentionHandler = serveAttentionMode, qualifyGeneration, qualifyCodex, verifyPolicy} = {}) {
   const options = parseRunnerArgs(args);
   if (options.mode === 'offline') {const result = await offline({workspace}); write(result); return result;}
   const codex=options.provider==='codex-cli';
@@ -949,11 +973,12 @@ export async function runRunner(args, {workspace = ROOT, write = value => proces
     operator = (operatorFactory ?? createOperator)({client: sdk, responseFile: 'in-memory-only', maxSearches: 1, readTimeoutMs: 1500, mutationTimeoutMs: 1500,returnAfterModelSend:scope.allowPonder===true,
       publish: async () => ({}), timingRecorder: timing.recorder, onTimingFlush: () => timing.flush(),...(ponderRuntime?{onState:state=>ponderRuntime.observeState(state)}:{})});
     const result = await timing.recorder.run({traceId: runId, teamId: identity.teamId}, () => runBattleWorkflow({operator, createController: controllerFactory ?? createNativeController, identity, scope, ownTeamText, decisionProvider:provider.decisionProvider,contextMode:'session',serviceTier:options.serviceTier??'fast',...(ponderRuntime?{ponderRuntime,qualifyPonder,verifyPonderQualification}:{}),savedModelToolRequests,requireModelToolReceipt:qualifyCodex===undefined,resetDecisionContext:provider.reset,qualifyCodex:qualifyCodex??provider.qualifyCodex, runId,
-      ...(qualifyGeneration ? {qualifyGeneration} : {}), ...(verifyPolicy ? {verifyPolicy} : {}),
+      ...(qualifyGeneration ? {qualifyGeneration} : {}), ...(verifyPolicy ? {verifyPolicy} : {}),...(beforeSearch?{beforeSearch}:{}),
       onEvidence: event => trace.append(event), onEvent}));
-    // The workflow returns only after official completion and verified idle.
+    // A pre-search cancellation has no parent or frozen battle journal. Other
+    // normal returns require official completion and verified idle.
     // Error/attention recovery deliberately never waits for optional archival.
-    const ponderEvidence=await archivePonder(result.parentId);
+    const ponderEvidence=result.state==='cancelled-before-search'?undefined:await archivePonder(result.parentId);
     await timing.flush();
     const summary = {...result,...(ponderEvidence?{ponderEvidence}:{}), modelEvidence: trace.status(), timing: timing.status()};
     write(summary); return summary;
@@ -970,6 +995,7 @@ export async function runRunner(args, {workspace = ROOT, write = value => proces
     const ponderEvidence=resolution?.resolved===true&&resolution.clientStopped===true?await archivePonder(error.affectedParentId):
       ponderRuntime&&resolution?.resolved===true&&resolution.ownershipLost===true?{preserved:false,deferred:true,code:'PONDER_ARCHIVAL_DEFERRED_OWNERSHIP_RETIRED'}:undefined;
     const result = {state: resolution?.ownershipLost===true?'attention-ownership-lost':retainConnection ? 'attention-retained' : 'attention-resolved', runId, teamId: identity.teamId, clientStopped: resolution?.clientStopped === true, operatorRetained: retainConnection,
+      ...(Number.isInteger(error.searchesAttempted)?{searchesAttempted:error.searchesAttempted,searchDispatchAttempted:error.searchDispatchAttempted,...(error.searchDispatched===false?{searchDispatched:false}:{})}:{}),
       ...(resolution?.ownershipLost===true?{ownershipLost:true,reservationsPreserved:true}:{}),...(ponderEvidence?{ponderEvidence,modelEvidence:trace.status()}:{})};
     write(result); return result;
   } finally {

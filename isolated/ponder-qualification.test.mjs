@@ -159,7 +159,7 @@ test('changed native source, altered archived board or a mismatched frozen marke
 test('loaded source pins bind full runtime/facade/projection and current skill, not a JSON claim',async()=>{
   const pins=await ponderQualificationSourcePins();assert.equal(pins.skillSha256,ISOLATED_POLICY_SOURCE.skillSha256);assert.equal(pins.skillVersion,ISOLATED_POLICY_SOURCE.skillVersion);assert.equal(pins.sha256,digest(pins.files));for(const path of ['isolated/attention-alert.mjs','isolated/ponder-runtime.mjs','isolated/ponder-controller.mjs','isolated/codex-session-transport.mjs','simulation/choice-simulation.mjs','showdown/protocol-action.mjs','showdown/battle-state.mjs','observability/qualification-research.mjs','simulation/registered-identity.mjs'])assert(pins.files.some(row=>row.path===path&&/^[a-f0-9]{64}$/u.test(row.sha256)));
   assert.equal(pins.files.find(row=>row.path==='showdown/battle-state.mjs').sha256,createHash('sha256').update(await readFile(new URL('../showdown/battle-state.mjs',import.meta.url))).digest('hex'));
-  for(const name of ['context-limits.mjs','game-summary.mjs','decision-context.mjs','matchup-guidance.mjs']){
+  for(const name of ['context-limits.mjs','game-summary.mjs','decision-context.mjs','matchup-guidance.mjs','model-tool-observed-qualification.mjs']){
     const rows=pins.files.filter(row=>row.path==='isolated/'+name);assert.equal(rows.length,1,name);
     assert.equal(rows[0].sha256,createHash('sha256').update(await readFile(new URL(name,import.meta.url))).digest('hex'),name);
   }

@@ -44,7 +44,7 @@ analysis does not expand the live budget.
 
 ## Required cycle
 
-Cycle revision: **2026-11-01.125**. Before live play and after a handoff read the
+Cycle revision: **2026-11-03.126**. Before live play and after a handoff read the
 complete [BO3 cycle](references/headless-battle-cycle.md), including its
 [search gate](references/headless-battle-cycle.md#before-a-new-search).
 Verify complete-folder status, reviewed sync and content read; previous private
@@ -191,6 +191,8 @@ replies before repeating the failed sequence.
 - **Preserve the actual answer:** Name primary answer, usable backup and HP/field/
   entry needs. A setter can remain needed for a later reset despite current
   weather. Compare Protect or checked replacement before spending it on chip.
+  When waiting for opposing Speed control to expire, count the complete
+  [stall and entry sequence](references/proactive-win-plans.md#stall-opposing-speed-control-without-spending-the-finisher).
   Prioritize the attacker denying that window over support whose effect already
   resolved, unless immediate partner threat changes the trade. Preservation is
   not absolute; a delivered trade or checked backup can justify spending it.

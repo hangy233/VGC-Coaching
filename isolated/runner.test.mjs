@@ -469,6 +469,50 @@ test('blocked preflight releases idle ownership and never searches', async () =>
   assert(!f.calls.some(q => q.op === 'start-next')); assert.equal(f.calls.filter(q => q.name === 'battle_control_release').length, 1);
 });
 
+test('pre-search cancellation or EOF releases only freshly verified idle ownership and sends no search',async()=>{
+  for(const reason of ['manager-cancelled','manager-input-closed']){
+    const f=workflowFixture({stateChange:state=>{state.controller={required:true,owner:'isolated-native-runner',generation:1};}});let gates=0;
+    const result=await runBattleWorkflow({...f.args,beforeSearch:async()=>{gates++;assert(f.calls.some(q=>q.name==='battle_preflight'));assert.equal(f.calls.some(q=>q.op==='start-next'),false);return {cancelled:true,reason};}});
+    assert.equal(gates,1);assert.equal(result.state,'cancelled-before-search');assert.equal(result.reason,reason);
+    assert.equal(result.searchesAttempted,0);assert.equal(result.searchDispatched,false);assert.equal(result.ownerReleased,true);assert.equal(result.clientRetained,true);assert.equal(result.clientStopped,false);
+    const release=f.calls.findIndex(q=>q.name==='battle_control_release');assert.equal(f.calls[release-1].op,'status');
+    assert.equal(f.calls.filter(q=>q.name==='battle_control_release').length,1);
+    assert.equal(f.calls.some(q=>q.op==='start-next'||q.op==='controller-run'||['battle_stop','battle_choose','battle_forfeit'].includes(q.name)),false);
+  }
+});
+
+test('normal pre-search gate release preserves the one search and official review path',async()=>{
+  const f=workflowFixture();let gates=0;
+  const result=await runBattleWorkflow({...f.args,beforeSearch:async()=>{gates++;assert.equal(f.calls.some(q=>q.op==='start-next'),false);}});
+  assert.equal(gates,1);assert.equal(result.state,'review-required');assert.equal(result.searchesAttempted,1);
+  assert.equal(f.calls.filter(q=>q.op==='start-next').length,1);assert.equal(f.calls.filter(q=>q.name==='battle_control_release').length,1);
+});
+
+test('cancellation cannot release a newly active or changed owner and never retries an uncertain release',async()=>{
+  for(const problem of ['active','owner','release-uncertain']){
+    let cancellation=false;const f=workflowFixture({stateChange:state=>{
+      state.controller={required:true,owner:cancellation&&problem==='owner'?'successor':'isolated-native-runner',generation:cancellation&&problem==='owner'?2:1};
+      if(cancellation&&problem==='active')state.searchPending=true;
+    }}),dispatch=f.operator.dispatch;
+    f.operator.dispatch=async query=>{if(query.name==='battle_control_release'&&problem==='release-uncertain'){f.calls.push(structuredClone(query));throw new Error('Synthetic release uncertainty');}return dispatch(query);};
+    await assert.rejects(runBattleWorkflow({...f.args,beforeSearch:async()=>{cancellation=true;return {cancelled:true};}}),error=>{
+      assert.equal(error.liveOwnershipRetained,true);assert.equal(error.searchesAttempted,0);assert.equal(error.searchDispatchAttempted,false);assert.equal(error.searchDispatched,false);return true;
+    });
+    assert.equal(f.calls.filter(q=>q.name==='battle_control_release').length,problem==='release-uncertain'?1:0);
+    assert.equal(f.calls.some(q=>q.op==='start-next'||q.name==='battle_stop'),false);
+  }
+});
+
+test('a possibly dispatched search retains ownership and cannot be reclassified as pre-search cancellation',async()=>{
+  const f=workflowFixture(),dispatch=f.operator.dispatch;let gates=0;
+  f.operator.dispatch=async query=>{if(query.op==='start-next'){f.calls.push(structuredClone(query));throw new Error('Synthetic uncertain search');}return dispatch(query);};
+  await assert.rejects(runBattleWorkflow({...f.args,beforeSearch:async()=>{gates++;}}),error=>{
+    assert.equal(error.liveOwnershipRetained,true);assert.equal(error.searchesAttempted,1);assert.equal(error.searchDispatchAttempted,true);assert.equal(Object.hasOwn(error,'searchDispatched'),false);return true;
+  });
+  assert.equal(gates,1);assert.equal(f.calls.filter(q=>q.op==='start-next').length,1);
+  assert.equal(f.calls.some(q=>['battle_control_release','battle_stop','battle_choose'].includes(q.name)),false);
+});
+
 test('an unsuccessful selected CLI qualification blocks every native operation before a search', async () => {
   const f = workflowFixture();
   const qualify=f.args.qualifyCodex;f.args.qualifyCodex=async options=>({...await qualify(options),qualified:false});
@@ -537,6 +581,21 @@ test('idle pre-search failure closes the SDK without entering live attention mod
     attentionHandler: () => assert.fail('No live ownership'), write: () => {},
   }), {code: 'preflight'});
   assert.equal(sdkClosed, 1); assert.equal(timingClosed, 1);
+});
+
+test('the runner closes its resources after verified pre-search cancellation while retaining the native client',async()=>{
+  for(const reason of ['manager-cancelled','manager-input-closed']){
+    const f=workflowFixture();let sdkClosed=0,timingClosed=0,providerClosed=0,flushes=0;const output=[];
+    const result=await runRunner(['--run','--session','fixture-session.json','--scope','fixture-scope.json',...CLI_SELECTION],{
+      codexProviderFactory:async options=>({...await fixtureCliProvider(options),close:async()=>{providerClosed++;}}),
+      configurationReader:async()=>({identity:identity(),scope:scope(),ownTeamText:'fixture team'}),connect:async()=>({client:{close:async()=>{sdkClosed++;}}}),
+      operatorFactory:()=>f.operator,controllerFactory:f.createController,verifyPolicy:f.args.verifyPolicy,qualifyCodex:f.args.qualifyCodex,
+      beforeSearch:async()=>({cancelled:true,reason}),attentionHandler:()=>assert.fail('Verified no-search cancellation needs no attention loop'),
+      timingFactory:async()=>({recorder:createTimingRecorder({component:'isolated_runner'}),flush:async()=>{flushes++;},close:async()=>{timingClosed++;},status:()=>({})}),write:value=>output.push(value)});
+    assert.equal(result.state,'cancelled-before-search');assert.equal(result.searchesAttempted,0);assert.equal(result.clientRetained,true);
+    assert.deepEqual([providerClosed,timingClosed,sdkClosed],[1,1,1]);assert.equal(flushes,1);assert.equal(result.ponderEvidence,undefined);
+    assert.equal(output.some(value=>value.state.startsWith('attention')),false);assert.equal(f.calls.some(q=>q.name==='battle_stop'||q.op==='start-next'),false);
+  }
 });
 
 const HISTORICAL_PARENT = 'game-bestof3-gen9championsvgc2026regmcbo3-122';
@@ -1024,11 +1083,12 @@ test('failed traces retain bounded CLI activity and intermediate token timing wi
   row.provider={kind:'codex-cli',model:'gpt-6.1-sol',reasoningEffort:'low',selectionEvidence:'host-declared-request'};
   row.validation={...row.validation,apiAttempted:false,providerAttempted:true,stage:'single-provider',code:'deadline_exceeded'};
   const cliActivity={schemaVersion:1,scope:'current-turn-parsed-wire',payloadsRetained:false,counts:{legacy:5860,toolRequest:2},lastEventAt:4000};
-  row.telemetry={telemetrySource:'codex-cli-session',cliActivity,tokenUsageObservedAt:1500,tokenUsageTurnCompleteAtObservation:false,
+  row.telemetry={telemetrySource:'codex-cli-session',cliActivity,tokenUsageObservedAt:1500,tokenUsageTurnCompleteAtObservation:false,requestedModelVerbosity:'low',
     modelToolCalls:[{name:'get_pokemon',itemCompletedAt:1600}],rawWireText:'DROP-ME'};
   const saved=await trace.append(row),text=await readFile(join(dir,saved.path),'utf8'),entry=JSON.parse(text).entries[0];
   assert.deepEqual(entry.telemetry.cliActivity,cliActivity);assert.equal(entry.telemetry.tokenUsageObservedAt,1500);
   assert.equal(entry.telemetry.tokenUsageTurnCompleteAtObservation,false);assert.equal(entry.telemetry.modelToolCalls[0].itemCompletedAt,1600);
+  assert.equal(entry.telemetry.requestedModelVerbosity,'low');
   assert.equal(entry.telemetry.completedAt,undefined);assert(!text.includes('DROP-ME'));assert.equal(entry.decision,undefined);
 });
 

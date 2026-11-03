@@ -2,14 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
-import {tmpdir} from 'node:os';
-import {launchWorkflow,parseLaunchArgs} from './launch.mjs';
+import {PassThrough} from 'node:stream';
+import {launchWorkflow,parseLaunchArgs,waitManagerGate} from './launch.mjs';
 import {ISOLATED_POLICY_SOURCE} from './decision-context.mjs';
 import {sha,assessOfflineBudget} from './qualification-budget.mjs';
 
 const TEAM='a'.repeat(64),profile={model:'gpt-6.1-sol',reasoningEffort:'low',serviceTier:'fast',contextMode:'session'};
 async function fixture(t){
-  const workspace=await mkdtemp(join(tmpdir(),'vgc-cli-launch-'));t.after(()=>rm(workspace,{recursive:true,force:true}));
+  const root=resolve('cache');await mkdir(root,{recursive:true});
+  const workspace=await mkdtemp(join(root,'vgc-cli-launch-'));t.after(()=>rm(workspace,{recursive:true,force:true}));
   const requests=[1,2,3].map(i=>({caseId:'saved-'+i,materialRequired:i===2,state:{actions:[],source:i},action:{room:'battle-fixture-'+i,rqid:i,token:'synthetic-source'}}));
   await writeFile(join(workspace,'requests.json'),JSON.stringify({kind:'saved-model-tool-qualification-requests',teamId:TEAM,skillSha256:ISOLATED_POLICY_SOURCE.skillSha256,profile,requests}));
   const options={mode:'qualify-only',requestFile:'requests.json',output:'cache/new-run'},events=[],closes=[];
@@ -41,6 +42,30 @@ test('a second actual simulation or nested range excess refuses before any live 
 test('live input must be open and interactive before provider setup',async t=>{
   const f=await fixture(t);await assert.rejects(launchWorkflow({...f.options,mode:'run',session:'session.json',scope:'scope.json'},{...f.deps,input:{isTTY:false}}),{code:'LAUNCH_INPUT'});assert.deepEqual(f.events,[]);
 });
+test('both manager gates accept explicit cancellation and input closure without releasing the gate',async()=>{
+  for(const expected of ['START_LIVE','START_SEARCH'])for(const reason of ['manager-cancelled','manager-input-closed']){
+    const input=new PassThrough();input.isTTY=true;const messages=[],pending=waitManagerGate(expected,{input,output:{write:text=>messages.push(JSON.parse(text))}});
+    if(reason==='manager-cancelled')input.write('CANCEL_LIVE\n');else input.end();
+    assert.deepEqual(await pending,{cancelled:true,reason,gate:expected});assert.equal(messages[0].cancel,'CANCEL_LIVE');input.destroy();
+  }
+  for(const expected of ['START_LIVE','START_SEARCH']){
+    assert.deepEqual(await waitManagerGate(expected,{input:{isTTY:true,readableEnded:true},output:{write(){}}}),{cancelled:true,reason:'manager-input-closed',gate:expected});
+  }
+  const input=new PassThrough();input.isTTY=true;
+  const pending=waitManagerGate('START_SEARCH',{input,output:{write(){}}});input.write('wrong command\n');
+  await assert.rejects(pending,{code:'LAUNCH_GATE'});input.destroy();
+});
+test('cancelling before live closes the qualified provider without opening native control',async t=>{
+  for(const reason of ['manager-cancelled','manager-input-closed']){
+    const f=await fixture(t),gates=[];
+    const result=await launchWorkflow({...f.options,mode:'run',session:'session.json',scope:'scope.json'},{...f.deps,input:{isTTY:true},
+      gate:async word=>{gates.push(word);return {cancelled:true,reason,gate:word};},run:()=>assert.fail('No runner on pre-live cancellation'),operatorFactory:()=>assert.fail('No native control')});
+    assert.deepEqual(gates,['START_LIVE']);assert.equal(result.state,'cancelled-before-live');assert.equal(result.reason,reason);
+    assert.equal(result.searchesAttempted,0);assert.equal(result.searchDispatched,false);assert.equal(result.nativeControlOpened,false);assert.deepEqual(f.closes,[true]);
+    assert.deepEqual(JSON.parse(await readFile(join(f.workspace,'cache/new-run/live-result.json'),'utf8')),result);
+    assert.equal(JSON.parse(await readFile(join(f.workspace,'cache/new-run/attention-alert.json'),'utf8')).active,false);
+  }
+});
 test('one live launch gates source adoption and search, preserving the same provider receipts',async t=>{
   const f=await fixture(t),gates=[],calls=[];
   const recovery={state:'recovery-context',source:{frozen:true},commands:{manual:true},guidance:'Complete sanitized retained recovery context'};
@@ -49,11 +74,39 @@ test('one live launch gates source adoption and search, preserving the same prov
     await deps.configurationReader({});deps.write(recovery);
     assert(args.includes('--codex-context-mode'));assert(args.includes('session'));const selected=deps.codexProviderFactory({});assert.strictEqual(selected.decisionProvider,f.provider.decisionProvider);
     assert.strictEqual(await selected.qualifyCodex({decisionMode:'model-tools',requests:f.requests}),f.main);assert.strictEqual(await deps.qualifyPonder(),f.shadow);
-    const operator=deps.operatorFactory({});await operator.dispatch({op:'status'});await operator.dispatch({op:'start-next'});await assert.rejects(operator.dispatch({op:'start-next'}),{code:'LAUNCH_SEARCH_RESERVED'});return {state:'review-required'};
+    const operator=deps.operatorFactory({});await operator.dispatch({op:'status'});await deps.beforeSearch();await operator.dispatch({op:'start-next'});await assert.rejects(operator.dispatch({op:'start-next'}),{code:'LAUNCH_SEARCH_RESERVED'});return {state:'review-required'};
   }});
   assert.equal(result.state,'review-required');assert.deepEqual(gates,['START_LIVE','START_SEARCH']);assert.deepEqual(calls,['status','start-next']);assert.deepEqual(f.closes,[]);
   assert(delivered.includes(recovery),'Maintained sanitized recovery envelopes must reach the manager unchanged.');
   const adoption=JSON.parse(await readFile(join(f.workspace,'cache/new-run/startup-adoption.json'),'utf8'));assert.equal(adoption.held,true);assert.equal(adoption.searchDispatched,false);
+});
+test('a cancelled pre-search gate never dispatches the native search or enables an alternate dispatch',async t=>{
+  for(const reason of ['manager-cancelled','manager-input-closed']){
+    const f=await fixture(t),calls=[],gates=[];
+    const result=await launchWorkflow({...f.options,mode:'run',session:'session.json',scope:'scope.json'},{...f.deps,input:{isTTY:true},
+      gate:async word=>{gates.push(word);if(word==='START_SEARCH')return {cancelled:true,reason,gate:word};},
+      operatorFactory:()=>({dispatch:async q=>{calls.push(q.op);return {result:{ready:true}};}}),run:async(_args,deps)=>{
+        const operator=deps.operatorFactory({});await operator.dispatch({op:'status'});
+        const cancelled=await deps.beforeSearch();assert.deepEqual(cancelled,{cancelled:true,reason,gate:'START_SEARCH'});
+        await assert.rejects(operator.dispatch({op:'start-next'}),{code:'LAUNCH_SEARCH_RESERVED'});
+        return {state:'cancelled-before-search',reason,searchesAttempted:0,searchDispatched:false,ownerReleased:true,clientRetained:true};
+      }});
+    assert.equal(result.state,'cancelled-before-search');assert.deepEqual(calls,['status']);assert.deepEqual(gates,['START_LIVE','START_SEARCH']);
+    assert.equal(JSON.parse(await readFile(join(f.workspace,'cache/new-run/attention-alert.json'),'utf8')).active,false);
+    assert.equal(JSON.parse(await readFile(join(f.workspace,'cache/new-run/startup-adoption.json'),'utf8')).searchDispatched,false);
+  }
+});
+test('search invocation remains reserved when native dispatch is uncertain',async t=>{
+  const f=await fixture(t);let dispatches=0;
+  const result=await launchWorkflow({...f.options,mode:'run',session:'session.json',scope:'scope.json'},{...f.deps,input:{isTTY:true},gate:async()=>{},
+    operatorFactory:()=>({dispatch:async()=>{dispatches++;throw new Error('Synthetic uncertain dispatch');}}),run:async(_args,deps)=>{
+      const operator=deps.operatorFactory({});await deps.beforeSearch();
+      await assert.rejects(operator.dispatch({op:'start-next'}),/uncertain dispatch/u);
+      await assert.rejects(operator.dispatch({op:'start-next'}),{code:'LAUNCH_SEARCH_RESERVED'});
+      await assert.rejects(deps.beforeSearch(),{code:'LAUNCH_SEARCH_RESERVED'});
+      return {state:'attention-retained'};
+    }});
+  assert.equal(dispatches,1);assert.equal(result.state,'attention-retained');
 });
 test('the public live workflow refuses nonmanual or different-team configuration before native setup',async t=>{
   for(const change of [{manualReady:false},{allowPonder:false},{maxSets:2}]){

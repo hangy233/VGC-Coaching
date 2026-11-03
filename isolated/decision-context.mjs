@@ -18,8 +18,8 @@ const orderDex=Dex.forFormat('gen9championsvgc2026regmc');
 const POLICY = readFileSync(new URL('./live-policy.txt', import.meta.url), 'utf8').trim();
 export const ISOLATED_POLICY_SOURCE = Object.freeze({
   policyVersion:'matchup-skill-runner-protocol.v2',
-  skillVersion:'2026-11-01.125',
-  skillSha256:'7d46267bde7b674bff39ab828f5c0d5af8d52a27b07d4eb4c6627128e98664ec',
+  skillVersion:'2026-11-03.126',
+  skillSha256:'87d3430288361de79b4e0b42df86a0154de981be2454906098c52548201cbd65',
   policySha256:'9a8848539cecf11a0b728e4beccdc79333a59b3ca32f385cb04460c6e09a650a',
 });
 // Exact same length-prefixed complete-folder hashing as the maintained sync tool.

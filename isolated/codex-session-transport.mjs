@@ -60,6 +60,7 @@ function recordCliActivity(active,message,at){
 const id=value=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/u.test(value);
 const toolName=value=>typeof value==='string'&&/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/u.test(value);
 const TOOL_LIMITS=Object.freeze({definitions:32,calls:32,argumentsBytes:1024*1024,resultBytes:2*1024*1024,totalResultBytes:MAX_CONTEXT_BYTES,manifestBytes:1024*1024});
+const FINALIZATION_RESERVE_MS=15000;
 const SESSION_STREAM_BYTES=CODEX_CLI_LIMITS.streamBytes*32,SESSION_EVENTS=CODEX_CLI_LIMITS.events*32;
 const exact=(value,keys,required=keys)=>object(value)&&Object.keys(value).every(key=>keys.includes(key))&&required.every(key=>Object.hasOwn(value,key));
 function toolJson(value,limit){
@@ -285,7 +286,11 @@ export function createCodexSessionTransport(options={}){
       let snapshot;
       try{snapshot=toolJson(result,TOOL_LIMITS.resultBytes);if(!object(snapshot))fail('invalid_model_tools');}
       catch{invalidate('session_tool_result_limit');return;}
-      const text=JSON.stringify(snapshot);active.toolResultBytes+=bytes(text);
+      const text=JSON.stringify(snapshot),observedAt=now(),decisionClock={observedAt,modelDeadlineAt:active.deadlineAt,
+        remainingMs:Math.max(0,active.deadlineAt-observedAt),finalizationReserveMs:FINALIZATION_RESERVE_MS,
+        phase:active.deadlineAt-observedAt<=FINALIZATION_RESERVE_MS?'finalize-now':'research-available',kind:'local-original-model-deadline'},
+        timingText=JSON.stringify({decisionClock});
+      active.toolResultBytes+=bytes(text)+bytes(timingText);
       if(active.toolResultBytes>TOOL_LIMITS.totalResultBytes){invalidate('session_tool_result_limit');return;}
       // Native item/completed and turn/completed echo these full results as
       // JSON strings. A later compact input must not shrink their framing cap.
@@ -293,7 +298,11 @@ export function createCodexSessionTransport(options={}){
       row.completedAt=now();row.durationMs=Math.max(0,row.completedAt-row.dispatchedAt);row.outcome=snapshot.isError===true?'returned-error':'completed';
       row.resultSha256=sha(text);row.resultBytes=bytes(text);row.success=snapshot.isError!==true;
       const receipt=receiptFor(snapshot,params.tool);if(receipt)row.calculationReceipt=receipt;
-      entry.response={success:row.success,contentItems:[{type:'inputText',text}]};
+      // Preserve the native result exactly. The separate local timing snapshot
+      // grants no new clock or authority and stays fixed on duplicate RPCs.
+      entry.response={success:row.success,contentItems:[{type:'inputText',text},{type:'inputText',text:timingText}]};
+      row.decisionClock=decisionClock;row.decisionClockSha256=sha(timingText);
+      row.deliveredContentSha256=sha(entry.response.contentItems);row.deliveredContentBytes=bytes(entry.response.contentItems);
       row.returnedToModel=false;
       for(const requestId of entry.waiters.values())if(reply(requestId,entry.response)){row.returnedToModel=true;row.responseSentAt=now();}
       entry.waiters.clear();
@@ -434,7 +443,7 @@ export function createCodexSessionTransport(options={}){
       framePayloadBytes:Math.max(telemetry.requestBytes??0,telemetry.schemaBytes??0,modelTools?TOOL_LIMITS.argumentsBytes:0),
       historyRequestBytes:0,modelToolsSha256:modelTools?.sha256??null,toolTasks:new Set(),toolRpcIds:new Map(),toolCallIds:new Map(),closure:new Promise(resolveDone=>{resolveClosed=resolveDone;})};
     session=current;
-    const settings=['model_provider="openai"','forced_login_method="chatgpt"',`model="${model}"`,`model_reasoning_effort="${reasoningEffort}"`,
+    const settings=['model_provider="openai"','forced_login_method="chatgpt"',`model="${model}"`,`model_reasoning_effort="${reasoningEffort}"`,'model_verbosity="low"',
       'approval_policy="never"','sandbox_mode="read-only"','features.shell_tool=false','features.shell_snapshot=false',
       'apps._default.enabled=false','features.apps=false','features.plugins=false','features.remote_plugin=false',
       'features.plugin_discovery_prefetch=false','features.plugin_sharing=false','features.skill_mcp_dependency_install=false',
@@ -522,7 +531,7 @@ export function createCodexSessionTransport(options={}){
   }
   async function callDecision(request={}){
     const startedAt=now(),telemetry={telemetrySource:'codex-cli-session',contextMode:'session',startedAt,deadlineAt:request.deadlineAt,
-      attempts:1,applicationRetryCount:0,providerRetryCountKnown:false,authenticationMethod:'chatgpt',requestedServiceTier:serviceTier,requestedWireServiceTier:wireServiceTier,
+      attempts:1,applicationRetryCount:0,providerRetryCountKnown:false,authenticationMethod:'chatgpt',requestedServiceTier:serviceTier,requestedWireServiceTier:wireServiceTier,requestedModelVerbosity:'low',
       cliVersion:approved?.cliVersion,preflightCompletedAt:approved?.preflightCompletedAt,compactionCount:0,sessionTurnCompleted:false,sessionProcessOwned:true};
     if(busy||halted)throw new CodexCliTransportError(halted?'termination_uncertain':'transport_busy',telemetry);
     if(!approved)throw new CodexCliTransportError('preflight_required',telemetry);

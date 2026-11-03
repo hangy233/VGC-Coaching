@@ -91,6 +91,17 @@ previous review checkpoint, policy and native preflight. It saves private
 proof against qualified source before releasing this second gate. The launcher
 reserves one search before dispatch and never retries it.
 
+At either `START_LIVE` or `START_SEARCH`, type `CANCEL_LIVE` to cancel before
+search. Closing input at either waiting gate also cancels. Before `START_LIVE`,
+no native control is opened. At `START_SEARCH`, the runner rechecks the same
+session, idle state and owned lease, releases that idle lease once, closes its
+model/MCP resources and returns `cancelled-before-search` with zero attempted
+searches. The native client remains available for the manager to claim normally
+and call `battle_stop`. A changed, active or uncertain state is an error; an
+uncertain release is never retried. After search dispatch may have begun, input
+closure is not cancellation or permission to release/stop: retain and drain the
+same runner's attention/recovery interface.
+
 Watch links come from actual native room identities. Keep selected, sent,
 accepted, executed, defaulted and inactive outcomes separate. The manager owns
 the interactive runner and supervises it directly. An agent relaying occasional
@@ -139,6 +150,24 @@ get_movepool, calculate_damage, calculate_damage_range, calculate_speed and
 simulate_choices. Broader offline simulation tools are hidden from the direct
 catalog when simulate_choices is available. Shell, file, web and unrelated tools
 are disabled.
+
+Initial requests and tool replies expose the remaining original model window.
+At 15 seconds remaining the timing phase is `finalize-now`. The author finishes
+one-line JSON with complete concise claims; turn/replacement objectives and next
+conditions are bounded to 96 characters each, with a 160-character reason.
+Preview retains its fuller planning limits. These bounds reduce final-generation
+work while the original cutoff, material research obligations and native
+completion requirements continue to apply. The CLI explicitly requests low
+verbosity; that setting alone establishes no latency improvement.
+The author is instructed to draft well below those caps and finish complete
+clauses. Legal JSON alone does not prove complete or useful plan text; inspect
+the actual qualification and review outputs for unfinished continuations.
+
+Champions Last Respects damage requires an explicit `attackerOptions.alliesFainted`
+total of 0–5 side faint events. Its power comes from the pinned Champions move
+callback and survives the calculator's move clone. Unknown or unsupported totals
+refuse; supplied totals remain hypotheses unless established by the battle facts.
+Models cannot supply arbitrary power overrides.
 
 The shared live budget spans main, shadow and native SDK calls for the same
 session/team/game/board turn: three combined actual calculator invocations and

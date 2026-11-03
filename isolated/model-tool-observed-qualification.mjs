@@ -47,6 +47,18 @@ async function verifyArchive(workspace,provenance,teamId,expectedState){
     entryId:provenance.entryId,entrySha256:provenance.entrySha256,sourceStateSha256:provenance.sourceStateSha256,
     limitation:'Archive bytes and exact source state verified; historical origin remains the archive owner’s attribution.'}};
 }
+function verifiedSourceRegistration(archive,{foe,teamId,opponentSheet}){
+  const sheet=archive.state.opponentSheets?.[foe];
+  need(Array.isArray(sheet)&&sheet.length===6&&same(sheet,opponentSheet),'same-source published registration differs from the supplied opposing sheet');
+  for(const value of [archive.declaredTeamId,archive.state.teamSha256,archive.state.teamId,archive.state.metrics?.teamId])
+    need(value===undefined||value===teamId,'same-source published registration team attribution differs');
+  let publishedOpposingSheetSha256;
+  try{publishedOpposingSheetSha256=publishedSheetDigest(sheet);}catch{need(false,'same-source published registration is incomplete or invalid');}
+  return {kind:'verified-same-source-native-published-registration',archive:archive.proof.archive,archiveSha256:archive.proof.archiveSha256,
+    entryId:archive.proof.entryId,entrySha256:archive.proof.entrySha256,sourceStateSha256:archive.proof.sourceStateSha256,
+    sourceField:`opponentSheets.${foe}`,publishedOpposingSheetSha256,originalRawStateUnchanged:true,
+    limitation:'Exact published registration from the same verified archived state is carried into a separate reconstruction view. Historical origin remains the archive owner’s attribution; no selected reserves, lifecycle, investments, hypotheses or battle actions are supplied.'};
+}
 function verifiedPreviewRegistration(archive,reference,{original,team,teamId,opponentSheet}){
   need(object(reference)&&typeof reference.sourceEntryId==='string'&&reference.sourceEntryId.length>0&&reference.sourceEntryId.length<=200,
     'missing frozen opposing sheet requires an exact same-archive preview reference');
@@ -133,14 +145,19 @@ export async function createModelToolObservedQualificationAdapter({workspace=pro
   if(frozen.controlPolicy)frozen.controlPolicy={...frozen.controlPolicy,pending:[]};
   const {board}=currentSource(frozen,source),foe=board.ownSide==='p1'?'p2':'p1';
   need(Array.isArray(opponentSheet)&&opponentSheet.length===6,'complete exact frozen opposing sheet required');
-  const embedded=object(board.opponentSheets)&&Object.hasOwn(board.opponentSheets,foe);
+  const embedded=object(board.opponentSheets)&&Object.hasOwn(board.opponentSheets,foe),
+    sourcePublished=object(original.opponentSheets)&&Object.hasOwn(original.opponentSheets,foe);
+  if(sourcePublished)need(Array.isArray(original.opponentSheets[foe])&&original.opponentSheets[foe].length===6&&same(original.opponentSheets[foe],opponentSheet),
+    'same-source published registration conflicts with supplied opposing sheet');
   if(embedded)need(same(board.opponentSheets[foe],opponentSheet),'embedded frozen opposing sheet conflicts with supplied registration');
-  else need(provenance?.kind==='retained-native-source'&&typeof provenance.sheetContext?.sourceEntryId==='string','complete exact frozen opposing sheet or same-archive preview provenance required');
+  else need(provenance?.kind==='retained-native-source'&&(sourcePublished||typeof provenance.sheetContext?.sourceEntryId==='string'),
+    'complete exact frozen opposing sheet, same-source published registration or same-archive preview provenance required');
   let sourceProof,sourceKind,registrationProof=null;
   if(provenance?.kind==='retained-native-source'){
     const archive=await verifyArchive(workspace,provenance,state.teamSha256,original);
     sourceProof=archive.proof;sourceKind='retained-native-source';
-    if(!embedded)registrationProof=verifiedPreviewRegistration(archive,provenance.sheetContext,{original,team,teamId:state.teamSha256,opponentSheet});
+    if(sourcePublished)registrationProof=verifiedSourceRegistration(archive,{foe,teamId:state.teamSha256,opponentSheet});
+    else if(!embedded)registrationProof=verifiedPreviewRegistration(archive,provenance.sheetContext,{original,team,teamId:state.teamSha256,opponentSheet});
   }else{
     need(provenance?.constructedOpening===true&&provenance.savedBoardUsed===false&&provenance.ownHp==='actual-native-bootstrap-start','unsupported frozen source provenance');
     sourceProof=verifyNativeStart(nativeEvidence,nativeStart,state.teamSha256,action.parentId);verifyOwnNativeHp(frozen,nativeStart);

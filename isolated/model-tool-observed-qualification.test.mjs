@@ -13,7 +13,7 @@ import {translateOfflineObservedSimulation} from '../observability/offline-obser
 import {connectOfflineNumericClient} from '../observability/numeric-client.mjs';
 import {unpackToolResult} from '../showdown/operator-client.mjs';
 import {publishedSheetDigest} from '../simulation/observed-position.mjs';
-import {createModelToolObservedQualificationAdapter,hasModelToolObservedQualificationReceipt} from './model-tool-observed-qualification.mjs';
+import {createModelToolObservedQualificationAdapter,hasModelToolObservedQualificationReceipt,loadVerifiedSavedModelToolSource} from './model-tool-observed-qualification.mjs';
 
 const workspace=fileURLToPath(new URL('../',import.meta.url)),sha=value=>createHash('sha256').update(value).digest('hex'),copy=structuredClone;
 const {Teams,TeamValidator}=createRequire(import.meta.url)('pokemon-showdown');
@@ -25,6 +25,7 @@ async function saved(t,{current=false}={}){
   // A complete synthetic native-reader fixture, retained byte-for-byte for these
   // tests. It is never attributed to an actual played battle or provider pass.
   state.teamSha256=input.expected.teamId;state.connected=true;state.authenticated=true;state.stopped=false;
+  delete state.opponentSheets;
   state.boards[0].opponentSheets={p2:copy(input.opposingSheet)};state.actions[0].parentId='game-bestof3-gen9championsvgc2026regmcbo3-122';
   state.rooms=[{id:input.expected.room,parentId:state.actions[0].parentId,ended:false}];
   state.controlPolicy={pending:[{room:input.expected.room,rqid:input.expected.rqid,token:input.expected.token,cutoffAt:1000,attempted:false}]};
@@ -36,6 +37,60 @@ async function saved(t,{current=false}={}){
 }
 function syntheticResult(input){const request=input.request;return {structuredContent:{engine:{gen:0,format:'gen9championsvgc2026regmc'},source:{kind:'explicit-offline-snapshot',liveFreshness:false},submittedBranches:copy(request.branches),
   samples:request.branches.flatMap(branch=>request.seeds.map(seed=>({branchId:branch.id,seed:copy(seed),accepted:{[request.position.ownSide]:{accepted:true}},gate:{passed:false,cleanSample:false},boundary:'next-turn',pendingActions:[],noPendingContinuation:true,start:copy(request.position)})))}};}
+
+async function savedWithPublishedSource(t,{current=false,change,retainEmbedded=false}={}){
+  const f=await saved(t,{current}),original=copy(f.state),foe=original.boards[0].ownSide==='p1'?'p2':'p1',supplied=copy(f.input.opposingSheet);
+  original.opponentSheets={[foe]:copy(supplied)};
+  if(!retainEmbedded)delete original.boards[0].opponentSheets;
+  change?.({state:original,sheet:original.opponentSheets[foe],supplied,foe});
+  const contentUtf8=JSON.stringify({payload:{result:{next:{state:{result:original}}}}}),bytes=gzipSync(JSON.stringify({teamId:original.teamSha256,entries:[{id:'synthetic-native-fixture',contentUtf8}]}));
+  await writeFile(f.archive,bytes);
+  return {...f,state:original,foe,options:{...f.options,state:original,opponentSheet:supplied,provenance:{...f.options.provenance,
+    archiveSha256:sha(bytes),entrySha256:sha(contentUtf8),sourceStateSha256:digest(original)}}};
+}
+
+test('same-source published registration is hash-bound and enters only a separate reconstruction view',async t=>{
+  const f=await savedWithPublishedSource(t),before=copy(f.state),bytesBefore=await readFile(f.archive),view=await loadVerifiedSavedModelToolSource(f.options),adapter=await createModelToolObservedQualificationAdapter(f.options);
+  const status=adapter.status(),proof=status.registrationSource;
+  assert.equal(proof.kind,'verified-same-source-native-published-registration');assert.equal(proof.sourceField,`opponentSheets.${f.foe}`);
+  assert.equal(proof.archiveSha256,f.options.provenance.archiveSha256);assert.equal(proof.entrySha256,f.options.provenance.entrySha256);
+  assert.equal(proof.sourceStateSha256,digest(before));assert.equal(proof.publishedOpposingSheetSha256,publishedSheetDigest(f.options.opponentSheet));
+  assert.equal(proof.originalRawStateUnchanged,true);assert.match(proof.limitation,/archive owner’s attribution/u);
+  const expected=copy(before);expected.controlPolicy.pending=[];expected.boards[0].opponentSheets={[f.foe]:copy(f.options.opponentSheet)};
+  assert.deepEqual(view.original,before);assert.deepEqual(view.reconstruction,expected);assert.equal(status.reconstructionViewSha256,digest(expected));
+  let forwarded;const result=await adapter.execute({name:'simulate_turn',args:f.args,deadlineAt:Date.now()+5000,callNative:async request=>{forwarded=copy(request.arguments);return syntheticResult(request.arguments);}});
+  assert.deepEqual(forwarded.request.branches,f.args.request.branches);assert.deepEqual(forwarded.request.seeds,f.args.request.seeds);
+  assert.deepEqual(adapter.receipt(result).registrationSource,proof);assert.equal(adapter.status().nativeSdkVerified,false);
+  assert.deepEqual(f.state,before);assert.equal(f.state.boards[0].opponentSheets,undefined);assert.deepEqual(await readFile(f.archive),bytesBefore);
+});
+
+test('same-source registration refuses partial, mismatched, wrong-side or altered archived publication',async t=>{
+  for(const change of [
+    ({sheet})=>{sheet[0].moves[0]='Protect';},
+    ({sheet,supplied})=>{sheet.pop();supplied.pop();},
+    ({sheet,supplied})=>{delete sheet[0].ability;delete supplied[0].ability;},
+    ({sheet,supplied})=>{sheet[0].moves.pop();supplied[0].moves.pop();},
+    ({sheet,supplied})=>{sheet[0].moves[0]='No Such Move';supplied[0].moves[0]='No Such Move';},
+    ({state,foe})=>{state.opponentSheets[foe==='p1'?'p2':'p1']=state.opponentSheets[foe];delete state.opponentSheets[foe];},
+  ]){const f=await savedWithPublishedSource(t,{change});await assert.rejects(createModelToolObservedQualificationAdapter(f.options));}
+  const f=await savedWithPublishedSource(t);
+  for(const change of [
+    options=>{options.provenance.archiveSha256='a'.repeat(64);},options=>{options.provenance.entrySha256='a'.repeat(64);},
+    options=>{options.provenance.sourceStateSha256='a'.repeat(64);},options=>{options.state.opponentSheets[f.foe][0].moves[0]='Protect';options.opponentSheet=copy(options.state.opponentSheets[f.foe]);},
+    options=>{delete options.provenance;},
+  ]){const options=copy(f.options);change(options);await assert.rejects(createModelToolObservedQualificationAdapter(options));}
+  const embeddedConflict=await savedWithPublishedSource(t,{retainEmbedded:true,change:({sheet})=>{sheet[0].moves[0]='Protect';}});
+  await assert.rejects(createModelToolObservedQualificationAdapter(embeddedConflict.options),/same-source published registration conflicts/u);
+});
+
+test('same-source registration supplies no absent lifecycle or investments',async t=>{
+  const f=await savedWithPublishedSource(t,{current:true}),adapter=await createModelToolObservedQualificationAdapter(f.options);let calls=0;
+  for(const change of [args=>{delete args.request.hypotheses.own.own2.lifecycle;},args=>{delete args.request.hypotheses.opposing.foe0.statPoints;}]){
+    const args=copy(f.args);change(args);
+    await assert.rejects(adapter.execute({name:'simulate_turn',args,deadlineAt:Date.now()+5000,callNative:async()=>{calls++;throw Error('No native execution allowed');}}));
+  }
+  assert.equal(calls,0);assert.equal(adapter.status().executed,0);
+});
 
 async function savedWithPreview(t,{current=false,changePreview,duplicate=false,embeddedConflict=false}={}){
   const f=await saved(t,{current}),original=copy(f.state),board=original.boards[0],side=board.ownSide,foe=side==='p1'?'p2':'p1';
@@ -108,6 +163,18 @@ test('secondary registration supplies no missing lifecycle or investments',async
 });
 
 const realSavedRequests=(process.env.VGC_TEST_SAVED_REQUESTS??'');
+const realPublishedSource=(process.env.VGC_TEST_SAME_SOURCE_REGISTRATION??'');
+
+test('actual frozen same-source publication prepares without changing retained state or issuing a call',
+  {skip:existsSync(realPublishedSource)?false:'Private same-source registration row unavailable'},async()=>{
+    const row=JSON.parse(await readFile(realPublishedSource,'utf8')),before=copy(row.state),foe=row.state.boards[0].ownSide==='p1'?'p2':'p1',archiveBefore=await readFile(join(workspace,row.provenance.archive));
+    assert.equal(row.state.boards[0].opponentSheets,undefined);assert.deepEqual(row.state.opponentSheets[foe],row.opponentSheet);
+    const adapter=await createModelToolObservedQualificationAdapter({workspace,state:row.state,ownTeamText:row.ownTeamText,opponentSheet:row.opponentSheet,provenance:row.provenance});
+    assert.equal(adapter.status().registrationSource.kind,'verified-same-source-native-published-registration');assert.equal(adapter.status().registrationSource.sourceField,`opponentSheets.${foe}`);
+    assert.equal(adapter.status().registrationSource.sourceStateSha256,row.provenance.sourceStateSha256);
+    assert.equal(adapter.status().executed,0);assert.equal(adapter.status().nativeSdkVerified,false);assert.equal(adapter.status().liveFreshness,false);
+    assert.deepEqual(row.state,before);assert.deepEqual(await readFile(join(workspace,row.provenance.archive)),archiveBefore);
+  });
 test('actual frozen T1 prepares from its verified preview without changing raw source or issuing a call',
   {skip:existsSync(realSavedRequests)?false:'Private exact saved request bundle unavailable'},async()=>{
     const data=JSON.parse(await readFile(realSavedRequests,'utf8')),row=data.requests.find(item=>item.caseId==='actual-g2-t1-material'),before=copy(row.state);
