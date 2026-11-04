@@ -12,7 +12,8 @@ import {prepareMatchupGuidance,verifyMatchupGuidance} from './matchup-guidance.m
 import {MAX_CONTEXT_BYTES,SESSION_REFRESH_TELEMETRY_FIELDS} from './context-limits.mjs';
 import {hasModelToolQualificationReceipt} from './model-tool-qualification.mjs';
 import {preparePonderAnalysis,prepareUnvalidatedPonderDiagnostic} from './ponder-evidence.mjs';
-import {verifyPonderQualificationReceipt} from './ponder-qualification.mjs';
+import {verifyPonderQualificationReceipt,ponderQualificationSourcePins} from './ponder-qualification.mjs';
+import {admitQualificationReference,validateQualificationReferenceShape,verifyQualificationReferenceAdmission} from './qualification-reference.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const MAX_MODEL_TRACE_BYTES=64*1024*1024;
@@ -94,13 +95,14 @@ export function validateSessionConfiguration(value) {
 }
 
 export function validateScopeConfiguration(value, identity) {
-  requireThat(exactKeys(value, ['version', 'authorization', 'sessionId', 'teamId', 'account', 'maxSets', 'allowSearch', 'allowGenerationProbe', 'allowManualForfeit', 'manualReady', 'saveReplays', 'controlPolicy','allowPonder']) && value.version === 1);
+  requireThat(exactKeys(value, ['version', 'authorization', 'sessionId', 'teamId', 'account', 'maxSets', 'allowSearch', 'allowGenerationProbe', 'allowManualForfeit', 'manualReady', 'saveReplays', 'controlPolicy','allowPonder','qualificationReference']) && value.version === 1);
   requireThat(typeof value.authorization === 'string' && value.authorization.trim().length >= 10 && value.authorization.length <= 2000);
   requireThat(value.sessionId === identity.sessionId && value.teamId === identity.teamId && value.account === identity.account);
   requireThat(value.maxSets === 1 && value.allowSearch === true && value.allowGenerationProbe === true && typeof value.saveReplays === 'boolean');
   requireThat(value.allowManualForfeit === undefined || typeof value.allowManualForfeit === 'boolean');
   requireThat(value.manualReady===undefined||typeof value.manualReady==='boolean');
   requireThat(value.allowPonder===undefined||typeof value.allowPonder==='boolean');
+  if(value.qualificationReference!==undefined)validateQualificationReferenceShape(value.qualificationReference);
   const policy = value.controlPolicy;
   requireThat(exactKeys(policy, ['enabled', 'forfeitIfStuck', 'emergencyDefaultChoice', 'planningMs', 'previewPlanningMs', 'unknownClockMs', 'safetyMarginMs']));
   requireThat(policy.enabled === true && typeof policy.forfeitIfStuck === 'boolean' && typeof policy.emergencyDefaultChoice === 'boolean');
@@ -412,7 +414,7 @@ export function createModelTraceStore({workspace = ROOT, teamId, runId = randomU
 }
 
 /** A successful key-presence or models-list check is insufficient for a battle. */
-export async function runBattleWorkflow({operator, createController, identity, scope, ownTeamText, apiConfig, decisionProvider, contextMode='session',serviceTier='standard',ponderRuntime,qualifyPonder,verifyPonderQualification=verifyPonderQualificationReceipt,savedModelToolRequests,requireModelToolReceipt=false, resetDecisionContext, beforeSearch, onEvidence, onEvent = () => {}, onGuidance = () => {}, now = Date.now, runId = randomUUID(), verifyPolicy = verifyIsolatedPolicySource, qualifyGeneration, qualifyDesktop, qualifyCodex, postResultTimeoutMs = 30000} = {}) {
+export async function runBattleWorkflow({operator, createController, identity, scope, ownTeamText, apiConfig, decisionProvider, contextMode='session',serviceTier='standard',ponderRuntime,qualifyPonder,verifyPonderQualification=verifyPonderQualificationReceipt,savedModelToolRequests,qualificationAdmission,requireModelToolReceipt=false, resetDecisionContext, beforeSearch, onEvidence, onEvent = () => {}, onGuidance = () => {}, now = Date.now, runId = randomUUID(), verifyPolicy = verifyIsolatedPolicySource, qualifyGeneration, qualifyDesktop, qualifyCodex, postResultTimeoutMs = 30000} = {}) {
   validateSessionConfiguration(identity); validateScopeConfiguration(scope, identity);
   requireThat(contextMode==='session'&&(!resetDecisionContext||typeof resetDecisionContext==='function'),'provider_configuration');
   const externalProvider=true,codex=true,decisionMode='model-tools';
@@ -422,12 +424,15 @@ export async function runBattleWorkflow({operator, createController, identity, s
   requireThat(beforeSearch===undefined||typeof beforeSearch==='function','configuration');
   const policySource = verifyPolicy();
   requireThat(policySource?.verified === true && HASH.test(policySource.skillSha256 ?? '') && typeof policySource.skillVersion === 'string', 'skill');
-  const qualification=await qualifyCodex({decisionProvider,now,onEvent,teamId:identity.teamId,decisionMode,requests:savedModelToolRequests});
-  const qualified=qualification?.qualified===true&&qualification.requestedModel===decisionProvider.model&&qualification.providerKind==='codex-cli'&&qualification.reasoningEffort===decisionProvider.reasoningEffort&&qualification.authenticationMethod==='chatgpt'&&qualification.generationObserved===true&&qualification.savedPositionQualified===true&&qualification.decisionMode==='model-tools'&&qualification.modelToolWorkflowQualified===true&&qualification.modelRequestedMcpQualified===true&&qualification.pairedSimulationQualified===true&&qualification.liveObservedSimulationQualified===true&&qualification.rangeWorkflowQualified===true&&qualification.teamId===identity.teamId&&qualification.contextMode==='session'&&qualification.sessionContinuityQualified===true&&(!requireModelToolReceipt||hasModelToolQualificationReceipt(decisionProvider,qualification));
+  requireThat(scope.qualificationReference===undefined||qualificationAdmission!==undefined,'configuration');
+  const qualificationProfile={provider:'codex-cli',model:decisionProvider.model,reasoningEffort:decisionProvider.reasoningEffort,serviceTier,contextMode,authenticationMethod:'chatgpt'};
+  const referenceTeamId=qualificationAdmission?verifyQualificationReferenceAdmission(qualificationAdmission,{identity,scope,ownTeamText,requests:savedModelToolRequests,profile:qualificationProfile}):identity.teamId;
+  const qualification=await qualifyCodex({decisionProvider,now,onEvent,teamId:referenceTeamId,decisionMode,requests:savedModelToolRequests});
+  const qualified=qualification?.qualified===true&&qualification.requestedModel===decisionProvider.model&&qualification.providerKind==='codex-cli'&&qualification.reasoningEffort===decisionProvider.reasoningEffort&&qualification.authenticationMethod==='chatgpt'&&qualification.generationObserved===true&&qualification.savedPositionQualified===true&&qualification.decisionMode==='model-tools'&&qualification.modelToolWorkflowQualified===true&&qualification.modelRequestedMcpQualified===true&&qualification.pairedSimulationQualified===true&&qualification.liveObservedSimulationQualified===true&&qualification.rangeWorkflowQualified===true&&qualification.teamId===referenceTeamId&&qualification.contextMode==='session'&&qualification.sessionContinuityQualified===true&&(!requireModelToolReceipt||hasModelToolQualificationReceipt(decisionProvider,qualification));
   requireThat(qualified,'generation_unavailable');
   if(ponderRuntime){
     const proof=await qualifyPonder({decisionProvider,mainQualification:qualification,requests:savedModelToolRequests,onEvent});
-    requireThat(proof?.qualified===true&&proof.teamId===identity.teamId&&await verifyPonderQualification(decisionProvider,proof),'generation_unavailable');
+    requireThat(proof?.qualified===true&&proof.teamId===referenceTeamId&&await verifyPonderQualification(decisionProvider,proof),'generation_unavailable');
   }
   // Offline qualification history must never become a live battle's memory.
   await resetDecisionContext?.();
@@ -883,7 +888,7 @@ export function controllerAttentionNotice(event = {}, runId) {
     requires: 'Continue reading this same stream for the fresh recovery-context. Do not detour through reports or health checks.'};
 }
 
-const TEST_FILES = ["attention-alert.test.mjs","codex-cli-provider.test.mjs","codex-cli-transport.test.mjs","codex-session-context.test.mjs","codex-session-transport.test.mjs","codex-tool-schema.test.mjs","codex-wire.test.mjs","compact-model-tool-qualification.test.mjs","context-compaction-integration.test.mjs","context-compaction.test.mjs","decision-context.test.mjs","game-summary.test.mjs","launch.test.mjs","matchup-guidance.test.mjs","model-owned-tools.test.mjs","model-tool-cycle.test.mjs","model-tool-observed-qualification.test.mjs","model-tool-qualification.test.mjs","model-tool-validation.test.mjs","native-controller.test.mjs","ponder-controller.test.mjs","ponder-evidence.test.mjs","ponder-qualification.test.mjs","ponder-runner.test.mjs","ponder-runtime.test.mjs","recovery-handoff.test.mjs","recovery-stream.test.mjs","runner.test.mjs","saved-choice-capture.test.mjs","saved-compact-replay.test.mjs","team-guidance.test.mjs"];
+const TEST_FILES = ["attention-alert.test.mjs","codex-cli-provider.test.mjs","codex-cli-transport.test.mjs","codex-session-context.test.mjs","codex-session-transport.test.mjs","codex-tool-schema.test.mjs","codex-wire.test.mjs","compact-model-tool-qualification.test.mjs","context-compaction-integration.test.mjs","context-compaction.test.mjs","decision-context.test.mjs","game-summary.test.mjs","launch.test.mjs","matchup-guidance.test.mjs","model-owned-tools.test.mjs","model-tool-cycle.test.mjs","model-tool-observed-qualification.test.mjs","model-tool-qualification.test.mjs","model-tool-validation.test.mjs","native-controller.test.mjs","ponder-controller.test.mjs","ponder-evidence.test.mjs","ponder-qualification.test.mjs","ponder-runner.test.mjs","ponder-runtime.test.mjs","qualification-reference.test.mjs","recovery-handoff.test.mjs","recovery-stream.test.mjs","runner.test.mjs","saved-choice-capture.test.mjs","saved-compact-replay.test.mjs","team-guidance.test.mjs"];
 export async function runOfflineQualification({workspace = ROOT, spawnImpl = spawn} = {}) {
   const args = ['--test', '--test-reporter=tap', '--test-concurrency=1', ...TEST_FILES.map(name => join(workspace, 'isolated', name))];
   // Do not pass provider credentials to the offline test subprocess.
@@ -939,12 +944,14 @@ export async function runRunner(args, {workspace = ROOT, write = value => proces
     requireThat(checked?.authMode==='chatgpt','provider_configuration');
   }
   const {identity, scope, ownTeamText} = configured;
-  let savedModelToolRequests;
+  let savedModelToolRequests,qualificationAdmission;
   if(codex&&options.modelToolQualificationFile){
-    const document=JSON.parse(await regularWorkspaceFile(workspace,options.modelToolQualificationFile,32*1024*1024));
-    requireThat(document?.kind==='saved-model-tool-qualification-requests'&&document.teamId===identity.teamId&&document.skillSha256===ISOLATED_POLICY_SOURCE.skillSha256&&Array.isArray(document.requests),'configuration');
+    const referenceText=await regularWorkspaceFile(workspace,options.modelToolQualificationFile,32*1024*1024),document=JSON.parse(referenceText);
+    requireThat(document?.kind==='saved-model-tool-qualification-requests'&&document.skillSha256===ISOLATED_POLICY_SOURCE.skillSha256&&Array.isArray(document.requests),'configuration');
+    qualificationAdmission=admitQualificationReference({identity,scope,ownTeamText,document,referenceFile:options.modelToolQualificationFile,referenceText,sourcePins:await ponderQualificationSourcePins(),profile:{provider:'codex-cli',model:options.model,reasoningEffort:options.reasoningEffort,serviceTier:options.serviceTier??'fast',contextMode:options.contextMode,authenticationMethod:'chatgpt'}});
     savedModelToolRequests=document.requests;
   }
+  requireThat(scope.qualificationReference===undefined||qualificationAdmission!==undefined,'configuration');
   const runId = randomUUID();
   const trace = createModelTraceStore({workspace, teamId: identity.teamId, runId, secrets: []});
   let sdk, timing, operator,ponderRuntime, retainConnection = false,ponderArchive;
@@ -972,7 +979,7 @@ export async function runRunner(args, {workspace = ROOT, write = value => proces
       requireThat(object(ponderRuntime)&&['prepare','observeState','setMainBusy','setDecisionContext','notesFor','stop','drain','privateEvidence','status'].every(name=>typeof ponderRuntime[name]==='function'),'provider_configuration');}
     operator = (operatorFactory ?? createOperator)({client: sdk, responseFile: 'in-memory-only', maxSearches: 1, readTimeoutMs: 1500, mutationTimeoutMs: 1500,returnAfterModelSend:scope.allowPonder===true,
       publish: async () => ({}), timingRecorder: timing.recorder, onTimingFlush: () => timing.flush(),...(ponderRuntime?{onState:state=>ponderRuntime.observeState(state)}:{})});
-    const result = await timing.recorder.run({traceId: runId, teamId: identity.teamId}, () => runBattleWorkflow({operator, createController: controllerFactory ?? createNativeController, identity, scope, ownTeamText, decisionProvider:provider.decisionProvider,contextMode:'session',serviceTier:options.serviceTier??'fast',...(ponderRuntime?{ponderRuntime,qualifyPonder,verifyPonderQualification}:{}),savedModelToolRequests,requireModelToolReceipt:qualifyCodex===undefined,resetDecisionContext:provider.reset,qualifyCodex:qualifyCodex??provider.qualifyCodex, runId,
+    const result = await timing.recorder.run({traceId: runId, teamId: identity.teamId}, () => runBattleWorkflow({operator, createController: controllerFactory ?? createNativeController, identity, scope, ownTeamText, decisionProvider:provider.decisionProvider,contextMode:'session',serviceTier:options.serviceTier??'fast',...(ponderRuntime?{ponderRuntime,qualifyPonder,verifyPonderQualification}:{}),savedModelToolRequests,qualificationAdmission,requireModelToolReceipt:qualifyCodex===undefined,resetDecisionContext:provider.reset,qualifyCodex:qualifyCodex??provider.qualifyCodex, runId,
       ...(qualifyGeneration ? {qualifyGeneration} : {}), ...(verifyPolicy ? {verifyPolicy} : {}),...(beforeSearch?{beforeSearch}:{}),
       onEvidence: event => trace.append(event), onEvent}));
     // A pre-search cancellation has no parent or frozen battle journal. Other

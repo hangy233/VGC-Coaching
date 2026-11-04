@@ -10,6 +10,15 @@ The manager prepares a compatible bundle of genuine complete saved native reques
 
 Use the public CLI launch workflow. It retains the actual qualified provider for live use, rather than qualifying one process and silently replacing it. A new checkout supports MCP analysis immediately; live startup still needs compatible evidence, an explicitly authorized manual-ready client and exact session/scope files. Missing prerequisites fail closed.
 
+Historical qualification sources keep their original team identity. When an
+approved new roster lacks captures, the public runner accepts a separately
+verified `scope.qualificationReference` binding as documented in the
+[CLI guide](../isolated/README.md). It binds the genuine reference bundle to the
+exact approved live export, account/session, authorization, source, guidance and
+profile. This is model/interface qualification only: it supplies no new-team
+battle evidence or prior team memory. Missing, stale or mismatched bindings
+refuse; all native live identity and ownership checks still use the live team.
+
 Before search, verify:
 
 - The same authenticated account, exact team and fresh client session; remaining search allowance and official idle state.

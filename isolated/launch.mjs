@@ -12,6 +12,7 @@ import {ISOLATED_POLICY_SOURCE,verifyIsolatedPolicySource} from './decision-cont
 import {runRunner,readRunnerConfiguration} from './runner.mjs';
 import {createOperator} from '../showdown/operator-client.mjs';
 import {createAttentionAlert} from './attention-alert.mjs';
+import {admitQualificationReference,verifyQualificationReferenceAdmission} from './qualification-reference.mjs';
 
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 const PROFILE=Object.freeze({model:'gpt-6.1-sol',reasoningEffort:'low',serviceTier:'fast',contextMode:'session'});
@@ -46,7 +47,7 @@ async function inputDocument(workspace,supplied){
   const policy=verifyIsolatedPolicySource();
   need(document.skillSha256===policy.skillSha256&&(!document.skillVersion||document.skillVersion===policy.skillVersion),'LAUNCH_SOURCE','Saved contexts must use current complete guidance.');
   if(document.profile)need(Object.entries(PROFILE).every(([key,value])=>document.profile[key]===value),'LAUNCH_PROFILE','Saved request profile differs from Sol/low/Fast/session.');
-  return {document,sha256:sha(text),path};
+  return {document,sha256:sha(text),path,text};
 }
 
 async function privateOutput(workspace,supplied,teamId){
@@ -92,11 +93,11 @@ export async function launchWorkflow(options,{workspace=ROOT,providerFactory=cre
     const main=await provider.qualifyCodex({decisionMode:'model-tools',workspace,requests:document.requests,onEvent:event=>write({state:'qualification-progress',caseId:event.caseId,type:event.type??event.name})});
     await output.save('main-qualification.json',main);
     const mainBudget=assessOfflineBudget({kind:'main',result:main,requests:document.requests,guardSha256});await output.save('main-budget.json',mainBudget);
-    need(main.qualified===true&&main.compactChoiceSimulationQualified===true&&main.rangeWorkflowQualified===true&&verifyMain(provider,main)&&mainBudget.conformant,'LAUNCH_MAIN_QUALIFICATION','Actual same-provider main qualification and original 3/1 journal conformance are required.');
+    need(main.qualified===true&&main.teamId===document.teamId&&main.compactChoiceSimulationQualified===true&&main.rangeWorkflowQualified===true&&verifyMain(provider,main)&&mainBudget.conformant,'LAUNCH_MAIN_QUALIFICATION','Actual same-provider main qualification and original 3/1 journal conformance are required.');
     const shadow=await qualifyShadow({provider,mainQualification:main,workspace,request:document.requests.find(row=>row.materialRequired),onEvent:event=>write({state:'shadow-progress',caseId:event.caseId,type:event.type??event.name})});
     await output.save('shadow-qualification.json',shadow);
     const shadowBudget=assessOfflineBudget({kind:'shadow',result:shadow,requests:document.requests,guardSha256});await output.save('shadow-budget.json',shadowBudget);
-    need(shadow.qualified===true&&shadow.frozenRangeWorkflowQualified===true&&await verifyShadow(provider,shadow)&&shadowBudget.conformant,'LAUNCH_SHADOW_QUALIFICATION','Actual same-provider frozen/preemption proof and original 3/1 journal conformance are required.');
+    need(shadow.qualified===true&&shadow.teamId===document.teamId&&shadow.frozenRangeWorkflowQualified===true&&await verifyShadow(provider,shadow)&&shadowBudget.conformant,'LAUNCH_SHADOW_QUALIFICATION','Actual same-provider frozen/preemption proof and original 3/1 journal conformance are required.');
     need(sha(pins)===sha(await sourcePins()),'LAUNCH_SOURCE_CHANGED','Loaded source changed after qualification.');
     write({state:'qualified',sourceSha256:pins.sha256,profile:PROFILE,liveAdmissionGranted:false});
     if(options.mode==='qualify-only')return {state:'qualified-offline',sourceSha256:pins.sha256,battlesStarted:0};
@@ -105,21 +106,29 @@ export async function launchWorkflow(options,{workspace=ROOT,providerFactory=cre
       const result={state:'cancelled-before-live',gate:'START_LIVE',reason:admission.reason,searchesAttempted:0,searchDispatchAttempted:false,searchDispatched:false,nativeControlOpened:false,clientStopped:false};
       await output.save('live-result.json',result);write(result);return result;
     }
-    const adoption=[],links=new Set();let searchReserved=false,searchDispatchAttempted=false;
+    const adoption=[],links=new Set();let searchReserved=false,searchDispatchAttempted=false,referenceAdmission;
     const runnerOptions={workspace,configurationReader:async args=>{
       const configuration=await readConfiguration(args);
-      need(configuration.identity.teamId===document.teamId&&configuration.scope.manualReady===true&&configuration.scope.allowPonder===true&&configuration.scope.maxSets===1,'LAUNCH_SCOPE','The public live workflow requires the exact qualified team, manual readiness, pondering and one explicitly authorized set.');
+      need(configuration.scope.manualReady===true&&configuration.scope.allowPonder===true&&configuration.scope.maxSets===1,'LAUNCH_SCOPE','The public live workflow requires manual readiness, pondering and one explicitly authorized set.');
+      referenceAdmission=admitQualificationReference({...configuration,document,referenceFile:options.requestFile,referenceText:source.text,sourcePins:pins,profile:{provider:'codex-cli',...PROFILE,authenticationMethod:'chatgpt'}});
       return configuration;
     },codexProviderFactory:()=>({...provider,qualifyCodex:async args=>{
       need(args.decisionMode==='model-tools'&&sha(args.requests)===sha(document.requests)&&verifyMain(provider,main),'LAUNCH_RECEIPT','Main source/provider identity changed.');return main;}}),
       qualifyPonder:async()=>{need(await verifyShadow(provider,shadow),'LAUNCH_RECEIPT','Shadow source/provider identity changed.');return shadow;},
       beforeSearch:async()=>{
         need(!searchReserved&&!searchDispatchAttempted,'LAUNCH_SEARCH_RESERVED','The one search was already reserved.');
-        await output.save('startup-adoption.json',{held:true,sourceSha256:pins.sha256,searchDispatched:false,
+        await output.save('startup-adoption.json',{held:true,sourceSha256:pins.sha256,searchDispatched:false,qualificationReference:referenceAdmission,
           attentionAlert:{path:relative(workspace,alert.path).replaceAll('\\','/'),prepared:true,automaticActions:false},operations:adoption});
         write({state:'held-ready-awaiting-search',sourceSha256:pins.sha256});
         const released=await gate('START_SEARCH',{input});if(released?.cancelled===true)return released;
-        need(sha(pins)===sha(await sourcePins()),'LAUNCH_SOURCE_CHANGED','Source changed before search.');searchReserved=true;
+        need(sha(pins)===sha(await sourcePins()),'LAUNCH_SOURCE_CHANGED','Source changed before search.');
+        if(referenceAdmission?.mode==='explicit-reference-team'){
+          const freshSource=await inputDocument(workspace,options.requestFile);
+          need(freshSource.sha256===source.sha256,'LAUNCH_SOURCE_CHANGED','Saved reference bytes changed before search.');
+          const freshConfiguration=await readConfiguration({workspace,sessionFile:options.session,scopeFile:options.scope});
+          verifyQualificationReferenceAdmission(referenceAdmission,{...freshConfiguration,requests:freshSource.document.requests,profile:{provider:'codex-cli',...PROFILE,authenticationMethod:'chatgpt'}});
+        }
+        searchReserved=true;
       },
       operatorFactory:config=>{live=true;const owned=operatorFactory({...config,onState:state=>{
         config.onState?.(state);for(const room of state.rooms??[])if(room.ended===false&&typeof room.id==='string'&&/^(?:battle|game-bestof3)-gen9championsvgc2026regmcbo3-\d+(?:-[a-z0-9]+pw)?$/u.test(room.id)&&!links.has(room.id)){

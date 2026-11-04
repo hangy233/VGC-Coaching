@@ -6,6 +6,7 @@ import {PassThrough} from 'node:stream';
 import {launchWorkflow,parseLaunchArgs,waitManagerGate} from './launch.mjs';
 import {ISOLATED_POLICY_SOURCE} from './decision-context.mjs';
 import {sha,assessOfflineBudget} from './qualification-budget.mjs';
+import {createRequire} from 'node:module';
 
 const TEAM='a'.repeat(64),profile={model:'gpt-6.1-sol',reasoningEffort:'low',serviceTier:'fast',contextMode:'session'};
 async function fixture(t){
@@ -14,12 +15,70 @@ async function fixture(t){
   const requests=[1,2,3].map(i=>({caseId:'saved-'+i,materialRequired:i===2,state:{actions:[],source:i},action:{room:'battle-fixture-'+i,rqid:i,token:'synthetic-source'}}));
   await writeFile(join(workspace,'requests.json'),JSON.stringify({kind:'saved-model-tool-qualification-requests',teamId:TEAM,skillSha256:ISOLATED_POLICY_SOURCE.skillSha256,profile,requests}));
   const options={mode:'qualify-only',requestFile:'requests.json',output:'cache/new-run'},events=[],closes=[];
-  const main={qualified:true,compactChoiceSimulationQualified:true,rangeWorkflowQualified:true,rows:requests.map(row=>({caseId:row.caseId,sourceSha256:sha({state:row.state,action:row.action})})),nativeJournal:[]};
-  const shadow={qualified:true,frozenRangeWorkflowQualified:true,cases:[{caseId:'complete-frozen-material'},{caseId:'preempt-during-frozen-tool'}],nativeJournal:[]};
+  const main={qualified:true,teamId:TEAM,compactChoiceSimulationQualified:true,rangeWorkflowQualified:true,rows:requests.map(row=>({caseId:row.caseId,sourceSha256:sha({state:row.state,action:row.action})})),nativeJournal:[]};
+  const shadow={qualified:true,teamId:TEAM,frozenRangeWorkflowQualified:true,cases:[{caseId:'complete-frozen-material'},{caseId:'preempt-during-frozen-tool'}],nativeJournal:[]};
   const provider={decisionProvider:{kind:'codex-cli',...profile,callDecision(){}},qualifyCodex:async args=>{events.push('main');assert.strictEqual(args.requests.length,3);return main;},close:async()=>closes.push(true)};
   const deps={workspace,write:value=>events.push(value.state),providerFactory:async args=>{assert.equal(args.contextMode,'session');assert.equal(args.model,profile.model);events.push('provider');return provider;},qualifyShadow:async args=>{assert.strictEqual(args.provider,provider);assert.strictEqual(args.mainQualification,main);events.push('shadow');return shadow;},verifyMain:(candidate,result)=>candidate===provider&&result===main,verifyShadow:async(candidate,result)=>candidate===provider&&result===shadow,sourcePins:async()=>({sha256:'b'.repeat(64),files:[]})};
   return {workspace,requests,options,events,closes,main,shadow,provider,deps};
 }
+
+async function crossTeamFixture(t){
+  const f=await fixture(t),{Teams}=createRequire(import.meta.url)('pokemon-showdown');
+  const ownTeamText=[['Garchomp','Rough Skin'],['Arcanine','Intimidate'],['Milotic','Competitive'],['Gengar','Cursed Body'],['Scizor','Technician'],['Dragonite','Multiscale']]
+    .map(([species,ability])=>`${species}\nAbility: ${ability}\nLevel: 50\nEVs: 32 HP / 32 Def / 2 SpD\nSerious Nature\n- Protect`).join('\n\n');
+  const identity={version:1,sessionId:'synthetic-new-team-session',teamId:sha(Teams.pack(Teams.import(ownTeamText))),account:'Fixture User',teamFile:'team.txt'};
+  const scope={version:1,sessionId:identity.sessionId,teamId:identity.teamId,account:identity.account,authorization:'Explicit synthetic new-team interface-only test scope.',manualReady:true,allowPonder:true,maxSets:1};
+  const pins={sha256:'b'.repeat(64),skillVersion:ISOLATED_POLICY_SOURCE.skillVersion,skillSha256:ISOLATED_POLICY_SOURCE.skillSha256,profile:{provider:'codex-cli',...profile,authenticationMethod:'chatgpt'},files:[]};
+  const document=JSON.parse(await readFile(join(f.workspace,'requests.json'),'utf8'));document.skillVersion=pins.skillVersion;
+  const referenceText=JSON.stringify(document);await writeFile(join(f.workspace,'requests.json'),referenceText);
+  scope.qualificationReference={version:1,purpose:'interface-only',reference:{teamId:TEAM,file:'requests.json',sha256:sha(referenceText)},
+    live:{sessionId:identity.sessionId,account:identity.account,teamId:identity.teamId,teamFile:identity.teamFile,teamTextSha256:sha(ownTeamText)},authorizationSha256:sha(scope.authorization),sourcePinsSha256:pins.sha256,skillVersion:pins.skillVersion,skillSha256:pins.skillSha256,profile:pins.profile};
+  const configuration={identity,scope,ownTeamText};
+  return {...f,configuration,referenceText,pins,deps:{...f.deps,sourcePins:async()=>pins,readConfiguration:async()=>structuredClone(configuration)}};
+}
+
+test('explicit cross-team launch keeps reference reports unchanged and records a distinct exact live team',async t=>{
+  const f=await crossTeamFixture(t),gates=[],calls=[];
+  const result=await launchWorkflow({...f.options,mode:'run',session:'session.json',scope:'scope.json'},{...f.deps,input:{isTTY:true},gate:async word=>gates.push(word),
+    operatorFactory:()=>({dispatch:async q=>{calls.push(q);return {result:{ready:true}};}}),run:async(_args,deps)=>{
+      const configured=await deps.configurationReader({});assert.equal(configured.identity.teamId,f.configuration.identity.teamId);assert.notEqual(configured.identity.teamId,TEAM);
+      const selected=deps.codexProviderFactory();assert.strictEqual(await selected.qualifyCodex({decisionMode:'model-tools',requests:f.requests}),f.main);
+      assert.equal(f.main.teamId,TEAM);assert.equal((await deps.qualifyPonder()).teamId,TEAM);
+      const operator=deps.operatorFactory({});await deps.beforeSearch();await operator.dispatch({op:'start-next'});
+      await assert.rejects(operator.dispatch({op:'start-next'}),{code:'LAUNCH_SEARCH_RESERVED'});return {state:'review-required',teamId:configured.identity.teamId};
+    }});
+  assert.equal(result.teamId,f.configuration.identity.teamId);assert.deepEqual(gates,['START_LIVE','START_SEARCH']);assert.equal(calls.length,1);
+  const adoption=JSON.parse(await readFile(join(f.workspace,'cache/new-run/startup-adoption.json'),'utf8'));
+  assert.equal(adoption.qualificationReference.referenceTeamId,TEAM);assert.equal(adoption.qualificationReference.liveTeamId,f.configuration.identity.teamId);assert.equal(adoption.qualificationReference.exactLiveTeamSavedRequests,false);
+  assert.equal(await readFile(join(f.workspace,'requests.json'),'utf8'),f.referenceText);
+});
+
+test('explicit transition rejects missing declarations and held-gate input drift before search dispatch',async t=>{
+  for(const mutation of ['missing','export','scope','reference','coherent-authorization','coherent-session','coherent-policy']){
+    const f=await crossTeamFixture(t);let dispatched=0;
+    if(mutation==='missing')delete f.configuration.scope.qualificationReference;
+    await assert.rejects(launchWorkflow({...f.options,mode:'run',session:'session.json',scope:'scope.json'},{...f.deps,input:{isTTY:true},gate:async word=>{
+      if(word==='START_SEARCH'){
+        if(mutation==='export')f.configuration.ownTeamText+='\n';
+        if(mutation==='scope')f.configuration.scope.authorization+=' changed';
+        if(mutation==='reference')await writeFile(join(f.workspace,'requests.json'),f.referenceText+' ');
+        if(mutation==='coherent-authorization'){f.configuration.scope.authorization+=' changed';f.configuration.scope.qualificationReference.authorizationSha256=sha(f.configuration.scope.authorization);}
+        if(mutation==='coherent-session'){f.configuration.identity.sessionId='other-session';f.configuration.scope.sessionId='other-session';f.configuration.scope.qualificationReference.live.sessionId='other-session';}
+        if(mutation==='coherent-policy')f.configuration.scope.controlPolicy={enabled:true,forfeitIfStuck:true};
+      }
+    },operatorFactory:()=>({dispatch:async()=>{dispatched++;}}),run:async(_args,deps)=>{
+      await deps.configurationReader({});const operator=deps.operatorFactory({});await deps.beforeSearch();await operator.dispatch({op:'start-next'});
+    }}),error=>['QUALIFICATION_REFERENCE','LAUNCH_SOURCE_CHANGED'].includes(error.code));
+    assert.equal(dispatched,0,mutation);
+  }
+});
+
+test('main and shadow reports must retain the actual reference-team identity before live admission',async t=>{
+  for(const kind of ['main','shadow']){
+    const f=await fixture(t);f[kind].teamId='d'.repeat(64);
+    await assert.rejects(launchWorkflow(f.options,{...f.deps,gate:()=>assert.fail('Wrong historical reference cannot reach a live gate')}),{code:kind==='main'?'LAUNCH_MAIN_QUALIFICATION':'LAUNCH_SHADOW_QUALIFICATION'});
+  }
+});
 
 test('public arguments expose only explicit offline qualification or one prepared live scope',()=>{
   assert.equal(parseLaunchArgs(['--qualify-only','--model-tool-qualification','manager/requests.json','--output','cache/new']).mode,'qualify-only');

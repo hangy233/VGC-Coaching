@@ -21,8 +21,8 @@ npm run build
 node isolated/launch.mjs --qualify-only --model-tool-qualification cache/manager/saved-requests.json --output cache/manager/qualification-run
 ```
 
-The manager prepares a private complete saved-request bundle for the exact team
-and current guidance. It contains the maintained preview/material/retained
+The manager prepares a private complete saved-request bundle with its original
+reference team and current guidance. It contains the maintained preview/material/retained
 continuity cases, original native requests and hash-bound archive provenance.
 The file has `kind: "saved-model-tool-qualification-requests"`, the packed-team
 SHA-256, current skill SHA-256, and `requests`. Refresh guidance using the maintained
@@ -43,6 +43,24 @@ fresh-request preemption and confirmed cleanup. Additional journal checks enforc
 the combined three calculator invocations and one native trajectory per case.
 Partial/refused work remains partial/refused. Technical qualification establishes
 no tactical score guarantee.
+
+A new approved roster may have no historical requests. The default admission
+still requires the saved reference team and live team to match. To use genuine
+historical requests from another team, the manager must explicitly add a strict
+`qualificationReference` binding to the one-set scope. It binds the original
+reference team, bundle path and exact file hash; the live session, account, team,
+export path and exact export hash; the scope authorization; current source and
+guidance hashes; and the selected model profile. The maintained validator checks
+that binding before live admission and again at the search gate. Changed or
+missing bindings refuse the transition.
+
+This proves the selected model's current interface and tool workflow against
+historical sources. It supplies no battle evidence, tactical benchmark or prior
+team guidance for the new roster. Saved requests, native archive identities,
+main/shadow qualification reports and opaque provider receipts retain the
+reference team's identity. Native live checks, choices, traces and reviews use
+only the approved live team. Historical model context is reset before live play.
+Do not relabel an archive or copy a successful report to authorize a new roster.
 
 Saved-position qualification explicitly starts a separate calculation-only MCP
 child. The manager registers each verified historical source, frozen identifier

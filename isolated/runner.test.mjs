@@ -12,6 +12,7 @@ import {createTimingRecorder} from '../observability/timing.mjs';
 import {createOperator} from '../showdown/operator-client.mjs';
 import {loadMaintainedMatchupGuidance,renderMatchupGuidance} from './matchup-guidance.mjs';
 import {ISOLATED_POLICY_SOURCE} from './decision-context.mjs';
+import {admitQualificationReference} from './qualification-reference.mjs';
 import {parseRunnerArgs, validateSessionConfiguration, validateScopeConfiguration, readRunnerConfiguration,
   createModelTraceStore, runBattleWorkflow, runRunner, recordControllerTiming, serveAttentionMode, controllerAttentionNotice, waitForPostResultQuiescence,manualContainmentTemplate} from './runner.mjs';
 
@@ -72,6 +73,69 @@ function workflowFixture({priorComplete = true, preflightReady = true, stateChan
 }
 
 function codexWorkflowFixture(options={}){return workflowFixture(options);}
+
+function referenceWorkflowFixture(options={}){
+  const f=workflowFixture(options),{Teams}=createRequire(import.meta.url)('pokemon-showdown'),sha=value=>createHash('sha256').update(value).digest('hex');
+  const ownTeamText=[['Garchomp','Rough Skin'],['Arcanine','Intimidate'],['Milotic','Competitive'],['Gengar','Cursed Body'],['Scizor','Technician'],['Dragonite','Multiscale']]
+    .map(([species,ability])=>`${species}\nAbility: ${ability}\nLevel: 50\nEVs: 32 HP / 32 Def / 2 SpD\nSerious Nature\n- Protect`).join('\n\n');
+  const profile={provider:'codex-cli',model:'gpt-6.1-sol',reasoningEffort:'low',serviceTier:'fast',contextMode:'session',authenticationMethod:'chatgpt'};
+  f.args.identity.teamId=sha(Teams.pack(Teams.import(ownTeamText)));f.args.scope.teamId=f.args.identity.teamId;f.args.ownTeamText=ownTeamText;f.args.serviceTier='fast';
+  const document={kind:'saved-model-tool-qualification-requests',teamId:TEAM,skillVersion:GUIDANCE_VERSION,skillSha256:GUIDANCE_SHA,requests:[1,2,3].map(index=>({syntheticOnly:true,originalSourceIndex:index,identity:{teamId:TEAM}}))},referenceText=JSON.stringify(document);
+  const pins={sha256:SHA,skillVersion:GUIDANCE_VERSION,skillSha256:GUIDANCE_SHA,profile};
+  f.args.scope.qualificationReference={version:1,purpose:'interface-only',reference:{teamId:TEAM,file:'reference.json',sha256:sha(referenceText)},live:{sessionId:f.args.identity.sessionId,account:f.args.identity.account,teamId:f.args.identity.teamId,teamFile:f.args.identity.teamFile,teamTextSha256:sha(ownTeamText)},authorizationSha256:sha(f.args.scope.authorization),sourcePinsSha256:pins.sha256,skillVersion:pins.skillVersion,skillSha256:pins.skillSha256,profile};
+  f.args.savedModelToolRequests=document.requests;
+  f.refreshAdmission=()=>{f.args.qualificationAdmission=admitQualificationReference({...f.args,document,referenceText,referenceFile:'reference.json',sourcePins:pins,profile});};f.refreshAdmission();
+  const dispatch=f.operator.dispatch;f.operator.dispatch=async query=>{
+    const reply=await dispatch(query),value=reply.result;
+    if(value?.teamSha256===TEAM)value.teamSha256=f.args.identity.teamId;
+    if(value?.teamId===TEAM)value.teamId=f.args.identity.teamId;
+    return reply;
+  };
+  f.args.resetDecisionContext=async()=>{f.calls.push({op:'reset-historical-context'});};
+  return f;
+}
+
+test('a branded reference admission qualifies unchanged historical sources while live guards and controller use the approved new team',async()=>{
+  const f=referenceWorkflowFixture(),qualify=f.args.qualifyCodex,create=f.args.createController;let configured;
+  const originalRequests=JSON.stringify(f.args.savedModelToolRequests);
+  f.args.qualifyCodex=async input=>{assert.equal(input.teamId,TEAM);assert.strictEqual(input.requests,f.args.savedModelToolRequests);return qualify(input);};
+  f.args.createController=input=>{configured=input;assert.equal(f.calls[0].op,'reset-historical-context');return create(input);};
+  const result=await runBattleWorkflow(f.args);
+  assert.equal(result.teamId,f.args.identity.teamId);assert.notEqual(result.teamId,TEAM);assert.equal(configured.identity.teamId,f.args.identity.teamId);assert.equal(configured.ownTeamText,f.args.ownTeamText);
+  assert.equal(f.calls.find(row=>row.op==='arm').expectedTeamId,f.args.identity.teamId);
+  assert(f.calls.filter(row=>['battle_review_status','battle_preflight','team_metrics_sync_battles','team_metrics_agent_report'].includes(row.name)).every(row=>row.args.teamId===f.args.identity.teamId));
+  assert.equal(f.calls.filter(row=>row.op==='start-next').length,1);assert.equal(JSON.stringify(f.args.savedModelToolRequests),originalRequests);
+});
+
+test('an unbranded reference, changed source bundle or report relabeled to the live team never reaches control',async()=>{
+  for(const change of ['missing','copy','source','report']){
+    const f=referenceWorkflowFixture();
+    if(change==='missing')f.args.qualificationAdmission=undefined;
+    if(change==='copy')f.args.qualificationAdmission=structuredClone(f.args.qualificationAdmission);
+    if(change==='source')f.args.savedModelToolRequests[0].originalSourceIndex=99;
+    if(change==='report'){const qualify=f.args.qualifyCodex;f.args.qualifyCodex=async args=>({...await qualify(args),teamId:f.args.identity.teamId});}
+    await assert.rejects(runBattleWorkflow(f.args),error=>['configuration','QUALIFICATION_REFERENCE','generation_unavailable'].includes(error.code));assert.equal(f.calls.length,0,change);
+  }
+});
+
+test('frozen reference reports remain historical and a wrong shadow reference cannot authorize live control',async()=>{
+  for(const wrong of [false,true]){
+    const f=referenceWorkflowFixture();f.args.scope.allowPonder=true;
+    f.args.ponderRuntime={prepare(){return {prepared:true};},stop(){},async drain(){return {cleanupConfirmed:true};}};
+    f.args.qualifyPonder=async({mainQualification,requests})=>{assert.equal(mainQualification.teamId,TEAM);assert.strictEqual(requests,f.args.savedModelToolRequests);return {qualified:true,teamId:wrong?f.args.identity.teamId:TEAM};};
+    f.args.verifyPonderQualification=async()=>true;f.refreshAdmission();
+    if(wrong){await assert.rejects(runBattleWorkflow(f.args),{code:'generation_unavailable'});assert.equal(f.calls.length,0);}
+    else assert.equal((await runBattleWorkflow(f.args)).teamId,f.args.identity.teamId);
+  }
+});
+
+test('a reference transition preserves fresh live identity checks and pre-search cancellation',async()=>{
+  const changed=referenceWorkflowFixture({stateChange:state=>{state.teamSha256='d'.repeat(64);}});
+  await assert.rejects(runBattleWorkflow(changed.args),{code:'identity'});assert.equal(changed.calls.some(row=>row.op==='arm'||row.op==='start-next'),false);
+  const cancelled=referenceWorkflowFixture();cancelled.args.beforeSearch=async()=>({cancelled:true,reason:'manager-cancelled'});
+  const result=await runBattleWorkflow(cancelled.args);assert.equal(result.state,'cancelled-before-search');assert.equal(result.teamId,cancelled.args.identity.teamId);
+  assert.equal(cancelled.calls.some(row=>row.op==='start-next'),false);assert.equal(cancelled.calls.filter(row=>row.name==='battle_control_release').length,1);
+});
 test('every live provider receives the complete verified native skill in its controller options',async()=>{
   for(const make of [workflowFixture,codexWorkflowFixture]){
     const f=make(),original=f.args.createController;let bundle;

@@ -273,19 +273,23 @@ benchmarks remain unverified.
 ### Recover failed delivery
 
 Carry observed/simulated pre-move KO or denial into every revised pair and
-considered alternative. The same exposed attack beside partner Protect is not useful
-chip or an independently useful alternative merely because its KO label was
-removed. Retained evidence remains conditional and does not erase the failed
-response.
+considered alternative. Begin the revision comparison with the same consequential
+opposing reply: what changes the required actor's delivery, or what delivered
+partner progress and remaining answer make accepting its loss useful? Changing
+the other actor to Protect/Detect does not cover that unchanged denial. If this
+forgoes partner progress shown in the existing sample, name what protection
+preserves and its first useful action. A new chip or gamble label supplies no
+recovery. Retained evidence stays conditional; it does not qualify an untested
+revision or require another live outcome.
+
 Compare protection of the required actor, a checked recipient, eligible actual
-denial and useful partner progress, or establish a purposeful post-faint payoff:
-the actual selected usable reserve/active beneficiary, earned removal/control/
-entry, first useful action against both survivors, and remaining answer.
-For that first action, recheck protection and order lost with the departing
-resource, including newly eligible priority after an opposing reentry. Naming
-the reserve or calling chip conditional supplies no answer to paired denial.
-An unselected reserve or unusable entry proves no payoff. A switching reserve
-cannot attack on its entry turn. A deliberate trade need not preserve both users.
+denial and useful partner progress, or a purposeful post-faint payoff: the actual
+selected usable beneficiary, earned removal/control/entry, first useful action
+against both survivors, and remaining answer. Recheck protection and order lost
+with the departing resource, including renewed priority after an opposing
+reentry. A named reserve or unusable entry proves no payoff; a switch grants no
+entry-turn attack. Partner protection can still retain a needed later answer
+beside a delivered trade, and a deliberate trade need not preserve both users.
 
 Before spending a needed actor in a revised pair, check the decisive
 follow-up when needed to justify that trade. This bounded dependency check does
