@@ -126,12 +126,15 @@ function durationVariants(board,baseHypotheses,index){
   return {hypotheses:result,assumptions};
 }
 
-function ownActions(actions,board,legal){
+function ownActions(actions,board,legal,{replacement=false}={}){
   const side=board.sides.find(s=>s.id===board.ownSide);
   return actions.map(a=>{
     if(a.type!=='switch')return clone(a);
-    if(a.species){const rows=side.pokemon.filter(p=>base(p.species)===base(a.species));check(rows.length===1,'Own named switch is unavailable or ambiguous');return {type:'switch',slot:rows[0].requestIndex};}
-    if(a.pokemonId){const rows=side.pokemon.filter(p=>p.id===a.pokemonId);if(rows.length===1)return {type:'switch',slot:rows[0].requestIndex};}
+    // Named replacements keep their identity across earlier native switches.
+    // Only explicitly authored numeric continuations use the future menu slot.
+    const select=actor=>replacement?{type:'switch',pokemonId:actor.id}:{type:'switch',slot:actor.requestIndex};
+    if(a.species){const rows=side.pokemon.filter(p=>base(p.species)===base(a.species));check(rows.length===1,'Own named switch is unavailable or ambiguous');return select(rows[0]);}
+    if(a.pokemonId){const rows=side.pokemon.filter(p=>p.id===a.pokemonId);if(rows.length===1)return select(rows[0]);}
     return clone(a);
   });
 }
@@ -257,7 +260,7 @@ export async function executeSimulationChoices(args,{workspace,call=callLocalSes
       const tested=branches.map(branch=>{
         const our=ownActions(branch.ourActions,board,legal);validateChoice({...legal,side:{pokemon:legal.pokemon}},our);
         const continuations=branch.continuations?.map(step=>({
-          ...(step.ourActions?{ourActions:bindObservedActions(ownActions(step.ourActions,board,legal),built,{replacement:true})}:{}),
+          ...(step.ourActions?{ourActions:bindObservedActions(ownActions(step.ourActions,board,legal,{replacement:true}),built,{replacement:true})}:{}),
           ...(step.opposingActions?{opposingActions:opposingActions(step.opposingActions,opposing)}:{}),
         }));
         return {id:branch.id,ourActions:bindObservedActions(our,built),opposingActions:opposingActions(branch.opposingActions,opposing),...(continuations?{continuations}:{}),gate:{kind:'delivery',requiredActionsBy:clone(ownSide.active)}};

@@ -144,6 +144,17 @@ label assumed opposing spreads. It compares within one priority bracket only
 and does not settle Quick Claw, Quash or other non-Speed ordering effects. If the
 MCP cannot model the relevant state, leave the comparison unverified.
 
+Before `calculate_speed`, check the current ability's required activation fields.
+For Unburden, explicitly supply `unburdenActive:false` when known inactive,
+including before activation with the original item still held. Supply `true`
+only for supported item-loss activation that remains active; the tool requires
+no currently held item for that snapshot. Check intervening switch, faint or
+ability reset before carrying activation forward. Itemlessness alone proves no
+activation. If the state is unknown, label any needed conditional snapshots or
+leave the comparison unverified; never omit the flag or silently choose false.
+An already explicit supported state needs no extra query. A refused reserved
+call supplies no Speed result and still spends its calculator unit.
+
 Give each comparison entry a distinct actor-and-side/slot `label`; add a unique
 hypothesis suffix for variants of one actor. Mirror species still need separate
 identities; do not reuse a generic hypothesis label across entries. A duplicate

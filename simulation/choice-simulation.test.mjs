@@ -83,6 +83,41 @@ test('native and owned switch identities are bound, including authored unseen op
   assert(result.worlds.every(w=>w.assumptions.some(a=>a.includes('Volcarona')&&a.includes('authored-switch-selection-hypothesis'))));
 });
 
+test('own named continuations retain identity when an initial switch crosses the source party order',async()=>{
+  for(const selector of [{species:'Farigiraf'},{pokemonId:'own1'}]){
+    const f=fixture(),captured=[];
+    f.args.ourActions=[{type:'move',slot:1,target:1},{type:'switch',species:'Politoed'}];
+    f.args.continuations=[{ourActions:[{type:'pass'},{type:'switch',...selector}]}];
+    const before=copy(f.args);
+    const result=await executeSimulationChoices(f.args,{...f.options,researchPolicy:'single-outcome',callTool:async(name,input)=>{
+      assert.equal(name,'simulate_turn','the binding regression performs no numerical research');captured.push(copy(input));
+      return {isError:true,structuredContent:{reason:'Intentional native-boundary capture; no engine execution'}};
+    }});
+    assert.equal(result.sourceChoicesValidated,true);assert.equal(captured.length,1);assert.deepEqual(f.args,before);
+    const {position,branches:[branch]}=captured[0].request,own=position.sides.find(side=>side.id===position.ownSide);
+    const outgoing=own.pokemon.find(p=>p.species==='Farigiraf'),incoming=own.pokemon.find(p=>p.species==='Politoed');
+    assert.equal(branch.ourActions[1].pokemonId,incoming.controlPokemonId);
+    assert.deepEqual(branch.continuations[0].ourActions,[{type:'pass'},{type:'switch',pokemonId:outgoing.controlPokemonId}]);
+    assert.notEqual(outgoing.controlPokemonId,incoming.controlPokemonId);
+    // The native engine resolves this identity after switching the incoming
+    // reserve into slot 2; an original numeric 2 would name the active entrant.
+    const reordered=[own.active[0],incoming.id,outgoing.id,...own.pokemon.map(p=>p.id).filter(id=>![own.active[0],incoming.id,outgoing.id].includes(id))];
+    assert.equal(reordered.indexOf(outgoing.id)+1,3);assert.equal(reordered[1],incoming.id);
+  }
+});
+
+test('explicit numeric own continuations keep the future native menu slot through the compact facade',async()=>{
+  const f=fixture(),captured=[];
+  f.args.ourActions=[{type:'move',slot:1,target:1},{type:'switch',species:'Politoed'}];
+  f.args.continuations=[{ourActions:[{type:'pass'},{type:'switch',slot:3}]}];
+  const result=await executeSimulationChoices(f.args,{...f.options,researchPolicy:'single-outcome',callTool:async(name,input)=>{
+    assert.equal(name,'simulate_turn');captured.push(copy(input));
+    return {isError:true,structuredContent:{reason:'Intentional native-boundary capture; no engine execution'}};
+  }});
+  assert.equal(result.sourceChoicesValidated,true);assert.equal(captured.length,1);
+  assert.deepEqual(captured[0].request.branches[0].continuations[0].ourActions,f.args.continuations[0].ourActions);
+});
+
 test('unknown nature stays explicitly hypothetical while published known natures remain fixed',async()=>{
   const f=fixture();for(const name of ['Raichu','Rillaboom'])for(const sheet of [f.context.opposingSheet,f.context.observed.opponentSheets.p2])sheet.find(p=>p.species===name).nature=null;f.rehash();
   const result=await executeSimulationChoices(f.args,f.options);assert.equal(result.kind,'native-choice-simulation-v1',result.reason);

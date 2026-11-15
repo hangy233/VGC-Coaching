@@ -228,6 +228,13 @@ and original deadline; a wording match or fixture alone is not live reliability.
   calculator units and one outcome. A replacement/new request ID on the same
   turn grants no reset. Range outer and nested dispatches count; backend failures
   remain spent. No tactical input is rewritten to manufacture conformance.
+- **Conditional Speed inputs:** Before querying an Unburden holder, include
+  explicit inactive `false` while its original item remains held, or supported
+  active `true` after item loss with no held item and no intervening reset.
+  Contrast an itemless actor with unknown history and a switch/faint/ability
+  reset: neither supplies an active flag. Label unknown states instead of
+  defaulting them; already explicit supported inputs need no repeated check.
+  A missing-flag refusal supplies no Speed result or calculator refund.
 - **Model-first allocation:** A live simulation with no cached spread receipts
   starts zero automatic inference calls, exposes deferred/unchecked constraints
   and leaves capacity for model-authored scalar questions. A returned outcome
