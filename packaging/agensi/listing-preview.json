@@ -1,6 +1,5 @@
 {
   "packageVersion": "3.0.0",
-  "publicationStatus": "prepared-not-submitted",
   "existingListing": "https://www.agensi.io/skills/pok-mon-vgc-coaching-mcp-companion",
   "title": "Pokémon VGC Coaching — Battle & Team Building Pack",
   "summary": "Three coaching skills: local MCP setup and evidence, Champions M-C battle planning and replay review, and team building. Includes complete references; download and build the executable tools separately from GitHub.",
@@ -10,12 +9,61 @@
     "amount": 0,
     "currency": "USD"
   },
-  "tags": ["pokemon", "vgc", "pokemon-champions", "mcp", "team-building", "battle-strategy", "replay-analysis", "coaching", "codex-cli", "research"],
+  "tags": [
+    "research",
+    "education",
+    "pokemon",
+    "vgc",
+    "pokemon-champions",
+    "mcp",
+    "replay-analysis",
+    "codex-cli",
+    "team-building",
+    "battle-strategy"
+  ],
   "requirements": [
     "Read the included Markdown skills with an agent or compatible skill host.",
     "For actual tool checks: Git, Node.js 22.18.0+ (24+ for full live play), npm, the separately built GitHub repository, and a host supporting local stdio MCP.",
     "For optional authorized live play: current official Codex CLI, supported ChatGPT sign-in and allowance, genuine saved-position qualification, and the approved Showdown account/team/battle scope."
   ],
   "limitations": "The pack supplies guidance and public documentation, not a hosted or preinstalled battle service. Executable tools and dependencies come from GitHub/npm. The complete specialized guidance targets Champions Regulation M-C; other formats require explicit support. Private qualification positions and evidence are not included. A snapshot can become stale; current native status, reviewed synchronization, full guidance reads and preflight remain required before live play. No additional Agensi paid tools are required by this pack.",
-  "changelog": "3.0.0: Expand the instruction companion into a three-skill pack containing battle matchups, team building and setup/evidence guidance, with complete references and shared public operating documentation. Add a component/download guide, revision and file-hash manifest, deterministic allowlisted packaging and archive checks. Correct two team-building reference anchors. The executable MCP runtime and dependencies remain a separate GitHub installation; private data and credentials remain excluded."
+  "changelog": "3.0.0: Expand the instruction companion into a three-skill pack containing battle matchups, team building and setup/evidence guidance, with complete references and shared public operating documentation. Add a component/download guide, revision and file-hash manifest, deterministic allowlisted packaging and archive checks. Correct two team-building reference anchors. The executable MCP runtime and dependencies remain a separate GitHub installation; private data and credentials remain excluded.",
+  "compatibilityNote": "Markdown skills for a compatible skill host. Tool checks need Git, Node.js 22.18.0+, npm and a local stdio MCP host; full live play needs Node.js 24+ and official Codex CLI with supported ChatGPT sign-in.",
+  "buyerNote": "Free guidance pack: three skills and references. Download and build the MCP runtime separately from GitHub with npm ci and npm run build. No extra Agensi paid tools are required. Live play needs separate authorization and genuine saved-position qualification; neither is included.",
+  "sampleInput": "Inspect VGC Coaching Pack 3.0.0: what does the archive include, what must I install separately, and does installing it authorize live battles?",
+  "sampleOutput": "The inspected v3.0.0 archive contains three skills and 27 files, including PACK-MANIFEST.json. The skills cover setup and evidence handling, Champions M-C matchups and replay review, and Champions M-C team building, with complete references and shared public documentation. Load the relevant skill explicitly.\n\nThe guidance supports qualitative coaching. Actual legality, damage, Speed, simulations and retained-report checks require the separate GitHub MCP server and its dependencies. Clone https://github.com/hangy233/VGC-Coaching, run npm ci and npm run build, then configure a compatible local stdio MCP host. Use Node.js 22.18.0+; use 24+ for full live play. The ZIP contains no executable server, calculator or simulator engines.\n\nInstalling the pack needs no credentials, Showdown login or test battles. Live play additionally needs the current official Codex CLI, supported ChatGPT sign-in and allowance, genuine saved-position qualification and explicit account/team/battle scope. That private qualification evidence and authorization are not included. Installing this pack starts no battle.",
+  "documentationUrl": "https://github.com/hangy233/VGC-Coaching/blob/main/docs/AGENSI-PACK.md",
+  "faqs": [
+    {
+      "question": "What does version 3.0.0 include?",
+      "answer": "Three skills: vgc-coaching for setup and evidence handling, champions-mc-matchups for battle decisions and replay review, and champions-mc-teambuilding for roster roles, sets, spreads and coverage. Their complete references, shared public operating documentation and a revision/file-hash manifest are included. Load each relevant skill explicitly; sibling skills do not load automatically."
+    },
+    {
+      "question": "How do I install and connect the local MCP server?",
+      "answer": "Clone https://github.com/hangy233/VGC-Coaching, run npm ci and npm run build, and configure a local stdio MCP host to run node /absolute/path/to/VGC-Coaching/dist/index.js. Keep the entire checkout and dependencies. Git, npm and Node.js 22.18.0+ are required; use Node.js 24+ for full live play. The ZIP supplies instructions; the executable server and engines come from the separate checkout. Installing the pack requires no credentials, Showdown login or test battles."
+    },
+    {
+      "question": "Do I need a Showdown login or a model API key?",
+      "answer": "Setup and saved-replay analysis need no Showdown login. Optional live play requires separately authorized Showdown access and account/team/battle scope, current official Codex CLI, supported ChatGPT sign-in and allowance, selected model settings, genuine saved-position qualification and current preflight checks. The supported live workflow requires no model API key. Credentials, qualification evidence and battle permission are not included."
+    },
+    {
+      "question": "Can the pack prove a move, team or position wins?",
+      "answer": "The packaged guidance supports qualitative coaching. Numerical damage and Speed claims require actual MCP calculations and explicit state assumptions. Simulations and recorded outcomes remain conditional on their supplied state and evidence; a sample trajectory alone cannot establish exhaustive coverage, a KO probability or a causal explanation. State missing or unverified evidence before making a stronger claim."
+    },
+    {
+      "question": "How are reports and private battle data handled?",
+      "answer": "Use the separately installed local MCP tools to generate and inspect retained reports and their source evidence. The public pack includes reporting guidance but excludes private reports, teams, battle history, replay access links, credentials and account sessions. User-owned records remain separate from this download. Check report provenance and access scope before sharing any retained evidence."
+    }
+  ],
+  "requiredItems": [],
+  "optionalItems": [
+    "VGC-Coaching MCP (tool checks)",
+    "Git (local tool installation)",
+    "Node.js 22.18.0+ and npm (local tools; 24+ live play)",
+    "Codex CLI",
+    "ChatGPT account"
+  ],
+  "noInstallationForGuidance": true,
+  "permissionNotes": "Reading packaged guidance needs only a skill-capable host. Optional local tools use terminal access to build and launch the GitHub checkout, file access for supplied teams and private reports, and network access for dependencies and data providers. Live control additionally needs an authorized Showdown account/team/battle scope and supported Codex ChatGPT sign-in. Credentials and private evidence are excluded from the pack. No Showdown login is needed for analysis.",
+  "purpose": "Reviewed listing text; current publication status is verified separately."
 }
