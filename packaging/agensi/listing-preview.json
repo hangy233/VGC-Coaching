@@ -1,0 +1,21 @@
+{
+  "packageVersion": "3.0.0",
+  "publicationStatus": "prepared-not-submitted",
+  "existingListing": "https://www.agensi.io/skills/pok-mon-vgc-coaching-mcp-companion",
+  "title": "Pokémon VGC Coaching — Battle & Team Building Pack",
+  "summary": "Three coaching skills: local MCP setup and evidence, Champions M-C battle planning and replay review, and team building. Includes complete references; download and build the executable tools separately from GitHub.",
+  "description": "This free pack includes three skills: vgc-coaching for setup and evidence-based analysis, champions-mc-matchups for battle planning, turn decisions, replay review and the authorized BO3 workflow, and champions-mc-teambuilding for roster roles, sets, stat-point spreads and coverage. Each specialized skill includes its complete reference folder. Public startup, CLI, battle, simulator and reporting documentation is shared across the pack.\n\nYou can read the packaged guidance for qualitative coaching. Verified legality, usage, damage and Speed checks, simulations, retained reports and live control require the separate local VGC-Coaching MCP. Clone https://github.com/hangy233/VGC-Coaching, install its pinned dependencies, build it and configure a compatible local stdio MCP host. The ZIP does not contain the executable MCP server, calculator or simulator engines, node_modules, Codex CLI, credentials, private teams or battle history.\n\nThe pack is a revisioned snapshot generated from the same maintained GitHub sources, with file hashes and guidance revisions recorded in its manifest. Load the relevant skill explicitly; loading one skill does not automatically load its siblings. Current local guidance must be reviewed, synchronized and read before live use. A marketplace snapshot does not override newer installed guidance. The included skill-sync source is a repository-context installation helper, not a standalone Agensi temporary script.\n\nOptional live play additionally requires the current official Codex CLI, supported ChatGPT sign-in, explicitly selected model settings, genuine saved-position qualification, and separately authorized Showdown login and battle scope. Installation and coaching grant no battle permission. No model API key is required by the supported live workflow. Numerical and tactical results remain conditional on the supplied state and evidence. This independent community project is unaffiliated with Pokémon or Nintendo.",
+  "pricing": {
+    "type": "free",
+    "amount": 0,
+    "currency": "USD"
+  },
+  "tags": ["pokemon", "vgc", "pokemon-champions", "mcp", "team-building", "battle-strategy", "replay-analysis", "coaching", "codex-cli", "research"],
+  "requirements": [
+    "Read the included Markdown skills with an agent or compatible skill host.",
+    "For actual tool checks: Git, Node.js 22.18.0+ (24+ for full live play), npm, the separately built GitHub repository, and a host supporting local stdio MCP.",
+    "For optional authorized live play: current official Codex CLI, supported ChatGPT sign-in and allowance, genuine saved-position qualification, and the approved Showdown account/team/battle scope."
+  ],
+  "limitations": "The pack supplies guidance and public documentation, not a hosted or preinstalled battle service. Executable tools and dependencies come from GitHub/npm. The complete specialized guidance targets Champions Regulation M-C; other formats require explicit support. Private qualification positions and evidence are not included. A snapshot can become stale; current native status, reviewed synchronization, full guidance reads and preflight remain required before live play. No additional Agensi paid tools are required by this pack.",
+  "changelog": "3.0.0: Expand the instruction companion into a three-skill pack containing battle matchups, team building and setup/evidence guidance, with complete references and shared public operating documentation. Add a component/download guide, revision and file-hash manifest, deterministic allowlisted packaging and archive checks. Correct two team-building reference anchors. The executable MCP runtime and dependencies remain a separate GitHub installation; private data and credentials remain excluded."
+}

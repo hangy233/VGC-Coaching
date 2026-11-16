@@ -198,6 +198,12 @@ source. `battle_skill_status`, reviewed `battle_skill_sync` and
 `VGC_COACHING_SKILLS_ROOT` startup setting supports another installed-skill root.
 See [agent startup](docs/AGENT-STARTUP.md).
 
+The [Agensi coaching pack](docs/AGENSI-PACK.md) bundles the companion, matchup
+and team-building skills with their complete references and public workflow
+documentation. It contains a versioned guidance snapshot; the local MCP server,
+calculator/simulator runtime and dependencies still require the GitHub checkout
+and build above. Generate the distribution with `npm run pack:agensi`.
+
 Reflection is agent work, not model retraining. Supported reusable lessons get
 scenarios and counterexamples; exact-team plans remain private. A specific
 evidence-based no-change is valid. Control failures require runtime/operator

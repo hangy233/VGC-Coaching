@@ -1,9 +1,17 @@
 # Local MCP setup
 
-This skill contains agent instructions. The MCP server is a separate local
-Node.js project; bring an MCP-capable agent host and Node/npm separately.
-Use Node.js 24 or newer for the full battle workflow. The package minimum is
-Node.js 22.18.0.
+The Agensi pack supplies all three skill folders, their references, host
+metadata, the existing repository-bound sync helper and public operator guides.
+It contains no MCP tool implementations, live runner, built runtime, dependency
+tree, credentials or private battle records. Read the
+[pack contents and download guide](https://github.com/hangy233/VGC-Coaching/blob/main/docs/AGENSI-PACK.md)
+and the generated manifest for the exact included files and source revision.
+
+The MCP server is a separate local Node.js project; bring an MCP-capable agent
+host, Git and Node/npm separately. Use Node.js 24 or newer for the full battle
+workflow. The package minimum is Node.js 22.18.0. Packaged guidance can support
+qualitative advice before setup; numerical checks and live control require the
+actual local tools.
 
 ## Build the server
 
@@ -50,12 +58,20 @@ configuration. A model supporting tool calls does not itself configure a local
 MCP process, load `AGENTS.md`, or interpret Codex `agents/openai.yaml` metadata.
 Verify the selected host's behavior; do not promise one-click compatibility.
 
-The cloned repository supplies the specialized `champions-mc-teambuilding/` and
-`champions-mc-matchups/` folders under `skills/`. `battle_skill_read` delivers
-their maintained guidance without requiring native host skill discovery. For
-specialized skill installation or live review synchronization, install complete
-folders, including references and metadata, into a separate host skill directory.
-The default target is `$CODEX_HOME/skills`, or `~/.codex/skills` when unset.
+The pack and cloned repository supply the specialized
+`champions-mc-teambuilding/` and `champions-mc-matchups/` folders under `skills/`.
+Agensi loads the selected folder and shared files; explicitly load the other
+skill when it is needed rather than assuming sibling content was delivered.
+`battle_skill_read` delivers maintained local guidance without requiring native
+host skill discovery.
+
+For specialized skill installation or live review synchronization, use complete
+folders from the maintained checkout, including references and metadata, in a
+separate host skill directory. The default target is `$CODEX_HOME/skills`, or
+`~/.codex/skills` when unset. The packaged `scripts/sync-skill.mjs` preserves
+source fidelity; its defaults require repository context. Do not execute an
+Agensi temporary copy as an installer. Use the checkout's reviewed skill-sync
+workflow, and do not replace newer local guidance with an older pack snapshot.
 
 Other hosts can set this optional startup environment value:
 
@@ -71,6 +87,24 @@ maintained `skills/` directory. It is not the path to this companion skill.
 Restart MCP to adopt a change. Read the repository's
 [agent startup guide](https://github.com/hangy233/VGC-Coaching/blob/main/docs/AGENT-STARTUP.md)
 for the complete host setup and reviewed skill-sync workflow.
+
+## Update an existing checkout
+
+Inspect and preserve local changes first. In a clean checkout:
+
+```bash
+git pull --ff-only
+npm ci
+npm run build
+```
+
+Reload the MCP connection after building. Compare the pack manifest's source
+revision with the checkout, reconcile differences against maintained GitHub
+source, then check `battle_skill_status`, review/sync changes and obtain a fresh
+complete `battle_skill_read` before live play. Follow the full cycle's loaded
+runtime and qualification checks at the normal authorized startup. Updating
+files does not update a running process; neither a package hash nor a successful
+build proves live readiness. No extra login or battle is needed for setup.
 
 ## Scope and local data
 

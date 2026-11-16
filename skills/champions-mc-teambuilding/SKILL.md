@@ -148,7 +148,7 @@ Treat execution complexity as a roster cost: required setup, narrow entry window
 repeated precise reads, and competing preservation needs affect practical reliability.
 Separate a missed available line from a plan that repeatedly offers no robust line.
 For item or set comparisons, use the matchup skill's
-[complete-plan review](../champions-mc-matchups/SKILL.md#review-a-replay-without-hindsight):
+[complete-plan review](../champions-mc-matchups/SKILL.md#review-without-hindsight):
 compare plausible selection and control-to-entry plans for each complete set,
 rather than treating the recorded sequence as fixed. A fast reserve can complement
 a slow mode; inspect its route through expiration before judging that combination.
@@ -182,7 +182,7 @@ prior variant. Do not require a second approval for an already authorized change
 
 ## Evaluate through controlled play
 
-Use the matchup skill’s [play → conclude → update cycle](../champions-mc-matchups/SKILL.md#play--conclude--update) and [headless agent workflow](../../showdown/AGENT-WORKFLOW.md).
+Use the matchup skill’s [play → conclude → update cycle](../champions-mc-matchups/SKILL.md#required-cycle) and [headless agent workflow](../../showdown/AGENT-WORKFLOW.md).
 Keep each approved team version fixed for its bounded evaluation. Separate
 selection, execution, timing and variance before attributing results to the
 roster. Propose evidence-backed changes, obtain approval, validate legality,

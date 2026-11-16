@@ -3,7 +3,7 @@ name: vgc-coaching
 description: Analyze Pokemon VGC teams and replay history through the local VGC-Coaching MCP. Includes repository setup, evidence-based coaching and the Codex CLI live-battle workflow; route Champions M-C tactics and team construction to the maintained specialized guidance.
 license: ISC
 metadata:
-  version: "2.0.0"
+  version: "3.0.0"
 ---
 
 # VGC Coaching
@@ -13,9 +13,16 @@ assumptions, and tradeoffs. This companion guides use of the local
 [VGC Coaching MCP](https://github.com/hangy233/VGC-Coaching); installing the
 skill does not install or connect the server.
 
-Version 2 uses Codex CLI for automated live decisions. The old paid model-API,
-desktop-chat and scheduled-conversation battle routes are retired. Analysis and
-saved-replay review remain available to compatible local MCP hosts.
+The Agensi pack includes this companion, the complete `champions-mc-matchups`
+battle skill, and the complete `champions-mc-teambuilding` skill with their
+references. It also includes public operating guides and source metadata. Read
+the [pack contents and download guide](https://github.com/hangy233/VGC-Coaching/blob/main/docs/AGENSI-PACK.md)
+to distinguish packaged instructions from the separately downloaded MCP server,
+dependencies and CLI runner. The generated pack manifest identifies its snapshot.
+
+Automated live decisions use Codex CLI. The old paid model-API, desktop-chat and
+scheduled-conversation battle routes are retired. Analysis and saved-replay
+review remain available to compatible local MCP hosts.
 
 Read [setup](references/setup.md) when the MCP is missing or the host needs
 configuration. Discover the connected server's actual tool schemas before
@@ -24,9 +31,12 @@ describes it.
 
 ## Choose the guidance
 
-The cloned repository includes two maintained specialized skills. Read their
-complete current guidance through `battle_skill_read`, including required
-references, for these tasks:
+The pack and cloned repository include two maintained specialized skills. For
+qualitative advice, load the relevant skill from the pack and read its required
+references. Agensi delivers the selected skill and shared files, so explicitly
+load a sibling when guidance routes to it; a sibling link does not prove that
+its text is already in context. With the local MCP connected, read complete
+current guidance through `battle_skill_read` for these tasks:
 
 | Request | `battle_skill_read` argument |
 | --- | --- |
@@ -40,6 +50,9 @@ It does not replace specialized tactical guidance. If that guidance cannot be
 read completely, obtain the required files from the cloned repository before
 specialized work; do not substitute an old summary. Live play additionally
 requires the matchup skill's full BO3 cycle and the repository's agent workflow.
+Before live use, reconcile the pack snapshot with the maintained checkout and
+follow status, reviewed sync and a fresh complete read. Do not overwrite newer
+local guidance with an older pack or treat its manifest as live qualification.
 
 ## Complete each authorized batch
 
