@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { buildPack, PACKAGE_VERSION, SHARED_DOCUMENTS, SKILL_FILES } from './build-pack.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const revision = 'a'.repeat(40);
 const hash = value => createHash('sha256').update(value).digest('hex');
+const execute = promisify(execFile);
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'vgc-agensi-pack-'));
@@ -83,6 +86,8 @@ test('ZIP, manifest and upload files round-trip complete canonical skills and sh
   assert.equal(manifest.sourceWorkingTreeModified, true);
   assert.equal(manifest.validation.qualificationPerformed, false);
   assert.equal(manifest.validation.installedSkillAdoptionVerified, false);
+  assert.equal(manifest.validation.sourceRevisionBytesVerified, false);
+  assert.equal(result.sourceRevisionBytesVerified, false);
   assert(result.localMarkdownLinksChecked > 50);
   assert.deepEqual(files.get('PACK-MANIFEST.json'), await readFile(result.manifestPath));
   assert.deepEqual(files.get('README.md'), await readFile(path.join(root, 'docs/AGENSI-PACK.md')));
@@ -110,6 +115,47 @@ test('rebuilds are byte-identical independently of output directory', async t =>
   for (const key of ['archivePath', 'manifestPath', 'uploadPath']) assert.deepEqual(await readFile(first[key]), await readFile(second[key]));
   assert.equal(first.archiveSha256, second.archiveSha256);
   assert(!(await readFile(first.manifestPath, 'utf8')).includes(root));
+});
+
+test('a clean Git status requires exact committed bytes, including line endings', async t => {
+  const { root, sources } = await fixture(t);
+  for (const filename of sources) {
+    const absolute = path.join(root, filename);
+    await writeFile(absolute, (await readFile(absolute, 'utf8')).replace(/\r\n/g, '\n'));
+  }
+  await writeFile(path.join(root, '.gitattributes'), '* text=auto\n*.md text eol=lf\n*.yaml text eol=lf\n*.mjs text eol=lf\n');
+  await writeFile(path.join(root, '.gitignore'), '/dist/\n');
+  const git = args => execute('git', args, { cwd: root });
+  await git(['init', '-q']);
+  await git(['config', 'core.autocrlf', 'false']);
+  await git(['add', '--', '.gitattributes', '.gitignore', ...sources]);
+  await git(['-c', 'user.name=Agensi pack test', '-c', 'user.email=agensi-pack-test@example.invalid',
+    '-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${path.join(root, '.git/hooks')}`, 'commit', '-qm', 'Fixture source']);
+  assert.equal((await git(['status', '--porcelain', '--untracked-files=all'])).stdout.trim(), '');
+  const clean = await buildPack({ repoRoot: root });
+  assert.equal(clean.sourceWorkingTreeModified, false);
+  assert.equal(clean.sourceRevisionBytesVerified, true);
+  const cleanManifest = JSON.parse(await readFile(clean.manifestPath, 'utf8'));
+  assert.equal(cleanManifest.validation.sourceRevisionBytesVerified, true);
+
+  const filename = path.join(root, 'skills/champions-mc-teambuilding/agents/openai.yaml');
+  const original = await readFile(filename, 'utf8');
+  assert(original.includes('\n'));
+  await writeFile(filename, original.replace(/\n/g, '\r\n'));
+  assert.notDeepEqual(await readFile(filename), Buffer.from(original));
+  await git(['add', '--renormalize', '--', 'skills/champions-mc-teambuilding/agents/openai.yaml']);
+  assert.equal((await git(['status', '--porcelain', '--untracked-files=all'])).stdout.trim(), '',
+    'Git normalizes CRLF to LF and can report a clean tree despite different source bytes');
+  const rejectedOutput = path.join(root, 'dist/rejected');
+  await assert.rejects(buildPack({ repoRoot: root, outputDir: rejectedOutput }), /Clean Git status has different source bytes/);
+  await assert.rejects(lstat(rejectedOutput), { code: 'ENOENT' });
+
+  await writeFile(filename, `${original}\n# Deliberately dirty preview\n`);
+  const dirty = await buildPack({ repoRoot: root, outputDir: path.join(root, 'dist/preview') });
+  assert.equal(dirty.sourceWorkingTreeModified, true);
+  assert.equal(dirty.sourceRevisionBytesVerified, false);
+  const dirtyManifest = JSON.parse(await readFile(dirty.manifestPath, 'utf8'));
+  assert.equal(dirtyManifest.validation.sourceRevisionBytesVerified, false);
 });
 
 test('shared installation links point to the original pinned runtime README', async t => {

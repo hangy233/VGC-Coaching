@@ -149,6 +149,11 @@ links and source fidelity, and enforces the text-package limits. Keep private
 data out of source guidance; an archive allowlist cannot make private text safe
 after it has been added to an allowed public source file.
 
+Before publishing, require `sourceWorkingTreeModified: false` and
+`validation.sourceRevisionBytesVerified: true` in the manifest. A clean release
+build checks raw committed bytes, including line endings. Dirty-source builds
+are previews and do not establish that the archive matches its Git revision.
+
 Publish a new version when a bundled skill or its references change. Generate
 the archive again from that release's source rather than editing ZIP contents
 or maintaining a second copy. Uploading and Agensi review are separate from

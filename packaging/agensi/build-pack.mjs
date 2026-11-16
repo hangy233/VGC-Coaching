@@ -182,6 +182,24 @@ async function sourceState(root, sourceRevision, inputs) {
   return { revision: revision.trim(), workingTreeModified: Boolean(changes.trim()) };
 }
 
+async function verifyCommittedBytes(root, state, files) {
+  if (state.workingTreeModified) return false;
+  for (const [filename, bytes] of files) {
+    let committed;
+    try {
+      ({ stdout: committed } = await execute('git', ['show', `${state.revision}:${filename}`], {
+        cwd: root, encoding: 'buffer', maxBuffer: maximumUploadBytes,
+      }));
+    } catch {
+      throw new Error(`Cannot verify committed source bytes for ${filename}`);
+    }
+    if (!bytes.equals(committed)) {
+      throw new Error(`Clean Git status has different source bytes from the declared revision: ${filename}; restore exact committed bytes before building a release`);
+    }
+  }
+  return true;
+}
+
 async function writeArtifact(filename, bytes) {
   let absolute = path.resolve(filename);
   const root = path.parse(absolute).root;
@@ -229,6 +247,7 @@ export async function buildPack({ repoRoot = defaultRoot, outputDir, sourceRevis
   }
   files.set('README.md', files.get('docs/AGENSI-PACK.md'));
   const state = await sourceState(root, sourceRevision, [...sourceFiles.keys()]);
+  const sourceRevisionBytesVerified = await verifyCommittedBytes(root, state, sourceFiles);
   const rewrites = [];
   for (const [filename, bytes] of files) {
     if (!filename.endsWith('.md') || filename.startsWith('skills/')) continue;
@@ -268,7 +287,7 @@ export async function buildPack({ repoRoot = defaultRoot, outputDir, sourceRevis
     sourceFingerprintSha256: sourceFingerprint, matchupGuidanceRevision: revision,
     purpose: 'Instruction snapshot; not a runtime, installed-skill adoption receipt, or model qualification',
     skills, sharedDocuments: SHARED_DOCUMENTS, linkRewrites: rewrites,
-    validation: { localMarkdownLinksChecked: localLinksChecked, exactSkillSourceBytes: true, maximumFiles, maximumUploadBytes,
+    validation: { localMarkdownLinksChecked: localLinksChecked, exactSkillSourceBytes: true, sourceRevisionBytesVerified, maximumFiles, maximumUploadBytes,
       qualificationPerformed: false, installedSkillAdoptionVerified: false },
     manifestSelfExcludedFromFileInventory: true,
     files: [...files].sort(([left], [right]) => left.localeCompare(right, 'en')).map(([filename, bytes]) => ({
@@ -295,7 +314,7 @@ export async function buildPack({ repoRoot = defaultRoot, outputDir, sourceRevis
   await writeArtifact(uploadPath, upload);
   return { packageVersion: PACKAGE_VERSION, archivePath, manifestPath, uploadPath, archiveSha256: sha256(archive),
     archiveBytes: archive.length, uploadBytes: upload.length, fileCount: entries.length, skillCount,
-    sourceRevision: state.revision, sourceWorkingTreeModified: state.workingTreeModified,
+    sourceRevision: state.revision, sourceWorkingTreeModified: state.workingTreeModified, sourceRevisionBytesVerified,
     sourceFingerprintSha256: sourceFingerprint, matchupGuidanceRevision: revision, localMarkdownLinksChecked: localLinksChecked, skills };
 }
 
