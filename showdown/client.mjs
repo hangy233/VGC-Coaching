@@ -22,7 +22,7 @@ const digestMove = value => typeof value==='string' ? value.toLowerCase().replac
 const replayID = value => battleRoomIdentity(value)?.replace(/^battle-/, '');
 const MAX_REPLAY_BYTES = 8 * 1024 * 1024;
 const isMcFormat = value => ['gen9championsvgc2026regmc', FORMAT].includes(userID(value));
-const OUTGOING_ACTIONS = new Set(['authenticate','join-room','upload-team','search','cancel-search','choose','ready','forfeit','set-timer','save-replay']);
+const OUTGOING_ACTIONS = new Set(['authenticate','join-room','upload-team','search','cancel-search','choose','ready','forfeit','set-timer','save-replay','set-matchmaking-policy']);
 const emptyTransport = () => ({incomingFrames:0,lastIncomingAt:null,outgoingAttempts:0,lastOutgoingAt:null,lastOutgoingAction:null});
 const SEARCH_MAINTENANCE_REJECTIONS = new Set([
   'The server will be restarting soon. Best-of-3 battles cannot be started at this time.',
@@ -111,6 +111,7 @@ export class ShowdownClient extends EventEmitter {
     this.expectedTeamHash = expectedTeamHash; this.rooms = new Map(); this.roomAliases = new Map(); this.observationSequence = 0; this.connected = false; this.authenticated = false; this.epoch = 0;
     this.sent = new Set(); this.grants = new Map(); this.pendingReplay = null; this.replayRequests = new Map(); this.replays = []; this.formats = ''; this.searchGeneration = 0; this.searchPending = false; this.searchObservedActive = false;
     this.transport = emptyTransport();this.localCloseRequested=false;
+    this.ladderBotSetting=null;this.blockBotsAttempt=null;
   }
   audit(event, data = {}) { this.log({time: this.now(), event, ...data}); }
   resolveRoom(id) { return this.roomAliases.get(id) || id; }
@@ -197,26 +198,28 @@ export class ShowdownClient extends EventEmitter {
   async connect({timeoutMs = 15000} = {}) {
     check(!this.ws || this.ws.readyState > 1, 'Socket already open or connecting');
     this.epoch++; this.authenticated = false; this.challenge = null; this.expectedUser = null;
+    this.ladderBotSetting=null;this.blockBotsAttempt=null;
     this.transport = emptyTransport();this.localCloseRequested=false;
     this.grants.clear(); this.teamHash = null; this.pendingReplay = null; this.searchState = null; this.searchPending = false; this.searchObservedActive = false;
     for (const r of this.rooms.values()) { r.epoch = -1; r.readyPrompt = null;r.pendingRejectedRequest=null;r.rejectedClockWindow=null; invalidateOwnPpObservation(r.battle,'Connection changed'); }
-    const ws = this.ws = new this.WebSocketImpl(SOCKET);
-    ws.addEventListener('message', e => { try { this.receive(String(e.data)); } catch { for(const r of this.rooms.values())invalidateOwnPpObservation(r.battle,'Protocol error'); this.audit('protocol-error'); this.emit('protocol-error'); } });
+    const epoch=this.epoch,ws = this.ws = new this.WebSocketImpl(SOCKET);
+    ws.addEventListener('message', e => {if(this.ws!==ws||this.epoch!==epoch)return; try { this.receive(String(e.data)); } catch { for(const r of this.rooms.values())invalidateOwnPpObservation(r.battle,'Protocol error'); this.audit('protocol-error'); this.emit('protocol-error'); } });
     ws.addEventListener('close', event => {
+      if(this.ws!==ws||this.epoch!==epoch)return;
       const closeCode=Number.isInteger(event?.code)&&event.code>=1000&&event.code<=4999?event.code:null;
       const reasonCode=closeCode===1000?'ws-close-normal':closeCode===1001?'ws-close-going-away':closeCode===1006?'ws-close-abnormal':closeCode===1008?'ws-close-policy':closeCode===1011?'ws-close-server-error':'ws-close-unclassified';
       const observation={at:this.now(),closeCode,closeWasClean:typeof event?.wasClean==='boolean'?event.wasClean:null,localCloseRequested:this.localCloseRequested,reasonCode,reasonTextRetained:false};
       this.transport.lastDisconnect=observation;
-      this.connected = false; this.authenticated = false; this.grants.clear(); for(const r of this.rooms.values()){r.pendingRejectedRequest=null;r.rejectedClockWindow=null;invalidateOwnPpObservation(r.battle,'Disconnected');}
+      this.connected = false; this.authenticated = false;this.ladderBotSetting=null; this.grants.clear(); for(const r of this.rooms.values()){r.pendingRejectedRequest=null;r.rejectedClockWindow=null;invalidateOwnPpObservation(r.battle,'Disconnected');}
       this.audit('disconnected',observation);this.emit('disconnected',observation);
     });
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => { ws.close(); reject(new Error('Connection timed out; no retry attempted')); }, timeoutMs);
-      ws.addEventListener('open', () => { clearTimeout(timer); this.connected = true; this.audit('connected', {epoch:this.epoch}); resolve(); }, {once:true});
-      ws.addEventListener('error', () => { for(const r of this.rooms.values())invalidateOwnPpObservation(r.battle,'Transport error'); clearTimeout(timer); reject(new Error('WebSocket connection failed; no alternate route attempted')); }, {once:true});
+      ws.addEventListener('open', () => { clearTimeout(timer);if(this.ws!==ws||this.epoch!==epoch){reject(new Error('Connection changed before open; no retry attempted'));return;} this.connected = true; this.audit('connected', {epoch:this.epoch}); resolve(); }, {once:true});
+      ws.addEventListener('error', () => {clearTimeout(timer);if(this.ws===ws&&this.epoch===epoch)for(const r of this.rooms.values())invalidateOwnPpObservation(r.battle,'Transport error'); reject(new Error('WebSocket connection failed; no alternate route attempted')); }, {once:true});
     });
   }
-  close() { this.localCloseRequested=true;for(const r of this.rooms.values()){r.pendingRejectedRequest=null;r.rejectedClockWindow=null;invalidateOwnPpObservation(r.battle,'Connection closing');} this.ws?.close(); }
+  close() { this.localCloseRequested=true;this.ladderBotSetting=null;for(const r of this.rooms.values()){r.pendingRejectedRequest=null;r.rejectedClockWindow=null;invalidateOwnPpObservation(r.battle,'Connection closing');} this.ws?.close(); }
   // An externally approved secure broker must perform login. Never read browser cookies,
   // tokens, environment passwords, command-line secrets, or chat credentials here.
   async authenticate(username, {approved = false} = {}) {
@@ -260,6 +263,16 @@ export class ShowdownClient extends EventEmitter {
       if (type === 'challstr') { this.challenge = value; this.emit('challenge'); continue; }
       if (type === 'updateuser') {
         this.authenticated = parts[1] === '1' && !!this.expectedUser && userID(parts[0]) === this.expectedUser;
+        // Retain only this server preference, never arbitrary account settings.
+        // Missing/malformed, room-scoped or wrong-identity updates invalidate it.
+        this.ladderBotSetting=null;
+        const settingsText=parts.slice(3).join('|');
+        if(!room&&this.connected&&this.authenticated&&settingsText.length<=65536){
+          try{const settings=JSON.parse(settingsText);if(settings&&typeof settings==='object'&&!Array.isArray(settings)&&Object.hasOwn(settings,'allowLadderBots')&&typeof settings.allowLadderBots==='boolean')
+            this.ladderBotSetting={value:settings.allowLadderBots,epoch:this.epoch,account:this.expectedUser,observedAt:this.now()};
+          }catch{}
+        }
+        this.emit('matchmaking-settings',this.matchmakingStatus());
         this.emit('identity', {named:parts[1] === '1', authenticated:this.authenticated}); continue;
       }
       if (type === 'formats') { this.formats = value; continue; }
@@ -424,6 +437,23 @@ export class ShowdownClient extends EventEmitter {
     this.transport.lastOutgoingAction=OUTGOING_ACTIONS.has(action)?action:'other';
   }
   // One-shot, bounded operator grants. These enforce scope; they do not replace user approval.
+  matchmakingStatus(){
+    const seen=this.ladderBotSetting,valid=this.connected&&this.authenticated&&!this.localCloseRequested&&seen?.epoch===this.epoch&&seen.account===this.expectedUser;
+    const serverAllowLadderBots=valid?seen.value:null;
+    return {confirmed:serverAllowLadderBots===false,serverAllowLadderBots,observedAt:valid?seen.observedAt:null,epoch:valid?seen.epoch:null,account:valid?seen.account:null,
+      requestStatus:serverAllowLadderBots===false?'confirmed':this.blockBotsAttempt?.epoch===this.epoch?this.blockBotsAttempt.status:'not-requested',
+      limitation:'This observes the server ladder-bot preference, not whether an account is automated. Server-designated bot and opt-in matchmaking rules still apply; no human-only guarantee is inferred.'};
+  }
+  blockLadderBots(){
+    check(this.connected&&this.authenticated&&typeof this.expectedUser==='string'&&this.expectedUser,'Authenticated account identity required for bot exclusion');
+    if(this.matchmakingStatus().confirmed)return {...this.matchmakingStatus(),sent:false};
+    check(!this.blockBotsAttempt||this.blockBotsAttempt.epoch!==this.epoch,'Bot-exclusion command already sent or uncertain; inspect server settings without retrying');
+    // Reserve before I/O. A timeout, refusal or ambiguous write grants no retry.
+    this.blockBotsAttempt={epoch:this.epoch,account:this.expectedUser,status:'reserved'};
+    try{this.send('set-matchmaking-policy','','/blockbots',`blockbots:${this.epoch}:${this.expectedUser}`);this.blockBotsAttempt.status='sent-not-acknowledged';}
+    catch(error){this.blockBotsAttempt.status='uncertain';throw error;}
+    return {...this.matchmakingStatus(),sent:true};
+  }
   authorize(action, {room = '', ttlMs = 30000, confirmed = false} = {}) {
     check(confirmed, 'Operator confirmation required'); check(ttlMs > 0 && ttlMs <= 120000, 'Invalid grant lifetime');
     this.grants.set(`${action}:${room}`, {epoch:this.epoch, expires:this.now()+ttlMs});

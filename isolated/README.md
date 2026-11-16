@@ -102,6 +102,14 @@ Paths stay inside the workspace and cannot traverse links. Stored credentials
 supply no additional battle allowance. The exact packed team is validated from
 its export; no roster change is performed.
 
+For an authorized bot-excluded batch, start the client with `--exclude-bots`
+and put `excludeBots:true` in each one-set scope. Before the search gate the
+runner reserves one owned `battle_set_matchmaking_policy` request and waits
+boundedly for the authenticated server's `allowLadderBots:false` observation.
+Unknown or changed settings prevent search; no setting command or search is
+silently retried. The native server bot classification has the limits described
+in the [session guide](../showdown/README.md).
+
 After `START_LIVE`, the owned runner checks account/team/client, observed
 `autoReady:false`, allowance, loaded module hashes, current synchronized skill,
 previous review checkpoint, policy and native preflight. It saves private

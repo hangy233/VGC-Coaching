@@ -32,7 +32,7 @@ function eventOnce(client,event,predicate,timeoutMs) {
 
 /** The explicit saved-login option does not grant permission to queue battles. */
 export function parseSessionArgs(argv) {
-  const args=[...argv], username=args.shift();let teamFile,authorizedSets=1,autoReady=true,loginMethod='terminal',saveReplays=false,battleTimer=false,recoverSet;
+  const args=[...argv], username=args.shift();let teamFile,authorizedSets=1,autoReady=true,loginMethod='terminal',saveReplays=false,battleTimer=false,excludeBots=false,recoverSet;
   const valueFor=()=>{const value=args.shift();if(!value || value.startsWith('--'))throw new Error('Missing session option value');return value;};
   while(args.length){
     const key=args.shift();
@@ -42,21 +42,23 @@ export function parseSessionArgs(argv) {
     else if(key==='--saved-login')loginMethod='windows-credential-manager';
     else if(key==='--save-replays')saveReplays=true;
     else if(key==='--battle-timer')battleTimer=true;
+    else if(key==='--exclude-bots')excludeBots=true;
     else if(key==='--recover-set'){if(recoverSet)throw new Error('Supply only one restored set');recoverSet=valueFor();}
     else throw new Error('Unknown session option');
   }
   if(!/^[A-Za-z0-9 _-]{1,18}$/.test(username || '') || !teamFile || !Number.isInteger(authorizedSets) || authorizedSets<1 || authorizedSets>100)
-    throw new Error('Usage: node --use-env-proxy showdown/session.mjs USERNAME --team TEAM_FILE [--sets 1] [--manual-ready] [--saved-login] [--save-replays] [--battle-timer] [--recover-set CANONICAL_PARENT]');
+    throw new Error('Usage: node --use-env-proxy showdown/session.mjs USERNAME --team TEAM_FILE [--sets 1] [--manual-ready] [--saved-login] [--save-replays] [--battle-timer] [--exclude-bots] [--recover-set CANONICAL_PARENT]');
   if(recoverSet&&(!/^game-bestof3-gen9championsvgc2026regmcbo3-[1-9]\d*$/u.test(recoverSet)||autoReady))throw new Error('Restored-set recovery needs a canonical M-C parent and --manual-ready');
-  return {username,teamFile:resolve(teamFile),authorizedSets,autoReady,loginMethod,saveReplays,battleTimer,...(recoverSet?{recoverSet}:{})};
+  return {username,teamFile:resolve(teamFile),authorizedSets,autoReady,loginMethod,saveReplays,battleTimer,excludeBots,...(recoverSet?{recoverSet}:{})};
 }
 
 /** Login stays in a visible user terminal; MCP controls only the authenticated object. */
-export async function runSession({username,teamFile,authorizedSets=1,autoReady=true,loginMethod='terminal',saveReplays=false,battleTimer=false,recoverSet,input=process.stdin,output=process.stderr,signals=process,clientFactory=options=>new ShowdownClient(options),brokerFactory,descriptorPath=join(workspace,'cache','showdown-session.json'),metrics=true,metricsWorkspace,onLifecycle=()=>{}}={}) {
+export async function runSession({username,teamFile,authorizedSets=1,autoReady=true,loginMethod='terminal',saveReplays=false,battleTimer=false,excludeBots=false,recoverSet,input=process.stdin,output=process.stderr,signals=process,clientFactory=options=>new ShowdownClient(options),brokerFactory,descriptorPath=join(workspace,'cache','showdown-session.json'),metrics=true,metricsWorkspace,onLifecycle=()=>{}}={}) {
   if(!/^[A-Za-z0-9 _-]{1,18}$/.test(username || '') || !teamFile || !Number.isInteger(authorizedSets) || authorizedSets<1 || authorizedSets>100) throw new Error('Supply a valid username, team file and set limit (1–100)');
   if(!['terminal','windows-credential-manager'].includes(loginMethod))throw new Error('Unsupported login method');
   if(typeof saveReplays!=='boolean'||saveReplays&&!metrics)throw new Error('Authorized replay policy requires enabled local metrics recording');
   if(typeof battleTimer!=='boolean')throw new Error('Battle timer policy must be explicitly enabled or disabled');
+  if(typeof excludeBots!=='boolean')throw new Error('Bot-exclusion policy must be explicitly enabled or disabled');
   if(typeof onLifecycle!=='function')throw new Error('A synchronous lifecycle observer is required');
   const lifecycle=phase=>{const result=onLifecycle(phase);if(result&&typeof result.then==='function')throw new Error('Lifecycle observers must be synchronous');};
   if(!input.isTTY || !output.isTTY || typeof input.setRawMode!=='function')throw new Error('Run this command in a visible user-operated terminal; password pipes and redirects are not supported');
@@ -89,7 +91,7 @@ export async function runSession({username,teamFile,authorizedSets=1,autoReady=t
       let warned=false;
       return attachMetricsRecorder(client,{workspace:metricRoot,username,teamId,team,name,session:owner,onError:()=>{if(!warned){warned=true;output.write('Team metrics could not be saved; battle controls remain available.\n');}}});
     };
-    session=new AgentSession(client,{username,packed,authorizedSets,autoReady,recorderFactory,decisionNoteWriter:args=>saveDecisionNote({workspace:metricRoot,...args}),replayPolicy:saveReplays,timerPolicy:battleTimer,restoredSetProof,replayPreservationVerifier:args=>verifySetReplayPreservation({workspace:metricRoot,...args})});
+    session=new AgentSession(client,{username,packed,authorizedSets,autoReady,excludeBots,recorderFactory,decisionNoteWriter:args=>saveDecisionNote({workspace:metricRoot,...args}),replayPolicy:saveReplays,timerPolicy:battleTimer,restoredSetProof,replayPreservationVerifier:args=>verifySetReplayPreservation({workspace:metricRoot,...args})});
     if(metrics){
       recorder=await recorderFactory({team,teamId:expectedTeamHash,name:basename(teamFile,'.txt'),session});
       session.attachMetricsRecorder(recorder);
@@ -106,6 +108,7 @@ export async function runSession({username,teamFile,authorizedSets=1,autoReady=t
       bridge=await serveLocalSession(session,{descriptorPath});
       if(client.connected && client.authenticated){
         output.write(`Signed in. MCP battle controls are ready; live battle events will appear here.\nFormat: ${FORMAT}. Auto-ready within the authorized set: ${autoReady ? 'on' : 'off'}. Save completed BO3 replays with existing privacy: ${saveReplays?'authorized/on':'off'}. Timer after the first sent choice of each child: ${battleTimer?'authorized/on':'off'}.\nBefore any control mutation, claim exclusive control with battle_control_claim. Deadline protection starts off: configure battle_set_control_policy while idle within your battle/forfeit authorization, then stage a fresh complete fallback on each request before optional analysis. Signing in, claiming and enabling protection never queue. Ctrl-C closes the session.\n`);
+        output.write(`Server ladder-bot exclusion required: ${excludeBots?'on; confirm battle_set_matchmaking_policy before searching':'off'}. Only authenticated server settings confirm this preference; no human-only guarantee is inferred.\n`);
         await disconnected;
       }
     }finally{client.off('disconnected',onDisconnected);}

@@ -77,6 +77,17 @@ function standardHandler(name) {
   return reply({done: true});
 }
 
+test('owned typed matchmaking policy forwards the retained lease without granting a search',async()=>{
+  const f=fixture(standardHandler);await arm(f.operator);await claim(f.operator);
+  const result=await f.operator.dispatch({id:'exclude-bots',op:'call',name:'battle_set_matchmaking_policy',args:{confirmed:true,commandId:'exclude-bots',excludeBots:true}});
+  assert.equal(result.error,undefined);
+  const call=f.calls.find(row=>row.request?.name==='battle_set_matchmaking_policy');assert(call);
+  assert.equal(call.request.arguments.controllerLease,LEASE);assert.equal(call.request.arguments.excludeBots,true);
+  assert.equal(f.calls.filter(row=>row.request?.name==='battle_start').length,0);
+  assert(!JSON.stringify(f.publications.map(row=>row.payload)).includes(LEASE));
+  assert(!JSON.stringify(result).includes(LEASE));
+});
+
 test('local action-format, bounded-plan and post-send option errors leave an unsent token available for a corrected authored command',async()=>{
   for(const invalid of [{postSendWaitMs:0},{postSendWaitMs:1.5},{postSendWaitMs:55001},{actions:['move 1 1','move 2 2']},{turnPlan:{objective:'Retain the useful paired action.',risk:'x'.repeat(181)}}]){
     const {operator,calls}=fixture((name,args)=>{

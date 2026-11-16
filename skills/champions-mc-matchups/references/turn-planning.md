@@ -134,6 +134,15 @@ Independently map each action's sign/slot to its recipient in every considered
 or revised pair. Recheck priority, eligibility, field,
 immunity, denial and relevant stat-drop/item/ability triggers after plausible
 switches, pivots, redirection, Mega or replacement into the targeted slot.
+When one single-target action supplies the pair's progress, or both attacks
+focus one slot, check one known available entry or eligible pivot that could
+make the intended recipient immune or ineligible before crediting that slot's
+payoff. A registered reserve whose selection is unconfirmed remains a hypothesis.
+Trace any surviving partner progress and remaining answer through that reply;
+an attack into the original recipient establishes no damage into its replacement.
+A useful other hit or purposeful trade can justify retaining the pair, and the
+foe can stay in. Compare these branches without assuming a switch, forcing a
+retarget, enumerating every reserve or adding a routine research call.
 Distinguish current form/ability from the selected transformation's resulting
 exposure. Resolve entry-triggered copied abilities before crediting priority
 denial or protection; a registered reserve and the possible copy remain

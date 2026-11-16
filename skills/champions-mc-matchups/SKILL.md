@@ -44,7 +44,7 @@ analysis does not expand the live budget.
 
 ## Required cycle
 
-Cycle revision: **2026-11-15.128**. Before live play and after a handoff read the
+Cycle revision: **2026-11-15.129**. Before live play and after a handoff read the
 complete [BO3 cycle](references/headless-battle-cycle.md), including its
 [search gate](references/headless-battle-cycle.md#before-a-new-search).
 Verify complete-folder status, reviewed sync and content read; previous private

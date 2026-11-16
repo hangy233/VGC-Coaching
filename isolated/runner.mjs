@@ -50,6 +50,7 @@ const MESSAGES = Object.freeze({
   review: 'The previous native BO3 review is incomplete; no new search was sent.',
   policy: 'The configured deadline protection was not verified, or an existing halt needs review.',
   readiness: 'The manual readiness mode or current server readiness token was not verified. Retain the same owner; do not advance the next preview until prepared.',
+  matchmaking: 'The requested bot exclusion is not confirmed by the authenticated server settings; no new search was sent.',
   preflight: 'Native preflight has blockers; no new search was sent.',
   operator: 'A native operation failed or has an uncertain outcome. Inspect native status and retained traces; do not retry the mutation.',
   controller_preparation: 'Decision preparation stopped before another choice could be submitted. Inspect the recorded controller stage, error code and private diagnostic; retain the same operator for recovery.',
@@ -95,13 +96,14 @@ export function validateSessionConfiguration(value) {
 }
 
 export function validateScopeConfiguration(value, identity) {
-  requireThat(exactKeys(value, ['version', 'authorization', 'sessionId', 'teamId', 'account', 'maxSets', 'allowSearch', 'allowGenerationProbe', 'allowManualForfeit', 'manualReady', 'saveReplays', 'controlPolicy','allowPonder','qualificationReference']) && value.version === 1);
+  requireThat(exactKeys(value, ['version', 'authorization', 'sessionId', 'teamId', 'account', 'maxSets', 'allowSearch', 'allowGenerationProbe', 'allowManualForfeit', 'manualReady', 'saveReplays', 'controlPolicy','allowPonder','qualificationReference','excludeBots']) && value.version === 1);
   requireThat(typeof value.authorization === 'string' && value.authorization.trim().length >= 10 && value.authorization.length <= 2000);
   requireThat(value.sessionId === identity.sessionId && value.teamId === identity.teamId && value.account === identity.account);
   requireThat(value.maxSets === 1 && value.allowSearch === true && value.allowGenerationProbe === true && typeof value.saveReplays === 'boolean');
   requireThat(value.allowManualForfeit === undefined || typeof value.allowManualForfeit === 'boolean');
   requireThat(value.manualReady===undefined||typeof value.manualReady==='boolean');
   requireThat(value.allowPonder===undefined||typeof value.allowPonder==='boolean');
+  requireThat(value.excludeBots===undefined||typeof value.excludeBots==='boolean');
   if(value.qualificationReference!==undefined)validateQualificationReferenceShape(value.qualificationReference);
   const policy = value.controlPolicy;
   requireThat(exactKeys(policy, ['enabled', 'forfeitIfStuck', 'emergencyDefaultChoice', 'planningMs', 'previewPlanningMs', 'unknownClockMs', 'safetyMarginMs']));
@@ -161,6 +163,11 @@ function verifiedIdle(state) {
   requireThat(search && Object.hasOwn(search, 'games') && (search.games === null || object(search.games) && Object.keys(search.games).length === 0) && Array.isArray(search.searching) && search.searching.length === 0 &&
     !state.searchPending && !state.awaitingSet && !state.savingReplays && !state.switchingTeam && Array.isArray(state.actions) && state.actions.every(action => action.actionable === false) &&
     Array.isArray(state.rooms) && !state.rooms.some(room => room.id?.startsWith('game-bestof3-') && !room.ended), 'idle');
+}
+function verifiedMatchmaking(state, scope) {
+  if(scope.excludeBots!==true)return;
+  requireThat(state.capabilities?.features?.ownedMatchmakingPolicy===true&&state.capabilities.operations?.includes('set-matchmaking-policy'),'matchmaking');
+  requireThat(state.matchmakingPolicy?.excludeBots===true&&state.matchmakingPolicy.confirmed===true&&state.matchmakingPolicy.serverAllowLadderBots===false,'matchmaking');
 }
 function postResultPending(state, identity, parentId, {compact = false} = {}) {
   if (compact) requireThat(state?.sessionId === identity.sessionId && [state.teamSha256, state.teamId].every(hash => hash === undefined || hash === identity.teamId) && state.connected === true && state.authenticated === true && state.stopped !== true, 'identity');
@@ -438,6 +445,8 @@ export async function runBattleWorkflow({operator, createController, identity, s
   await resetDecisionContext?.();
   let sequence = 0, claimed = false, searched = false, reviewBoundary = false, idleReleaseAttempted=false,controller, affectedParentId,ownedControllerProof;
   const preSearchParentIds = new Set();
+  const recoveryAttemptedRequestDigests=new Set();
+  const rememberAttempt=event=>{const digest=event?.binding?.requestDigest??event?.requestDigest;if(HASH.test(digest??''))recoveryAttemptedRequestDigests.add(digest);};
   // A kept native session retains command-id results across runner processes.
   // Reserve a fresh namespace once per invocation; each individual command's
   // id stays stable if its outcome later needs reconciliation.
@@ -487,19 +496,35 @@ export async function runBattleWorkflow({operator, createController, identity, s
     await dispatch({op: 'arm', confirmed: true, expectedSessionId: identity.sessionId, expectedTeamId: identity.teamId, expectedAccount: identity.account});
     await call('battle_control_claim', {confirmed: true, commandId: id('claim'), controllerId: 'isolated-native-runner'}); claimed = true;
     await call('battle_set_control_policy', {...scope.controlPolicy, confirmed: true, commandId: id('policy')});
+    if(scope.excludeBots===true){
+      requireThat(state.capabilities?.features?.ownedMatchmakingPolicy===true&&state.capabilities.operations?.includes('set-matchmaking-policy'),'matchmaking');
+      await call('battle_set_matchmaking_policy',{excludeBots:true,confirmed:true,commandId:id('matchmaking')});
+      // Setup only: wait for the one reserved setting command's server update.
+      // Never resend it or start a search from a sent/unknown disposition.
+      for(let attempt=0;attempt<40;attempt++){
+        state=await dispatch({op:'status',full:true});verifiedIdentity(state,identity);verifiedIdle(state);
+        if(state.matchmakingPolicy?.confirmed===true)break;
+        if(['refused','failed'].includes(state.matchmakingPolicy?.requestStatus))break;
+        await new Promise(resolveWait=>setTimeout(resolveWait,250));
+      }
+      verifiedMatchmaking(state,scope);
+    }
     state = await dispatch({op: 'status', full: true}); verifiedIdentity(state, identity); verifiedIdle(state);
+    verifiedMatchmaking(state,scope);
     requireThat(scope.manualReady!==true||state.autoReady===false,'readiness');
     requireThat(state.controlPolicy?.enabled === true && state.controlPolicy.halted === false, 'policy');
     for (const [key, value] of Object.entries(scope.controlPolicy)) requireThat(state.controlPolicy[key] === value, 'policy');
     const extendedPreview=scope.controlPolicy.previewPlanningMs===60000;
     controller = createController({operator, identity, ownTeamText, decisionProvider, skillVersion: policySource.skillVersion, skillSha256: skill.sourceSha256, matchupGuidance, manualReady:scope.manualReady===true,
       ...(codex?{decisionMode,codexContextMode:contextMode,maxContextBytes:MAX_CONTEXT_BYTES,fastFirst:false,singleCallResearch:false,maxRichContextBytes:MAX_CONTEXT_BYTES,automaticTacticalEvidence:false,teamGuidance,...(ponderRuntime?{background:ponderRuntime}:{})}:{}),
-      ...(extendedPreview?{previewClockWaitMs:2000,maxModelMs:60000}:{}),now, onEvidence, onEvent});
+      ...(extendedPreview?{previewClockWaitMs:2000,maxModelMs:60000}:{}),now,
+      onEvidence:event=>{rememberAttempt(event);return onEvidence(event);},onEvent:event=>{rememberAttempt(event);return onEvent(event);}});
     await controller.initialize();
     const preflight = await call('battle_preflight', {teamId: identity.teamId}, true);
     requireThat(preflight.ready === true && Array.isArray(preflight.blockers) && preflight.blockers.length === 0, 'preflight');
     const beforeSearchState = await dispatch({op: 'status', full: true});
     verifiedIdentity(beforeSearchState, identity); verifiedIdle(beforeSearchState);
+    verifiedMatchmaking(beforeSearchState,scope);
     if(beforeSearchState.controller?.required===true&&typeof beforeSearchState.controller.owner==='string'&&beforeSearchState.controller.owner&&Number.isSafeInteger(beforeSearchState.controller.generation))
       ownedControllerProof=Object.freeze({owner:beforeSearchState.controller.owner,generation:beforeSearchState.controller.generation});
     requireThat(scope.manualReady!==true||beforeSearchState.autoReady===false,'readiness');
@@ -512,7 +537,7 @@ export async function runBattleWorkflow({operator, createController, identity, s
         return {state:'cancelled-before-search',runId,teamId:identity.teamId,reason:admission.reason??'manager-cancelled',searchesAttempted:0,searchDispatchAttempted:false,searchDispatched:false,
           ownerReleased:true,clientRetained:true,clientStopped:false};
       }
-      verifyOwnedIdle(await dispatch({op:'status',full:true}));
+      const releasedState=await dispatch({op:'status',full:true});verifyOwnedIdle(releasedState);verifiedMatchmaking(releasedState,scope);
     }
     // Reserving before dispatch prevents any retry from granting another search.
     searched = true;
@@ -576,6 +601,7 @@ export async function runBattleWorkflow({operator, createController, identity, s
     // Keep the original controller's memory and request/reservation ledgers.
     // This handle never crosses stdout or the model boundary.
     if (failure.liveOwnershipRetained && controller) Object.defineProperty(failure, 'recoveryController', {value: controller});
+    if (failure.liveOwnershipRetained) Object.defineProperty(failure,'recoveryAttemptedRequestDigests',{value:recoveryAttemptedRequestDigests});
     if (failure.liveOwnershipRetained && ownedControllerProof) Object.defineProperty(failure, 'ownedControllerProof', {value: ownedControllerProof});
     const pendingRead=controller?.pendingRead?.();
     if(failure.liveOwnershipRetained&&pendingRead instanceof Promise)Object.defineProperty(failure,'pendingOperatorRead',{value:pendingRead});
@@ -628,6 +654,33 @@ export function manualContainmentTemplate({identity,scope,parentId,runId}={}) {
     limits:'No automatic send, readiness, search, changed timer or new permission. The retained operator still checks exact owned-parent authority.',
     command:{id,op:'call',name:'battle_forfeit',args:{confirmed:true,commandId:id,room:parentId}},
   };
+}
+
+// A small control-only prefix survives bounded stream output ahead of the full
+// recovery frame. It is a manual template, never a decision or send authority.
+export function recoveryCue(packet,{isolatedRecoveryAvailable=false,now=Date.now(),recoveryAlreadyAttempted=false}={}) {
+  const dispositions=['actionable','wait','review-required','unavailable'],protection=packet?.protection,binding=packet?.binding,expected=packet?.expectedRequest;
+  const exactRequest=object(expected)&&Object.keys(expected).length===3&&
+    typeof expected.room==='string'&&expected.room.length<=200&&/^battle-gen9championsvgc2026regmc(?:bo3)?-[1-9]\d*(?:-[a-z0-9]+pw)?$/u.test(expected.room)&&
+    Number.isSafeInteger(expected.rqid)&&expected.rqid>=0&&HASH.test(expected.token??'');
+  const timing={};for(const key of ['checkedAt','receivedAt','requestAgeMs','cutoffAt','cutoffRemainingMs','planningDeadlineAt','planningRemainingMs','hardDeadlineAt','hardRemainingMs']){
+    const value=packet?.timing?.[key];if(Number.isSafeInteger(value)&&value>=0)timing[key]=value;
+  }
+  const deadlines=[packet?.timing?.cutoffAt,packet?.timing?.hardDeadlineAt,
+    ...(packet?.timing?.clock?.source==='server-timer-observation'?[packet.timing.clock.deadlineAt,packet.timing.clock.bankDeadlineAt]:[])].filter(value=>Number.isSafeInteger(value)&&value>=0);
+  const fresh=Number.isSafeInteger(now)&&Number.isSafeInteger(packet?.checkedAt)&&packet.checkedAt<=now&&
+    Number.isSafeInteger(packet?.timing?.cutoffAt)&&deadlines.every(value=>value>now);
+  const untouched=protection?.state==='unprotected'&&protection.sendAttemptObserved===false&&protection.sentOrAccepted===false&&
+    protection.acceptanceEstablished===false&&Array.isArray(protection.submissionStatuses)&&protection.submissionStatuses.length===0;
+  const exactBinding=exactRequest&&binding?.room===expected.room&&binding.rqid===expected.rqid&&binding.token===expected.token&&
+    ['turn','switch','replacement'].includes(binding.kind)&&['boardHash','legalHash','requestDigest'].every(key=>HASH.test(binding[key]??''));
+  const available=packet?.disposition==='actionable'&&isolatedRecoveryAvailable===true&&!recoveryAlreadyAttempted&&fresh&&untouched&&exactBinding;
+  return {state:'recovery-cue',disposition:dispositions.includes(packet?.disposition)?packet.disposition:'unavailable',
+    ...(typeof packet?.reason==='string'&&/^[a-z][a-z0-9-]{0,79}$/u.test(packet.reason)?{reason:packet.reason}:{}),
+    timing,...(exactRequest?{expectedRequest:{room:expected.room,rqid:expected.rqid,token:expected.token}}:{}),
+    isolatedRecoveryAvailable:isolatedRecoveryAvailable===true,recoverCurrentAvailable:available,retry:false,
+    ...(available?{recoverCurrent:{id:'AUTHOR_UNIQUE_COMMAND_ID',op:'recover-current',expectedRequest:{room:expected.room,rqid:expected.rqid,token:expected.token},continueSet:true}}:{}),
+    limits:'Manual only. The original controller rechecks fresh identity, prior attempts, reservations and deadlines. No automatic action, readiness, search or clock reset.'};
 }
 
 export async function serveAttentionMode({operator, identity, scope, runId, input = process.stdin, write, failure,
@@ -697,6 +750,9 @@ export async function serveAttentionMode({operator, identity, scope, runId, inpu
       commandId: `${commandPrefix}-${++sequence}`});
     if(ownershipLost)return;
     const handoffDelayMs = Math.max(0, now() - detectedAt);
+    write(recoveryCue(packet,{isolatedRecoveryAvailable:typeof controller?.recoverCurrent==='function',now:now(),
+      recoveryAlreadyAttempted:failure.recoveryAttemptedRequestDigests?.has(packet.binding?.requestDigest)===true||
+        [...recoveryCommands.values()].some(row=>JSON.parse(row.query).expectedRequest?.token===packet.expectedRequest?.token)}));
     write({...packet, runId, detectedAt, handoffDelayMs,
       isolatedRecoveryAvailable: typeof controller?.recoverCurrent === 'function'});
     event('recovery.context-emitted', {binding: packet.binding, detectedAt, handoffDelayMs,

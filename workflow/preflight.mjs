@@ -94,12 +94,16 @@ export async function battlePreflight({workspace,teamId,parentId,call=callLocalS
       check('replay-preservation',!status.replayPolicy.active&&Array.isArray(status.replayPolicy.pendingParents)&&status.replayPolicy.pendingParents.length===0,'Authorized replay preservation must finish before another search; inspect replayPolicy and retry the existing parent without repeating uploads.');
       if(status.replayPolicy.enabled)check('replay-policy-capability',status.replayPolicy.capable===true&&status.metrics?.enabled===true,'The enabled replay policy needs a loaded preservation verifier and live metrics recorder.');
     }
+    if(status.matchmakingPolicy?.excludeBots===true){
+      check('bot-exclusion-capability',capabilities?.features?.ownedMatchmakingPolicy===true&&operations.includes('set-matchmaking-policy'),'Bot exclusion requires the loaded native matchmaking policy capability.');
+      check('bot-exclusion-confirmed',status.matchmakingPolicy.confirmed===true&&status.matchmakingPolicy.serverAllowLadderBots===false,'The authenticated server must confirm allowLadderBots:false before a bot-excluded search; a sent command or unknown setting is insufficient.');
+    }
     // A requested old parent is diagnostic input, never an override for the
     // newest owned set's mandatory checkpoint.
     latestOwned=(status.rooms||[]).filter(room=>room.ended&&PARENT.test(room.id)).at(-1);
     latestParent=latestOwned?.id;
     if(latestOwned?.teamId&&HASH.test(latestOwned.teamId))reviewTeamId=latestOwned.teamId;
-    session={sessionId:status.sessionId,connected:status.connected,authenticated:status.authenticated,stopped:status.stopped,teamId:status.teamSha256,remainingSets:remaining,idle,capabilities,runtime,metrics:status.metrics||null,replayPolicy:status.replayPolicy||null,...controls};
+    session={sessionId:status.sessionId,connected:status.connected,authenticated:status.authenticated,stopped:status.stopped,teamId:status.teamSha256,remainingSets:remaining,idle,capabilities,runtime,metrics:status.metrics||null,replayPolicy:status.replayPolicy||null,matchmakingPolicy:status.matchmakingPolicy||null,...controls};
   }
   const skills=skill.status==='fulfilled'?skill.value:null;
   check('skill-sync',skills?.synchronized===true,'The maintained and installed matchup skill must match; inspect skill status and sync reviewed changes.');

@@ -51,7 +51,7 @@ const READ_TOOLS = new Set([
 const WRITE_TOOLS = new Set([
   'battle_control_claim', 'battle_control_release', 'battle_set_control_policy', 'battle_withdraw_fallback',
   'battle_ready', 'battle_cancel_search', 'battle_forfeit', 'battle_save_replays',
-  'battle_set_timer', 'battle_set_timer_policy', 'battle_set_replay_policy', 'battle_stop',
+  'battle_set_timer', 'battle_set_timer_policy', 'battle_set_replay_policy', 'battle_set_matchmaking_policy', 'battle_stop',
   'battle_note_decision', 'battle_skill_sync', 'battle_review_save',
   'team_metrics_sync_battles', 'team_metrics_finalize_bo3',
   'team_metrics_annotate_game', 'team_metrics_import',
@@ -71,7 +71,7 @@ const MODEL_SOURCE_REFUSAL=Symbol('model-pre-mutation-source-refusal');
 const LEASED_TOOLS = new Set([
   'battle_control_release', 'battle_set_control_policy', 'battle_ready', 'battle_withdraw_fallback',
   'battle_cancel_search', 'battle_forfeit', 'battle_save_replays',
-  'battle_set_timer', 'battle_set_timer_policy', 'battle_set_replay_policy', 'battle_stop',
+  'battle_set_timer', 'battle_set_timer_policy', 'battle_set_replay_policy', 'battle_set_matchmaking_policy', 'battle_stop',
   'battle_start', 'battle_stage_fallback', 'battle_choose',
 ]);
 const HELPER_TOOLS = new Set(['battle_start', 'battle_stage_fallback', 'battle_choose']);

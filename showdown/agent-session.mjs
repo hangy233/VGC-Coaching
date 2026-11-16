@@ -60,7 +60,7 @@ function publishedSheet(packed){
     nature:columns[index]?.[5]?set.nature:null,level:columns[index]?.[10]?set.level:null,
     gender:columns[index]?.[7]?set.gender:null,shiny:!!set.shiny}));
 }
-const EVENTS = ['request','battle-event','sheet','timer','result','ready','server-error','server-notice','search-rejected','choice-status','action-status','forfeit-status','search-state','room-renamed','replay-url','replay-verified','replay-failed','disconnected'];
+const EVENTS = ['request','battle-event','sheet','timer','result','ready','server-error','server-notice','search-rejected','choice-status','action-status','forfeit-status','search-state','room-renamed','replay-url','replay-verified','replay-failed','matchmaking-settings','disconnected'];
 const SERVER_ERROR_CATEGORIES=new Set(['invalid-choice','unavailable-choice','unclassified']);
 const SERVER_ERROR_REASONS=new Set(['too-late','game-over','not-your-turn','nothing-to-choose','nothing-to-cancel','trapped','move-disabled','battle-crashed','unclassified']);
 const RESEARCH_LIMITS=Object.freeze({calculator:3,simulation:1,turnKeys:512,simulationCacheEntries:32,resultCacheEntries:96,resultBytes:1024*1024});
@@ -85,7 +85,7 @@ function ownedServerErrorDiagnostic(text,state){
 
 /** One explicitly bounded local session; emergency legal defaults are opt-in. */
 export class AgentSession extends EventEmitter {
-  constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter,replayPolicy=false,replayPreservationVerifier,timerPolicy=false,controllerRequired=true,controlTimers={},monotonicNow=()=>performance.now(),restoredSetProof} = {}) {
+  constructor(client, {username, packed, authorizedSets = 1, autoReady = true, now = Date.now, replayFetchImpl = globalThis.fetch, replayBudgetMs = 25000,recorderFactory,decisionNoteWriter,replayPolicy=false,replayPreservationVerifier,timerPolicy=false,excludeBots=false,controllerRequired=true,controlTimers={},monotonicNow=()=>performance.now(),restoredSetProof} = {}) {
     super();
     check(typeof username === 'string' && normalized(username), 'Username required');
     check(typeof packed === 'string' && packed.length > 10, 'Approved packed team required');
@@ -99,6 +99,7 @@ export class AgentSession extends EventEmitter {
     this.replayPreservationVerifier=replayPreservationVerifier;this.replayPolicy={enabled:replayPolicy,configuredAt:replayPolicy?new Date(this.now()).toISOString():null,fromSearch:1};this.replayPreservation=new Map();this.replayTasks=new Map();
     check(typeof timerPolicy==='boolean','Invalid owned battle timer policy');
     this.timerPolicy={enabled:timerPolicy,configuredAt:timerPolicy?new Date(this.now()).toISOString():null};this.timerPolicyAttempts=new Map();this.timerPolicyDeferred=null;this.previewTimerTaskQueued=false;
+    check(typeof excludeBots==='boolean','Bot-exclusion policy must be boolean');this.excludeBots=excludeBots;
     this.id = randomUUID(); this.revision = 0; this.searchesSent = 0; this.stopped = false;
     this.choiceHistories=new Map();this.choiceHistorySequences=new Map();this.frozenChoiceContexts=new Map();
     this.researchBudgets=new Map();this.researchReservations=new Map();this.researchCacheClaims=new Set();this.researchResultClaims=new Set();this.researchBudgetIdentity=hash([this.id,client.expectedTeamHash]);
@@ -457,7 +458,7 @@ export class AgentSession extends EventEmitter {
       ...compactTurnBoard(this.client.battleSnapshot?.(room.id),{request:room.request,events:room.battleLog}),
       actionPlan:this.turnPlans.snapshot({teamId:this.roomTeamId(room.id),room:room.id,rqid:room.request?.rqid,revision:room.revision}),
       ...(previewRooms.has(room.id)?{opponentSheets:Object.fromEntries(Object.entries(room.sheets||{}).filter(([side])=>side!==room.request.side?.id).map(([side,packed])=>[side,publishedSheet(packed)])),opponentSheetUncertainty:'Registered six and published sets only; selected four, stat investments and next actions are unknown.'}:{})}));
-    return {sessionId:this.id,revision:this.revision,observedAt,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,transport:this.client.transportStatus?.()||null,controller:this.controller.status(),controlPolicy,timerPolicy:this.timerPolicySnapshot(),actions,
+    return {sessionId:this.id,revision:this.revision,observedAt,connected:this.client.connected,authenticated:this.client.authenticated,stopped:this.stopped,transport:this.client.transportStatus?.()||null,controller:this.controller.status(),controlPolicy,timerPolicy:this.timerPolicySnapshot(),matchmakingPolicy:this.matchmakingPolicySnapshot(),actions,
       autoReady:this.autoReady,savingReplays:this.savingReplays,awaitingSet:this.awaitingSet,searchPending:!!this.client.searchPending,switchingTeam:this.switchingTeam,search:this.client.searchState||null,
       rooms:[...this.client.rooms.values()].filter(room=>this.ownedRooms.has(room.id)).map(room=>({id:room.id,parentId:this.roomParents.get(room.id),ended:room.ended,result:room.result||null})),
       timing:{observedAt,requests:this.actions({includePending:true}).filter(action=>action.kind!=='ready').map(action=>{
@@ -574,7 +575,7 @@ export class AgentSession extends EventEmitter {
     check(parent?.ended&&['win','tie'].includes(parent.result?.type)&&parent.children.length>0&&parent.children.length<=3&&parent.children.every(child=>this.ownedRooms.has(this.client.resolveRoom(child))&&this.client.rooms.get(this.client.resolveRoom(child))?.ended),'Finish restored-set result and linked-child preservation before another search or team change');
   }
   roomTeamId(room){return this.roomTeams.get(this.client.resolveRoom(room))||this.client.expectedTeamHash;}
-  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,modules:{...RUNTIME_MODULES},loadedAt:LOADED_AT,operations:['status','turn-status','simulation-context','research-reserve','research-settle','research-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','withdraw-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','set-timer','set-timer-policy','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,previewPlanningBudget:true,emergencyDefaultChoice:true,compactTurnBoard:true,mechanicalSimulationSource:true,frozenSimulationSource:true,nativeResearchBudget:true,sharedCurrentFrozenResearchBudget:true,compactTurnWait:true,actionFailureRecovery:true,requestTiming:true,namedReplacements:true,controlTrace:true,ownedBattleServerErrorDiagnostics:true,safeDisconnectDiagnostics:true,restoredSetForfeitRecovery:true,ownedBattleTimer:true,ownedBattleTimerPolicy:true,ownedBattlePreviewTimer:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,turnPlanPairFromExplicitActions:true,atomicPreviewPlan:true,currentRecipientTypeImmunityGate:true,stagedTurnPlanMetadata:true,exactFallbackWithdrawal:true,sourceBoundIneffectiveActions:true,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
+  capabilities(){return {schemaVersion:2,runtime:'champions-headless-session',buildRevision:RUNTIME_REVISION,modules:{...RUNTIME_MODULES},loadedAt:LOADED_AT,operations:['status','turn-status','simulation-context','research-reserve','research-settle','research-status','control-trace','control-claim','control-release','set-control-policy','stage-fallback','withdraw-fallback','capabilities','wait','metrics-status','metrics-sync','start','authorize-sets','choose','ready','cancel-search','set-timer','set-timer-policy','set-matchmaking-policy','forfeit','save-replays','set-replay-policy','stop',...(this.decisionNoteWriter?['note-decision']:[]),...(this.recorderFactory?['switch-team']:[])],features:{ownedMatchmakingPolicy:true,controllerLease:this.controller.required,deadlineSupervisor:true,deadlinePlanningRecovery:true,previewPlanningBudget:true,emergencyDefaultChoice:true,compactTurnBoard:true,mechanicalSimulationSource:true,frozenSimulationSource:true,nativeResearchBudget:true,sharedCurrentFrozenResearchBudget:true,compactTurnWait:true,actionFailureRecovery:true,requestTiming:true,namedReplacements:true,controlTrace:true,ownedBattleServerErrorDiagnostics:true,safeDisconnectDiagnostics:true,restoredSetForfeitRecovery:true,ownedBattleTimer:true,ownedBattleTimerPolicy:true,ownedBattlePreviewTimer:true,recordingSchemaVersion:this.metricsStatus().recordingSchemaVersion??null,previewDecisionEvidence:this.metricsStatus().features?.previewDecisionEvidence===true,metricsRecorder:!!this.metricsRecorder,decisionNotes:!!this.decisionNoteWriter,turnPlanPairFromExplicitActions:true,atomicPreviewPlan:true,currentRecipientTypeImmunityGate:true,stagedTurnPlanMetadata:true,exactFallbackWithdrawal:true,sourceBoundIneffectiveActions:true,idleTeamSwitch:!!this.recorderFactory,authorizedReplayPolicy:!!this.replayPreservationVerifier},sourceChangesRequireNewSession:true};}
   rememberAction(action){
     const state=this.client.rooms.get(action.room),turn=state?.battle?.turn;
     if(!this.actionContexts.has(action.token))this.actionContexts.set(action.token,{room:action.room,teamId:this.roomTeamId(action.room),rqid:action.rqid,revision:action.revision,turn:Number(turn)||0,sessionId:this.id,token:action.token,lastObservedStatus:state?.lastAction?.rqid===action.rqid?state.lastAction.status:'unsubmitted'});
@@ -659,7 +660,7 @@ export class AgentSession extends EventEmitter {
       username:this.username,teamSha256:this.client.expectedTeamHash,authorizedSets:this.authorizedSets,searchesSent:this.searchesSent,autoReady:this.autoReady,
       restoredSetRecovery:this.restoredSetProof?{parentId:this.restoredSetProof.parentId,currentParent:this.restoredSetParent,authority:this.restoredSetProof.authority,observationEnabled:this.restoredSetObservationEnabled,priorChildIds:this.restoredSetProof.childIds,searchesAdded:0}:null,
       savingReplays:this.savingReplays,awaitingSet:this.awaitingSet,searchPending:!!this.client.searchPending,
-      replayPolicy:this.replayPolicySnapshot(),timerPolicy:this.timerPolicySnapshot({includeChildren:true}),
+      replayPolicy:this.replayPolicySnapshot(),timerPolicy:this.timerPolicySnapshot({includeChildren:true}),matchmakingPolicy:this.matchmakingPolicySnapshot(),
       switchingTeam:this.switchingTeam,capabilities:this.capabilities(),transport:this.client.transportStatus?.()||null,
       controller:this.controller.status(),controlPolicy:this.controlPolicySnapshot(),
       metrics:this.metricsStatus(),
@@ -827,6 +828,18 @@ export class AgentSession extends EventEmitter {
     this.recordControlTrace({type:'timer-policy-configured',status:enabled?'enabled':'disabled'});
     this.emit('change',{revision:++this.revision,event:'timer-policy'});
     return {...this.timerPolicySnapshot(),queued:false,timerSent:false,authorizedSets:this.authorizedSets,searchesSent:this.searchesSent};
+  }
+  matchmakingPolicySnapshot(){
+    const observed=this.client.matchmakingStatus?.()??{confirmed:false,serverAllowLadderBots:null,requestStatus:'unavailable'};
+    return {excludeBots:this.excludeBots,...observed,confirmed:observed.confirmed===true&&observed.account===normalized(this.username)};
+  }
+  setMatchmakingPolicy(excludeBots){
+    this.assertIdleForTeamSwitch();check(excludeBots===true,'Only explicitly requiring bot exclusion is supported; this operation never enables bots');
+    check(typeof this.client.blockLadderBots==='function'&&typeof this.client.matchmakingStatus==='function','Server-confirmed matchmaking policy is unavailable in this loaded session');
+    this.excludeBots=true;
+    if(!this.client.matchmakingStatus().confirmed)this.client.authorize('set-matchmaking-policy',{confirmed:true});
+    try{const result=this.client.blockLadderBots();return {...this.matchmakingPolicySnapshot(),sent:result.sent,queued:false,searchSent:false};}
+    finally{this.emit('change',{revision:++this.revision,event:'matchmaking-policy'});}
   }
   ownedTimerChild(room){
     this.assertLive();const c=this.client,child=c.resolveRoom(room),parent=this.roomParents.get(child),state=c.rooms.get(child),parentState=c.rooms.get(parent);
@@ -1079,6 +1092,7 @@ export class AgentSession extends EventEmitter {
     }
     if(op==='set-replay-policy')return this.setReplayPolicy(command.enabled);
     if(op==='set-timer-policy')return this.setTimerPolicy(command.enabled);
+    if(op==='set-matchmaking-policy')return this.setMatchmakingPolicy(command.excludeBots);
     if(op==='switch-team'){this.assertRestoredSetSettled();return this.switchTeam(command);}
     if(['start','authorize-sets','save-replays'].includes(op))check(!this.switchingTeam,'Finish the approved team switch before this operation');
     if(op==='save-replays')return this.preserveSetReplays(c.resolveRoom(room),{assertControl:()=>this.controller.assert(command.controllerLease)});
@@ -1116,6 +1130,7 @@ export class AgentSession extends EventEmitter {
       if(this.replayPolicy.enabled)check(this.replayPreservationVerifier&&this.metricsStatus().enabled&&this.metricsStatus().state==='ready','Authorized replay policy needs a ready live recorder and preservation verifier before searching');
       check(this.searchesSent < this.authorizedSets, 'Authorized set limit reached');
       check(!c.searchPending && (!c.searchState || !c.searchState.searching.length && !Object.keys(c.searchState.games || {}).length), 'Search or set is still active or unacknowledged');
+      if(this.excludeBots){const policy=this.matchmakingPolicySnapshot();check(policy.confirmed===true&&policy.serverAllowLadderBots===false,'Required bot exclusion lacks current authenticated server confirmation; no search sent');}
       if (!c.teamHash) { c.authorize('upload-team',{confirmed:true});c.uploadTeam(this.packed); }
       // Count before network I/O: uncertain sends must not queue extra sets.
       c.authorize('search',{confirmed:true});

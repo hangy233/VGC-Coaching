@@ -63,7 +63,7 @@ test('fresh two-active recovery context and first complete input share one unint
     });
   });
   await done;
-  assert.deepEqual(frames.slice(0, 2).map(frame => frame.state), ['attention-required', 'recovery-context']);
+  assert.deepEqual(frames.slice(0, 3).map(frame => frame.state), ['attention-required', 'recovery-cue', 'recovery-context']);
   const packet = frames.find(frame => frame.state === 'recovery-context');
   const result = frames.find(frame => frame.state === 'manual-result');
   const receipt = result.response.result.result;

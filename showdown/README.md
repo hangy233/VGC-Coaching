@@ -18,6 +18,15 @@ The CLI decision workflow requires `--manual-ready` and verifies `autoReady: fal
 
 Replay saving and timer policy are separate explicit permissions. When authorized, add `--save-replays --battle-timer`. Saving publishes according to existing room privacy; retain full private access links only within the user's sharing scope.
 
+When requested, add `--exclude-bots` and set `excludeBots:true` in the runner's
+one-set scope. The owned `battle_set_matchmaking_policy` MCP tool requests
+Showdown's `/blockbots` setting. Inspect `matchmakingPolicy.confirmed` and
+`serverAllowLadderBots:false` before searching; sending the command is not
+confirmation. The runner and native client refuse a required exclusion when the
+authenticated current server setting is unknown or allows bots. This uses
+Showdown's server-designated bot classification, not opponent-name guesses, and
+does not establish that every remaining opponent is human.
+
 ### Optional Windows saved login
 
 The user may personally add a generic credential in **Credential Manager → Windows Credentials**:

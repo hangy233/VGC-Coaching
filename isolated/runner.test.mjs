@@ -14,7 +14,7 @@ import {loadMaintainedMatchupGuidance,renderMatchupGuidance} from './matchup-gui
 import {ISOLATED_POLICY_SOURCE} from './decision-context.mjs';
 import {admitQualificationReference} from './qualification-reference.mjs';
 import {parseRunnerArgs, validateSessionConfiguration, validateScopeConfiguration, readRunnerConfiguration,
-  createModelTraceStore, runBattleWorkflow, runRunner, recordControllerTiming, serveAttentionMode, controllerAttentionNotice, waitForPostResultQuiescence,manualContainmentTemplate} from './runner.mjs';
+  createModelTraceStore, runBattleWorkflow, runRunner, recordControllerTiming, serveAttentionMode, controllerAttentionNotice, waitForPostResultQuiescence,manualContainmentTemplate,recoveryCue} from './runner.mjs';
 
 const TEAM = 'a'.repeat(64), SHA = 'b'.repeat(64), PARENT = 'game-bestof3-gen9championsvgc2026regmcbo3-123', ROOM = 'battle-gen9championsvgc2026regmcbo3-124';
 const identity = () => ({version: 1, sessionId: 'fixture-session', teamId: TEAM, account: 'Fixture User', teamFile: 'team.txt'});
@@ -73,6 +73,65 @@ function workflowFixture({priorComplete = true, preflightReady = true, stateChan
 }
 
 function codexWorkflowFixture(options={}){return workflowFixture(options);}
+
+function botExcludedWorkflow({confirmed=true,serverAllowLadderBots=false,requestStatus='confirmed',capable=true}={}){
+  let requested=false;
+  const current={confirmed,serverAllowLadderBots,requestStatus};
+  const f=workflowFixture({stateChange:state=>{
+    state.capabilities={features:{ownedMatchmakingPolicy:capable},operations:capable?['set-matchmaking-policy']:[]};
+    state.matchmakingPolicy={excludeBots:requested,...current};
+  }});
+  f.args.scope.excludeBots=true;
+  const dispatch=f.operator.dispatch;
+  f.operator.dispatch=async query=>{const response=await dispatch(query);if(query.name==='battle_set_matchmaking_policy')requested=true;return response;};
+  return {...f,current};
+}
+
+test('bot-excluded scope is explicit and configures its owned server policy before exactly one search',async()=>{
+  assert.equal(validateScopeConfiguration({...scope(),excludeBots:true},identity()).excludeBots,true);
+  assert.throws(()=>validateScopeConfiguration({...scope(),excludeBots:'true'},identity()),{code:'configuration'});
+  const f=botExcludedWorkflow();
+  assert.equal((await runBattleWorkflow(f.args)).state,'review-required');
+  const claim=f.calls.findIndex(q=>q.name==='battle_control_claim'),setting=f.calls.findIndex(q=>q.name==='battle_set_matchmaking_policy'),search=f.calls.findIndex(q=>q.op==='start-next');
+  assert(claim<setting&&setting<search);assert.equal(f.calls.filter(q=>q.name==='battle_set_matchmaking_policy').length,1);
+  assert.equal(f.calls[setting].args.excludeBots,true);assert.equal(f.calls.filter(q=>q.op==='start-next').length,1);
+  const normal=workflowFixture();await runBattleWorkflow(normal.args);assert.equal(normal.calls.some(q=>q.name==='battle_set_matchmaking_policy'),false);
+});
+
+test('unconfirmed or unsupported bot exclusion never starts a search',async()=>{
+  for(const options of [{capable:false},{confirmed:true,serverAllowLadderBots:true},{confirmed:true,serverAllowLadderBots:null},{confirmed:false,serverAllowLadderBots:null,requestStatus:'refused'},{confirmed:false,serverAllowLadderBots:true,requestStatus:'failed'}]){
+    const f=botExcludedWorkflow(options);
+    await assert.rejects(runBattleWorkflow(f.args),{code:'matchmaking'});
+    assert.equal(f.calls.some(q=>q.op==='start-next'||q.op==='controller-run'),false);
+    assert(f.calls.filter(q=>q.name==='battle_set_matchmaking_policy').length<=1);
+  }
+});
+
+test('server preference changes while the manager holds the search gate invalidate bot-excluded admission',async()=>{
+  const f=botExcludedWorkflow();
+  f.args.beforeSearch=async()=>{f.current.confirmed=false;f.current.serverAllowLadderBots=true;};
+  await assert.rejects(runBattleWorkflow(f.args),{code:'matchmaking'});
+  assert.equal(f.calls.filter(q=>q.name==='battle_set_matchmaking_policy').length,1);
+  assert.equal(f.calls.some(q=>q.op==='start-next'),false);
+});
+
+test('delayed server confirmation is observed without resending the bot preference or searching early',async()=>{
+  const f=botExcludedWorkflow({confirmed:false,serverAllowLadderBots:null,requestStatus:'sent'}),dispatch=f.operator.dispatch;
+  let settingSent=false,observations=0;
+  f.operator.dispatch=async query=>{
+    if(query.op==='start-next')assert.equal(f.current.confirmed,true,'Unknown server settings never permit search');
+    const response=await dispatch(query);
+    if(query.name==='battle_set_matchmaking_policy')settingSent=true;
+    if(settingSent&&query.op==='status'&&++observations===3){
+      Object.assign(f.current,{confirmed:true,serverAllowLadderBots:false,requestStatus:'confirmed'});
+      Object.assign(response.result.matchmakingPolicy,f.current);
+    }
+    return response;
+  };
+  assert.equal((await runBattleWorkflow(f.args)).state,'review-required');
+  assert.equal(f.calls.filter(q=>q.name==='battle_set_matchmaking_policy').length,1);
+  assert.equal(f.calls.filter(q=>q.op==='start-next').length,1);assert(observations>=3);
+});
 
 function referenceWorkflowFixture(options={}){
   const f=workflowFixture(options),{Teams}=createRequire(import.meta.url)('pokemon-showdown'),sha=value=>createHash('sha256').update(value).digest('hex');
@@ -705,6 +764,66 @@ test('attention cue orders same-owner fresh-pair protection before reports and p
   assert.equal(f.calls.some(q=>q.name==='battle_ready'),false);
 });
 
+function actionableRecoveryPacket(){
+  const expectedRequest={room:ROOM,rqid:9,token:'d'.repeat(64)};
+  return {state:'recovery-context',disposition:'actionable',reason:'exact-current-request',checkedAt:1000,expectedRequest,
+    binding:{...expectedRequest,kind:'turn',boardHash:SHA,legalHash:SHA,requestDigest:SHA},
+    timing:{checkedAt:1000,receivedAt:900,requestAgeMs:100,cutoffAt:2000,cutoffRemainingMs:1000,planningDeadlineAt:1900,planningRemainingMs:900,hardDeadlineAt:2100,hardRemainingMs:1100},
+    protection:{state:'unprotected',sendAttemptObserved:false,sentOrAccepted:false,acceptanceEstablished:false,submissionStatuses:[]}};
+}
+
+test('small mechanical recovery cue precedes the unchanged large full frame without dispatch or model action',async()=>{
+  const packet={...actionableRecoveryPacket(),response:{completeFacts:'x'.repeat(24000),sessionId:PRIVATE_FIXTURE_TEXT,controllerLease:PRIVATE_FIXTURE_TEXT}},output=[];
+  await serveAttentionMode({operator:{dispatch(){assert.fail('Cue emission performs no native operation');}},identity:identity(),scope:scope(),runId,
+    controller:{recoverCurrent(){assert.fail('Only explicit host input may recover');}},now:()=>1001,
+    failure:{code:'operator',message:'fixture',affectedParentId:PARENT},prepareHandoff:async()=>packet,input:Readable.from([]),write:value=>output.push(value)});
+  assert.deepEqual(output.slice(0,3).map(row=>row.state),['attention-required','recovery-cue','recovery-context']);
+  const cue=output[1],full=output[2];assert(Buffer.byteLength(JSON.stringify(cue))<=1500);assert(Buffer.byteLength(JSON.stringify(full))>24000);
+  assert.deepEqual(full.response,packet.response);assert.deepEqual(full.binding,packet.binding);assert.deepEqual(full.timing,packet.timing);
+  assert(!JSON.stringify(cue).includes(PRIVATE_FIXTURE_TEXT));assert.equal(cue.recoverCurrentAvailable,true);assert.equal(cue.retry,false);
+  assert.deepEqual(cue.recoverCurrent.expectedRequest,packet.expectedRequest);assert.equal(cue.recoverCurrent.op,'recover-current');
+});
+
+test('recovery cue template requires exact fresh tactical binding and original remaining deadlines',()=>{
+  const packet=actionableRecoveryPacket(),before=structuredClone(packet),cue=recoveryCue(packet,{isolatedRecoveryAvailable:true,now:1001});
+  assert.deepEqual(cue.expectedRequest,packet.expectedRequest);assert.deepEqual(cue.timing,packet.timing);assert.equal(cue.recoverCurrent.continueSet,true);assert.deepEqual(packet,before);
+  for(const change of [p=>p.binding.token='e'.repeat(64),p=>p.binding.rqid++,p=>delete p.binding.requestDigest,p=>p.checkedAt=1002,p=>p.timing.cutoffAt=1001,p=>p.timing.hardDeadlineAt=1001,p=>p.binding.kind='ready',p=>p.binding.kind='preview']){
+    const changed=structuredClone(packet);change(changed);assert.equal(recoveryCue(changed,{isolatedRecoveryAvailable:true,now:1001}).recoverCurrent,undefined);
+  }
+  assert.equal(recoveryCue(packet,{isolatedRecoveryAvailable:false,now:1001}).recoverCurrent,undefined);
+});
+
+test('staged, attempted, uncertain, repeated, waiting and review recovery cues never offer retry',()=>{
+  const packet=actionableRecoveryPacket();
+  for(const change of [p=>p.protection.state='staged',p=>p.protection.state='uncertain',p=>p.protection.sendAttemptObserved=true,
+    p=>p.protection.sentOrAccepted=true,p=>p.protection.submissionStatuses=['reserved'],p=>p.disposition='wait',p=>p.disposition='review-required',p=>delete p.protection]){
+    const changed=structuredClone(packet);change(changed);const cue=recoveryCue(changed,{isolatedRecoveryAvailable:true,now:1001});assert.equal(cue.recoverCurrent,undefined);assert.equal(cue.recoverCurrentAvailable,false);assert.equal(cue.retry,false);
+  }
+  assert.equal(recoveryCue(packet,{isolatedRecoveryAvailable:true,now:1001,recoveryAlreadyAttempted:true}).recoverCurrent,undefined);
+});
+
+test('private original attempt evidence suppresses same-request cue without blocking an untouched later request',async()=>{
+  const f=workflowFixture(),packet=actionableRecoveryPacket();let failure;
+  f.args.createController=config=>({initialize:async()=>{},status:()=>({parentId:PARENT}),recoverCurrent:()=>assert.fail('Cue never recovers automatically'),
+    runSet:async()=>{await config.onEvidence({phase:'decision-failed',binding:{requestDigest:packet.binding.requestDigest}});return{status:'decision-unavailable',parentId:PARENT};}});
+  await assert.rejects(runBattleWorkflow(f.args),error=>{failure=error;return error.code==='generation_failed';});
+  assert.equal(Object.keys(failure).includes('recoveryAttemptedRequestDigests'),false);
+  for(const same of [true,false]){
+    const current=structuredClone(packet);if(!same){current.expectedRequest.token='e'.repeat(64);current.binding.token=current.expectedRequest.token;current.binding.requestDigest='f'.repeat(64);}
+    const output=[];await serveAttentionMode({operator:{dispatch:()=>assert.fail('No native request for cue')},identity:identity(),scope:scope(),runId,failure,
+      now:()=>1001,prepareHandoff:async()=>current,input:Readable.from([]),write:value=>output.push(value)});
+    assert.equal(output.find(row=>row.state==='recovery-cue').recoverCurrentAvailable,!same);
+  }
+});
+
+test('recovery cue stays bounded at maximum accepted room, reason and timing lengths',()=>{
+  const packet=actionableRecoveryPacket(),room=ROOM+'-'+('p'.repeat(200-ROOM.length-3))+'pw';packet.expectedRequest.room=room;packet.binding.room=room;
+  packet.reason='x'.repeat(80);packet.checkedAt=Number.MAX_SAFE_INTEGER-2;
+  for(const key of Object.keys(packet.timing))packet.timing[key]=Number.MAX_SAFE_INTEGER;
+  const cue=recoveryCue(packet,{isolatedRecoveryAvailable:true,now:Number.MAX_SAFE_INTEGER-1});
+  assert.equal(cue.recoverCurrentAvailable,true);assert(Buffer.byteLength(JSON.stringify(cue))<=1500);
+});
+
 test('attention prefetches current context before early input and explicit recovery keeps the original controller', async () => {
   const output = [], calls = [], reads = [], expectedRequest = {room: ROOM, rqid: 9, token: 'd'.repeat(64)};
   const query = {id: 'resume-owned', op: 'recover-current', expectedRequest, continueSet: true};
@@ -720,7 +839,7 @@ test('attention prefetches current context before early input and explicit recov
     input: Readable.from([JSON.stringify(query) + '\n', JSON.stringify(query) + '\n']), write: value => output.push(value)});
   assert.equal(reads[0].parentId, PARENT); assert.equal(reads[0].identity.sessionId, identity().sessionId);
   assert.deepEqual(calls, [{expectedRequest}, 'continue-same-set']);
-  assert.deepEqual(output.slice(0, 3).map(row => row.state), ['attention-required', 'recovery-context', 'recovery-input-received']);
+  assert.deepEqual(output.slice(0, 4).map(row => row.state), ['attention-required', 'recovery-cue', 'recovery-context', 'recovery-input-received']);
   assert.equal(output.find(row => row.state === 'recovery-context').handoffDelayMs, 3);
   assert.equal(output.find(row => row.state === 'recovery-result').completedAt, 1015);
   assert.equal(output.filter(row => row.state === 'isolated-resumed').length, 1);
